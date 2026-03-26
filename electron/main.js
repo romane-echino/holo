@@ -1,0 +1,666 @@
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { execFile } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const isDev = !app.isPackaged
+const execFileAsync = promisify(execFile)
+let currentRootPath = null
+
+function createDefaultGitState() {
+  return {
+    isRepo: false,
+    branch: null,
+    localChanges: 0,
+    incoming: 0,
+    outgoing: 0,
+    conflictedFiles: [],
+    lastFetchAt: null,
+    error: null,
+  }
+}
+
+function isPathInsideRoot(targetPath) {
+  if (!currentRootPath) {
+    return false
+  }
+
+  const relative = path.relative(currentRootPath, targetPath)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function assertPathInsideRoot(targetPath) {
+  if (!isPathInsideRoot(targetPath)) {
+    throw new Error('Chemin hors du dossier ouvert.')
+  }
+}
+
+function sanitizeName(name) {
+  const trimmed = name.trim()
+
+  if (!trimmed) {
+    throw new Error('Le nom ne peut pas être vide.')
+  }
+
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    throw new Error('Le nom ne doit pas contenir de séparateur de chemin.')
+  }
+
+  return trimmed
+}
+
+async function buildTree(entryPath) {
+  const entries = (await fs.readdir(entryPath, { withFileTypes: true })).filter(
+    (entry) => !entry.name.startsWith('.'),
+  )
+
+  entries.sort((left, right) => {
+    if (left.isDirectory() && !right.isDirectory()) {
+      return -1
+    }
+
+    if (!left.isDirectory() && right.isDirectory()) {
+      return 1
+    }
+
+    return left.name.localeCompare(right.name)
+  })
+
+  const children = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(entryPath, entry.name)
+
+      if (entry.isDirectory()) {
+        return {
+          name: entry.name,
+          path: fullPath,
+          type: 'directory',
+          children: await buildTree(fullPath),
+        }
+      }
+
+      return {
+        name: entry.name,
+        path: fullPath,
+        type: 'file',
+      }
+    }),
+  )
+
+  return children
+}
+
+async function getCurrentTreePayload() {
+  if (!currentRootPath) {
+    return null
+  }
+
+  const rootName = path.basename(currentRootPath)
+  const children = await buildTree(currentRootPath)
+
+  return {
+    rootPath: currentRootPath,
+    tree: {
+      name: rootName,
+      path: currentRootPath,
+      type: 'directory',
+      children,
+    },
+  }
+}
+
+async function runGit(args, cwd) {
+  try {
+    const { stdout, stderr } = await execFileAsync('git', args, {
+      cwd,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    })
+
+    return {
+      ok: true,
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      code: 0,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      stdout: (error.stdout ?? '').toString().trim(),
+      stderr: (error.stderr ?? '').toString().trim(),
+      code: error.code ?? 1,
+    }
+  }
+}
+
+async function isGitRepository(cwd) {
+  const result = await runGit(['rev-parse', '--is-inside-work-tree'], cwd)
+  return result.ok && result.stdout === 'true'
+}
+
+async function getAheadBehind(cwd) {
+  const result = await runGit(['rev-list', '--left-right', '--count', '@{upstream}...HEAD'], cwd)
+
+  if (!result.ok) {
+    return {
+      incoming: 0,
+      outgoing: 0,
+    }
+  }
+
+  const [incomingText, outgoingText] = result.stdout.split(/\s+/)
+  const incoming = Number.parseInt(incomingText ?? '0', 10)
+  const outgoing = Number.parseInt(outgoingText ?? '0', 10)
+
+  return {
+    incoming: Number.isFinite(incoming) ? incoming : 0,
+    outgoing: Number.isFinite(outgoing) ? outgoing : 0,
+  }
+}
+
+async function getCurrentBranch(cwd) {
+  const result = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
+  return result.ok ? result.stdout : null
+}
+
+async function hasRemoteNamed(cwd, remoteName) {
+  const result = await runGit(['remote'], cwd)
+
+  if (!result.ok) {
+    return false
+  }
+
+  return result.stdout.split('\n').map((line) => line.trim()).includes(remoteName)
+}
+
+async function getGitState({ fetchRemote = false } = {}) {
+  if (!currentRootPath) {
+    return createDefaultGitState()
+  }
+
+  const isRepo = await isGitRepository(currentRootPath)
+
+  if (!isRepo) {
+    return createDefaultGitState()
+  }
+
+  let lastFetchAt = null
+  let fetchError = null
+
+  if (fetchRemote) {
+    const fetchResult = await runGit(['fetch', '--all', '--prune'], currentRootPath)
+
+    if (fetchResult.ok) {
+      lastFetchAt = new Date().toISOString()
+    } else {
+      fetchError = fetchResult.stderr || fetchResult.stdout || 'Erreur fetch.'
+    }
+  }
+
+  const branchResult = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], currentRootPath)
+  const statusResult = await runGit(['status', '--porcelain'], currentRootPath)
+  const { incoming, outgoing } = await getAheadBehind(currentRootPath)
+
+  const localChanges = statusResult.ok
+    ? statusResult.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0).length
+    : 0
+
+  const conflictedFiles = statusResult.ok
+    ? getConflictedFilesFromStatusOutput(statusResult.stdout, currentRootPath)
+    : []
+
+  return {
+    isRepo: true,
+    branch: branchResult.ok ? branchResult.stdout : null,
+    localChanges,
+    incoming,
+    outgoing,
+    conflictedFiles,
+    lastFetchAt,
+    error: fetchError,
+  }
+}
+
+function parsePorcelainLine(line) {
+  const statusCode = line.slice(0, 2)
+  const rawPath = line.slice(3).trim()
+  const pathText = rawPath.includes('->') ? rawPath.split('->').pop()?.trim() ?? rawPath : rawPath
+  return {
+    statusCode,
+    pathText,
+  }
+}
+
+function isConflictStatus(statusCode) {
+  return ['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(statusCode)
+}
+
+function getConflictedFilesFromStatusOutput(statusOutput, cwd) {
+  return statusOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map(parsePorcelainLine)
+    .filter((entry) => isConflictStatus(entry.statusCode))
+    .map((entry) => path.join(cwd, entry.pathText))
+}
+
+function toNumstatValue(value) {
+  if (value === '-' || value === '') {
+    return 0
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function parseNumstatOutput(output) {
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [addedText = '0', deletedText = '0', ...pathParts] = line.split('\t')
+
+      return {
+        filePath: pathParts.join('\t').trim(),
+        added: toNumstatValue(addedText),
+        deleted: toNumstatValue(deletedText),
+      }
+    })
+    .filter((entry) => entry.filePath.length > 0)
+}
+
+async function createAutoCommitMessage(cwd) {
+  const numstatResult = await runGit(['diff', '--cached', '--numstat'], cwd)
+
+  if (!numstatResult.ok || !numstatResult.stdout) {
+    return 'sync: mise à jour automatique'
+  }
+
+  const entries = parseNumstatOutput(numstatResult.stdout)
+
+  if (entries.length === 0) {
+    return 'sync: mise à jour automatique'
+  }
+
+  const totalAdded = entries.reduce((sum, entry) => sum + entry.added, 0)
+  const totalDeleted = entries.reduce((sum, entry) => sum + entry.deleted, 0)
+  const title = `sync: ${entries.length} fichier(s) modifié(s) (+${totalAdded}/-${totalDeleted})`
+  const details = entries
+    .map((entry) => `- ${entry.filePath} (+${entry.added}/-${entry.deleted})`)
+    .join('\n')
+
+  return `${title}\n\n${details}`
+}
+
+function ensureRootPath() {
+  if (!currentRootPath) {
+    throw new Error('Aucun dossier ouvert.')
+  }
+
+  return currentRootPath
+}
+
+async function ensureGitRepository(cwd) {
+  if (!(await isGitRepository(cwd))) {
+    throw new Error('Le dossier ouvert n’est pas un dépôt Git.')
+  }
+}
+
+function getGitErrorMessage(result, fallback) {
+  return result.stderr || result.stdout || fallback
+}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 980,
+    minHeight: 640,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+
+  if (isDev) {
+    window.loadURL('http://localhost:5173')
+    return
+  }
+
+  window.loadFile(path.join(__dirname, '../dist/index.html'))
+}
+
+ipcMain.handle('fs:open-folder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  currentRootPath = result.filePaths[0]
+  return getCurrentTreePayload()
+})
+
+ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
+
+ipcMain.handle('fs:read-file', async (_event, filePath) => {
+  assertPathInsideRoot(filePath)
+  return fs.readFile(filePath, 'utf8')
+})
+
+ipcMain.handle('fs:write-file', async (_event, filePath, content) => {
+  assertPathInsideRoot(filePath)
+  await fs.writeFile(filePath, content, 'utf8')
+  return { ok: true }
+})
+
+ipcMain.handle('fs:create-file', async (_event, parentDirectoryPath, name) => {
+  assertPathInsideRoot(parentDirectoryPath)
+  const safeName = sanitizeName(name)
+  const targetPath = path.join(parentDirectoryPath, safeName)
+  assertPathInsideRoot(targetPath)
+  await fs.writeFile(targetPath, '', { flag: 'wx' })
+  return { ok: true }
+})
+
+ipcMain.handle('fs:create-directory', async (_event, parentDirectoryPath, name) => {
+  assertPathInsideRoot(parentDirectoryPath)
+  const safeName = sanitizeName(name)
+  const targetPath = path.join(parentDirectoryPath, safeName)
+  assertPathInsideRoot(targetPath)
+  await fs.mkdir(targetPath)
+  return { ok: true }
+})
+
+ipcMain.handle('fs:delete-path', async (_event, targetPath) => {
+  assertPathInsideRoot(targetPath)
+
+  if (targetPath === currentRootPath) {
+    throw new Error('Impossible de supprimer le dossier racine ouvert.')
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: false })
+  return { ok: true }
+})
+
+ipcMain.handle('fs:rename-path', async (_event, targetPath, newName) => {
+  assertPathInsideRoot(targetPath)
+  const safeName = sanitizeName(newName)
+  const parentPath = path.dirname(targetPath)
+  const newPath = path.join(parentPath, safeName)
+  assertPathInsideRoot(newPath)
+  await fs.rename(targetPath, newPath)
+  return { ok: true, newPath }
+})
+
+ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
+  getGitState({ fetchRemote: Boolean(fetchRemote) }),
+)
+
+ipcMain.handle('git:fetch', async () => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const result = await runGit(['fetch', '--all', '--prune'], cwd)
+
+  if (!result.ok) {
+    throw new Error(getGitErrorMessage(result, 'Échec du fetch Git.'))
+  }
+
+  return {
+    ok: true,
+    output: result.stdout,
+  }
+})
+
+ipcMain.handle('git:commit', async (_event, message) => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const commitMessage = String(message ?? '').trim()
+
+  if (!commitMessage) {
+    throw new Error('Le message de commit est requis.')
+  }
+
+  const addResult = await runGit(['add', '-A'], cwd)
+
+  if (!addResult.ok) {
+    throw new Error(getGitErrorMessage(addResult, 'Échec du git add.'))
+  }
+
+  const commitResult = await runGit(['commit', '-m', commitMessage], cwd)
+
+  if (!commitResult.ok) {
+    throw new Error(getGitErrorMessage(commitResult, 'Échec du commit.'))
+  }
+
+  let pushResult = await runGit(['push'], cwd)
+
+  if (!pushResult.ok) {
+    const branchName = await getCurrentBranch(cwd)
+    const hasOrigin = await hasRemoteNamed(cwd, 'origin')
+    const needsUpstream = /upstream branch|no upstream branch|set-upstream/i.test(
+      `${pushResult.stderr}\n${pushResult.stdout}`,
+    )
+
+    if (needsUpstream && branchName && hasOrigin) {
+      pushResult = await runGit(['push', '-u', 'origin', branchName], cwd)
+    }
+  }
+
+  if (!pushResult.ok) {
+    return {
+      ok: true,
+      committed: true,
+      pushed: false,
+      output: commitResult.stdout,
+      pushError: getGitErrorMessage(
+        pushResult,
+        'Commit créé localement, mais push impossible. Il faut probablement récupérer les changements distants avant de renvoyer.',
+      ),
+    }
+  }
+
+  return {
+    ok: true,
+    committed: true,
+    pushed: true,
+    output: commitResult.stdout,
+    pushError: null,
+  }
+})
+
+ipcMain.handle('git:sync', async () => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const fetchResult = await runGit(['fetch', '--all', '--prune'], cwd)
+
+  if (!fetchResult.ok) {
+    throw new Error(getGitErrorMessage(fetchResult, 'Échec du fetch Git.'))
+  }
+
+  const statusBeforeResult = await runGit(['status', '--porcelain'], cwd)
+
+  if (!statusBeforeResult.ok) {
+    throw new Error(getGitErrorMessage(statusBeforeResult, 'Impossible de lire le statut Git.'))
+  }
+
+  const conflictsBefore = getConflictedFilesFromStatusOutput(statusBeforeResult.stdout, cwd)
+
+  if (conflictsBefore.length > 0) {
+    return {
+      ok: true,
+      committed: false,
+      pulled: false,
+      pushed: false,
+      hadConflicts: true,
+      conflictedFiles: conflictsBefore,
+      commitMessage: null,
+      error: 'Conflits détectés. Résous-les avant de synchroniser.',
+    }
+  }
+
+  const hasLocalChanges = statusBeforeResult.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0).length > 0
+
+  let committed = false
+  let commitMessage = null
+
+  if (hasLocalChanges) {
+    const addResult = await runGit(['add', '-A'], cwd)
+
+    if (!addResult.ok) {
+      throw new Error(getGitErrorMessage(addResult, 'Échec du git add.'))
+    }
+
+    commitMessage = await createAutoCommitMessage(cwd)
+    const commitResult = await runGit(['commit', '-m', commitMessage], cwd)
+
+    if (!commitResult.ok) {
+      const isNoChanges = /nothing to commit|no changes added/i.test(
+        `${commitResult.stderr}\n${commitResult.stdout}`,
+      )
+
+      if (!isNoChanges) {
+        throw new Error(getGitErrorMessage(commitResult, 'Échec du commit automatique.'))
+      }
+    } else {
+      committed = true
+    }
+  }
+
+  const pullResult = await runGit(['pull', '--rebase'], cwd)
+
+  if (!pullResult.ok) {
+    const statusAfterPull = await runGit(['status', '--porcelain'], cwd)
+    const conflictsAfterPull = statusAfterPull.ok
+      ? getConflictedFilesFromStatusOutput(statusAfterPull.stdout, cwd)
+      : []
+
+    if (conflictsAfterPull.length > 0) {
+      return {
+        ok: true,
+        committed,
+        pulled: false,
+        pushed: false,
+        hadConflicts: true,
+        conflictedFiles: conflictsAfterPull,
+        commitMessage,
+        error: getGitErrorMessage(
+          pullResult,
+          'Conflits détectés pendant la synchronisation. Résolution requise.',
+        ),
+      }
+    }
+
+    throw new Error(getGitErrorMessage(pullResult, 'Échec du pull (rebase).'))
+  }
+
+  const { outgoing } = await getAheadBehind(cwd)
+  let pushed = false
+  let pushError = null
+
+  if (outgoing > 0 || committed) {
+    let pushResult = await runGit(['push'], cwd)
+
+    if (!pushResult.ok) {
+      const branchName = await getCurrentBranch(cwd)
+      const hasOrigin = await hasRemoteNamed(cwd, 'origin')
+      const needsUpstream = /upstream branch|no upstream branch|set-upstream/i.test(
+        `${pushResult.stderr}\n${pushResult.stdout}`,
+      )
+
+      if (needsUpstream && branchName && hasOrigin) {
+        pushResult = await runGit(['push', '-u', 'origin', branchName], cwd)
+      }
+    }
+
+    if (pushResult.ok) {
+      pushed = true
+    } else {
+      pushError = getGitErrorMessage(pushResult, 'Synchronisation partielle : le push a échoué.')
+    }
+  }
+
+  return {
+    ok: true,
+    committed,
+    pulled: true,
+    pushed,
+    hadConflicts: false,
+    conflictedFiles: [],
+    commitMessage,
+    error: pushError,
+  }
+})
+
+ipcMain.handle('git:pull', async () => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const result = await runGit(['pull'], cwd)
+
+  if (!result.ok) {
+    throw new Error(getGitErrorMessage(result, 'Échec du pull.'))
+  }
+
+  return {
+    ok: true,
+    output: result.stdout,
+  }
+})
+
+ipcMain.handle('git:merge', async (_event, branch) => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const branchName = String(branch ?? '').trim()
+
+  if (!branchName) {
+    throw new Error('La branche à merger est requise.')
+  }
+
+  const result = await runGit(['merge', branchName], cwd)
+
+  if (!result.ok) {
+    throw new Error(getGitErrorMessage(result, 'Échec du merge.'))
+  }
+
+  return {
+    ok: true,
+    output: result.stdout,
+  }
+})
+
+app.whenReady().then(() => {
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
