@@ -22,22 +22,18 @@ Objectif produit : proposer une expérience utilisateur proche de Loop (look & f
 ## 4) Roadmap par étapes
 
 ## Suivi d’avancement
-- Dernière mise à jour : 25/03/2026
-- Statut global : Étapes 1, 2, 3 terminées | Étape 4 (StageA) en cours
+- Dernière mise à jour : 27/03/2026
+- Statut global : Étapes 1, 2, 3 terminées | Étape 4 en cours (UI finale + onglets terminés)
 
 | Étape | Statut | Date | Notes |
 |---|---|---|---|
 | Étape 1 — Préparation du projet | ✅ Terminé | 23/03/2026 | React + Vite + Electron + Tailwind v4 intégrés, scripts `dev/build/lint` validés |
 | Étape 2 — Application de base (fichiers) | ✅ Terminé | 23/03/2026 | Ouverture dossier, arborescence, édition RAW, sauvegarde Ctrl+S + bouton, CRUD fichiers/dossiers |
 | Étape 3 — Intégration Git | ✅ Terminé | 24/03/2026 | Détection repo, indicateurs locaux/distants, commit, fetch auto 60s, pull, merge, Synchroniser auto, conflits |
-| Étape 4A — UI/UX finale (Layout) | ✅ Terminé | 25/03/2026 | Sidebar (2 icônes: Files/Git), panels actifsfiles/Git, système d'onglets multi-fichiers, éditeur RAW dark |
-| Étape 4B — Drag & drop | ⏳ À faire | — | Réorganiser fichiers/dossiers dans la vue |
-| Étape 4C — Éditeur WYSIWYG | ⏳ À faire | — | Mode prévisualisation Markdown + éditeur visuel |
+| Étape 4A — UI/UX finale (Layout + Onglets) | ✅ Terminé | 27/03/2026 | Sidebar (2 icônes Files/Git), panneaux actifs Files/Git, badge onglets ouverts, système d'onglets multi-fichiers, éditeur RAW dark |
+| Étape 4B — Drag & drop | 🚧 En cours | 27/03/2026 | Première version branchée: déplacement fichier/dossier vers un dossier cible depuis l'arborescence |
+| Étape 4C — Éditeur WYSIWYG | 🚧 En cours | 27/03/2026 | Éditeur visuel éditable (contentEditable) avec toolbar minimale (gras/italique/titres/liste/lien), conversion HTML↔Markdown et bascule RAW/WYSIWYG |
 | Étape 5 — À définir | ⏳ À faire | — | Backlog d'améliorations |
-| Étape 2 — Application de base (fichiers) | ✅ Terminé | 23/03/2026 | Ouverture dossier, arborescence, édition RAW, sauvegarde Ctrl+S + bouton, CRUD fichiers/dossiers |
-| Étape 3 — Intégration Git | ✅ Terminé | 23/03/2026 | Détection repo, indicateurs locaux/distants, commit, fetch auto 60s, pull, merge |
-| Étape 4 — UI/UX finale | ⏳ À faire | — | En attente des fondations fonctionnelles |
-| Étape 5 — À définir | ⏳ À faire | — | Backlog d’améliorations |
 
 ---
 
@@ -180,14 +176,20 @@ Proposition de sujets pour cette étape :
 - Durcissement sécurité Electron (IPC, permissions, isolation).
 
 
-Gérer les dossier récents (Fichier > Ouvrir... & Spéarateur -> liste des dossiers récemment ouvert)
-Gestion bouton droite dans l'arboressence, renommer, nouveau fichier, nouveau dossier, supprimer, last edited (git)
+✅ WYSIWYG par défaut
+✅ Gérer les dossier ouverts récents (Fichier > Ouvrir... & Spéarateur -> liste des dossiers récemment ouvert, visible seulement quand aucun dossier n’est ouvert)
+✅ Gestion clic droit dans l'arborescence : renommer, nouveau fichier, nouveau dossier, supprimer (last edited Git à faire)
 UI Merge plus "sympa"
-Choisir son nom au démarage de l'app (configuration git)
+Choisir son nom au démarage de l'app (configuration git) avec bouton utilisateur -> déconnexion, image de profile , etc...
 Connexion avec github (dans le browser)
-Pull un repo (avec search field)
+Pull un repo (avec search field) depuis github
 Recherche dans la doc (directement sur qdrant?)
 Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récupe titre et description dans le markdown (voir l'icon si on fait fontawesome)
+✅ Bloc d'entête markdown editable en WYSIWYG (Titre, Description, auteur, dernier modification, dates, icones,...) qqch de jolie comme dans loop
+✅ Lister seulement les fichier .md (ne pas afficher les extentions)
+✅ Expand le dossier qu'on vient d'ouvrir par défaut
+
+✅ En terme UX enlever la barre WYSIWYG pour faire plus comme loop (commande / pour faire un tableau, quand je tape "-" ça fait une liste, quand je selectionn un texte y'a un popup pour bold italic souligné tracé )
 
 ---
 

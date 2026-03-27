@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { marked } from 'marked'
+import TurndownService from 'turndown'
+import { gfm } from 'turndown-plugin-gfm'
 
 type NodeType = 'file' | 'directory'
 
@@ -18,6 +21,7 @@ type NameDialog =
   | {
     mode: 'create-file' | 'create-directory'
     value: string
+    targetDirectoryPath: string
   }
   | {
     mode: 'rename'
@@ -57,6 +61,29 @@ type OpenTab = {
   name: string
   content: string
   isDirty: boolean
+}
+
+type ContextMenuState = {
+  x: number
+  y: number
+  node: TreeNode
+}
+
+type EditableMarkdownHeader = {
+  title: string
+  description: string
+  author: string
+}
+
+type FilePathStats = {
+  modifiedAt: string
+  createdAt: string
+}
+
+type TocItem = {
+  level: number
+  text: string
+  headingIndex: number
 }
 
 const DEFAULT_GIT_STATE: GitState = {
@@ -140,24 +167,175 @@ function getDirectoryTarget(rootPath: string | null, selectedPath: string | null
   return getParentPath(selectedPath)
 }
 
+function isSameOrChildPath(parentPath: string, candidatePath: string): boolean {
+  const normalizedParent = parentPath.replace(/\\/g, '/').replace(/\/$/, '')
+  const normalizedCandidate = candidatePath.replace(/\\/g, '/').replace(/\/$/, '')
+
+  return (
+    normalizedCandidate === normalizedParent
+    || normalizedCandidate.startsWith(`${normalizedParent}/`)
+  )
+}
+
+function splitMarkdownFrontMatter(markdown: string) {
+  const lines = markdown.split(/\r?\n/)
+
+  if (lines[0] !== '---') {
+    return {
+      hasFrontMatter: false,
+      frontMatterLines: [] as string[],
+      body: markdown,
+    }
+  }
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line === '---')
+
+  if (endIndex <= 0) {
+    return {
+      hasFrontMatter: false,
+      frontMatterLines: [] as string[],
+      body: markdown,
+    }
+  }
+
+  return {
+    hasFrontMatter: true,
+    frontMatterLines: lines.slice(1, endIndex),
+    body: lines.slice(endIndex + 1).join('\n'),
+  }
+}
+
+function escapeFrontMatterValue(value: string): string {
+  const normalized = value.replace(/\r?\n/g, ' ')
+  return `"${normalized.replace(/"/g, '\\"')}"`
+}
+
+function readFrontMatterValue(line: string): string {
+  const [, raw = ''] = line.split(/:(.*)/)
+  const trimmed = raw.trim()
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith('\'') && trimmed.endsWith('\''))
+  ) {
+    return trimmed.slice(1, -1)
+  }
+
+  return trimmed
+}
+
+function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
+  const { frontMatterLines } = splitMarkdownFrontMatter(markdown)
+  const header: EditableMarkdownHeader = {
+    title: '',
+    description: '',
+    author: '',
+  }
+
+  for (const line of frontMatterLines) {
+    const match = line.match(/^([a-zA-Z0-9_-]+)\s*:/)
+
+    if (!match) {
+      continue
+    }
+
+    const key = match[1].toLowerCase()
+
+    if (key === 'title' || key === 'description' || key === 'author') {
+      header[key] = readFrontMatterValue(line)
+    }
+  }
+
+  return header
+}
+
+function updateMarkdownHeaderField(
+  markdown: string,
+  field: keyof EditableMarkdownHeader,
+  nextValue: string,
+): string {
+  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
+  const nextLines = [...frontMatterLines]
+  const key = field
+  const keyMatcher = new RegExp(`^${key}\\s*:`, 'i')
+  const existingIndexes = nextLines
+    .map((line, index) => (keyMatcher.test(line) ? index : -1))
+    .filter((index) => index >= 0)
+
+  for (let index = existingIndexes.length - 1; index >= 1; index -= 1) {
+    nextLines.splice(existingIndexes[index], 1)
+  }
+
+  const firstExistingIndex = existingIndexes.length > 0 ? existingIndexes[0] : -1
+  const cleanedValue = nextValue;
+
+  if (!cleanedValue) {
+    if (firstExistingIndex >= 0) {
+      nextLines.splice(firstExistingIndex, 1)
+    }
+  } else {
+    const nextLine = `${key}: ${escapeFrontMatterValue(cleanedValue)}`
+
+    if (firstExistingIndex >= 0) {
+      nextLines[firstExistingIndex] = nextLine
+    } else {
+      nextLines.push(nextLine)
+    }
+  }
+
+  if (nextLines.length === 0) {
+    return body
+  }
+
+  return ['---', ...nextLines, '---', body].join('\n')
+}
+
+function updateMarkdownBody(markdown: string, nextBody: string): string {
+  const { frontMatterLines } = splitMarkdownFrontMatter(markdown)
+
+  if (frontMatterLines.length === 0) {
+    return nextBody
+  }
+
+  return ['---', ...frontMatterLines, '---', nextBody].join('\n')
+}
+
 function TreeItem({
   node,
   selectedPath,
   onSelect,
+  onContextMenu,
   expandedDirectories,
   onToggleDirectory,
+  draggedPath,
+  dropTargetPath,
+  onDragStart,
+  onDragEnd,
+  onDragOverDirectory,
+  onDragLeaveDirectory,
+  onDropOnDirectory,
   level = 0,
 }: {
   node: TreeNode
   selectedPath: string | null
   onSelect: (node: TreeNode) => void
+  onContextMenu: (node: TreeNode, position: { x: number; y: number }) => void
   expandedDirectories: Set<string>
   onToggleDirectory: (directoryPath: string) => void
+  draggedPath: string | null
+  dropTargetPath: string | null
+  onDragStart: (node: TreeNode) => void
+  onDragEnd: () => void
+  onDragOverDirectory: (node: TreeNode) => void
+  onDragLeaveDirectory: (node: TreeNode) => void
+  onDropOnDirectory: (node: TreeNode) => void
   level?: number
 }) {
   const isSelected = selectedPath === node.path
   const isDirectory = node.type === 'directory'
   const isExpanded = isDirectory ? expandedDirectories.has(node.path) : false
+  const isDragged = draggedPath === node.path
+  const isDropTarget = dropTargetPath === node.path
 
   return (
     <li>
@@ -165,8 +343,11 @@ function TreeItem({
         className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm ${
           isSelected
             ? 'bg-[#7B61FF]/20 border border-[#7B61FF]/50 text-[#7B61FF]'
+            : isDropTarget
+              ? 'border border-emerald-400/60 bg-emerald-400/10 text-emerald-200'
             : 'text-white/60 hover:text-white/90 hover:bg-white/5'
         }`}
+        draggable={node.path.length > 0}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={() => {
           onSelect(node)
@@ -175,12 +356,56 @@ function TreeItem({
             onToggleDirectory(node.path)
           }
         }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onContextMenu(node, { x: event.clientX, y: event.clientY })
+        }}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', node.path)
+          onDragStart(node)
+        }}
+        onDragEnd={onDragEnd}
+        onDragOver={(event) => {
+          if (!isDirectory) {
+            return
+          }
+
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'move'
+          onDragOverDirectory(node)
+        }}
+        onDragLeave={() => {
+          if (isDirectory) {
+            onDragLeaveDirectory(node)
+          }
+        }}
+        onDrop={(event) => {
+          if (!isDirectory) {
+            return
+          }
+
+          event.preventDefault()
+          onDropOnDirectory(node)
+        }}
+        aria-grabbed={isDragged}
       >
-        <span className="w-5 text-center text-xs">
-          {isDirectory ? (isExpanded ? '▾' : '▸') : '•'}
+        <span className="w-5 text-center text-[10px] text-white/55">
+          {isDirectory ? (
+            <i className={`fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}`} />
+          ) : (
+            <i className="fa-solid fa-circle text-[6px]" />
+          )}
         </span>
-        <span className="w-5 text-center text-sm">{node.type === 'directory' ? '📁' : '📄'}</span>
-        <span className="truncate text-xs">{node.name}</span>
+        <span className="w-5 text-center text-sm text-white/70">
+          {node.type === 'directory' ? (
+            <i className={`fa-regular ${isExpanded ? 'fa-folder-open' : 'fa-folder'}`} />
+          ) : (
+            <i className="fa-regular fa-file-lines" />
+          )}
+        </span>
+        <span className="truncate text-xs">{node.type === 'file' ? node.name.replace(/\.md$/i, '') : node.name}</span>
       </button>
 
       {node.type === 'directory' && isExpanded && node.children && node.children.length > 0 && (
@@ -191,8 +416,16 @@ function TreeItem({
               node={childNode}
               selectedPath={selectedPath}
               onSelect={onSelect}
+              onContextMenu={onContextMenu}
               expandedDirectories={expandedDirectories}
               onToggleDirectory={onToggleDirectory}
+              draggedPath={draggedPath}
+              dropTargetPath={dropTargetPath}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDragOverDirectory={onDragOverDirectory}
+              onDragLeaveDirectory={onDragLeaveDirectory}
+              onDropOnDirectory={onDropOnDirectory}
               level={level + 1}
             />
           ))}
@@ -202,6 +435,25 @@ function TreeItem({
   )
 }
 
+type SlashCommand = {
+  id: string
+  icon: string
+  label: string
+  hint: string
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { id: 'h1', icon: 'fa-solid fa-1', label: 'Titre 1', hint: 'Grand titre' },
+  { id: 'h2', icon: 'fa-solid fa-2', label: 'Titre 2', hint: 'Titre moyen' },
+  { id: 'h3', icon: 'fa-solid fa-3', label: 'Titre 3', hint: 'Petit titre' },
+  { id: 'bullet', icon: 'fa-solid fa-list-ul', label: 'Liste à puces', hint: '—' },
+  { id: 'ordered', icon: 'fa-solid fa-list-ol', label: 'Liste numérotée', hint: '1. 2. 3.' },
+  { id: 'quote', icon: 'fa-solid fa-quote-left', label: 'Citation', hint: 'Bloc citation' },
+  { id: 'code', icon: 'fa-solid fa-code', label: 'Bloc code', hint: 'Monospace' },
+  { id: 'table', icon: 'fa-solid fa-table', label: 'Tableau', hint: 'Grille' },
+  { id: 'todo', icon: 'fa-solid fa-square-check', label: 'Tâches', hint: 'Checklist' },
+]
+
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null)
   const [tree, setTree] = useState<TreeNode | null>(null)
@@ -209,6 +461,11 @@ function App() {
   const [selectedType, setSelectedType] = useState<NodeType | null>(null)
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([])
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
+  const [pathStatsByPath, setPathStatsByPath] = useState<Record<string, FilePathStats>>({})
+  const [recentFolders, setRecentFolders] = useState<string[]>([])
+  const [draggedPath, setDraggedPath] = useState<string | null>(null)
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set())
   const [nameDialog, setNameDialog] = useState<NameDialog | null>(null)
   const [gitState, setGitState] = useState<GitState>(DEFAULT_GIT_STATE)
@@ -216,12 +473,85 @@ function App() {
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git'>('files')
+  const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
+  const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
+  const isSyncingWysiwygRef = useRef(false)
+  const lastWysiwygSyncedTabRef = useRef<string | null>(null)
+  const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null)
+  const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0)
+  const turndownService = useMemo(() => {
+    const service = new TurndownService({
+      headingStyle: 'atx',
+      codeBlockStyle: 'fenced',
+      bulletListMarker: '-',
+    })
+    service.use(gfm)
+    return service
+  }, [])
   const desktopApiAvailable = typeof window.holo !== 'undefined'
 
   // Récupérer l'onglet actif
   const activeTab = useMemo(
     () => openTabs.find((tab) => tab.path === activeTabPath),
     [activeTabPath, openTabs],
+  )
+
+  const editableHeader = useMemo(
+    () => getEditableMarkdownHeader(activeTab?.content ?? ''),
+    [activeTab?.content],
+  )
+
+  const activeTabBody = useMemo(
+    () => splitMarkdownFrontMatter(activeTab?.content ?? '').body,
+    [activeTab?.content],
+  )
+
+  const tocItems = useMemo<TocItem[]>(() => {
+    const lines = activeTabBody.split('\n')
+    const items: TocItem[] = []
+    let inCodeFence = false
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+
+      if (/^(```|~~~)/.test(trimmed)) {
+        inCodeFence = !inCodeFence
+        continue
+      }
+
+      if (inCodeFence) {
+        continue
+      }
+
+      const match = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
+      if (!match) {
+        continue
+      }
+
+      const level = match[1].length
+      const text = match[2]
+        .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+        .replace(/[\*_`~]/g, '')
+        .trim()
+
+      if (!text) {
+        continue
+      }
+
+      items.push({
+        level,
+        text,
+        headingIndex: items.length,
+      })
+    }
+
+    return items
+  }, [activeTabBody])
+
+  const activePathStats = useMemo(
+    () => (activeTabPath ? pathStatsByPath[activeTabPath] ?? null : null),
+    [activeTabPath, pathStatsByPath],
   )
 
   const getHoloApi = useCallback(() => {
@@ -252,6 +582,31 @@ function App() {
     setTree(result.tree)
   }, [getHoloApi])
 
+  const applyOpenedFolder = useCallback((result: OpenFolderResult) => {
+    if (!result) {
+      return
+    }
+
+    setRootPath(result.rootPath)
+    setTree(result.tree)
+    setSelectedPath(result.rootPath)
+    setSelectedType('directory')
+    setExpandedDirectories(new Set([result.rootPath]))
+    setOpenTabs([])
+    setActiveTabPath(null)
+    setGitState(DEFAULT_GIT_STATE)
+  }, [])
+
+  const refreshRecentFolders = useCallback(async () => {
+    if (!window.holo) {
+      setRecentFolders([])
+      return
+    }
+
+    const recent = await window.holo.getRecentFolders()
+    setRecentFolders(Array.isArray(recent) ? recent : [])
+  }, [])
+
   const openFolder = useCallback(async () => {
     const holo = getHoloApi()
 
@@ -265,18 +620,58 @@ function App() {
       return
     }
 
-    setRootPath(result.rootPath)
-    setTree(result.tree)
-    setSelectedPath(result.rootPath)
-    setSelectedType('directory')
-    setExpandedDirectories(new Set())
-    setOpenTabs([])
-    setActiveTabPath(null)
-    setGitState(DEFAULT_GIT_STATE)
+    applyOpenedFolder(result)
+    await refreshRecentFolders()
 
     const nextGitState = await holo.gitGetState(true)
     setGitState(normalizeGitState(nextGitState))
-  }, [getHoloApi])
+  }, [applyOpenedFolder, getHoloApi, refreshRecentFolders])
+
+  const openRecentFolder = useCallback(
+    async (folderPath: string) => {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      try {
+        const result = (await holo.openRecentFolder(folderPath)) as OpenFolderResult
+
+        if (!result) {
+          return
+        }
+
+        applyOpenedFolder(result)
+        await refreshRecentFolders()
+
+        const nextGitState = await holo.gitGetState(true)
+        setGitState(normalizeGitState(nextGitState))
+      } catch (error) {
+        window.alert((error as Error).message)
+        await refreshRecentFolders()
+      }
+    },
+    [applyOpenedFolder, getHoloApi, refreshRecentFolders],
+  )
+
+  const removeRecentFolder = useCallback(
+    async (folderPath: string) => {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      try {
+        await holo.removeRecentFolder(folderPath)
+        await refreshRecentFolders()
+      } catch (error) {
+        window.alert((error as Error).message)
+      }
+    },
+    [getHoloApi, refreshRecentFolders],
+  )
 
   const refreshGitState = useCallback(
     async (fetchRemote = false) => {
@@ -305,6 +700,10 @@ function App() {
 
     void refreshGitState(true)
   }, [refreshGitState, rootPath])
+
+  useEffect(() => {
+    void refreshRecentFolders()
+  }, [refreshRecentFolders])
 
   useEffect(() => {
     if (!rootPath || !gitState.isRepo) {
@@ -350,6 +749,7 @@ function App() {
 
         // Charger le fichier
         const nextContent = await holo.readFile(filePath)
+        const stats = await holo.getPathStats(filePath).catch(() => null)
         const newTab: OpenTab = {
           path: filePath,
           name: getBaseName(filePath),
@@ -357,6 +757,14 @@ function App() {
           isDirty: false,
         }
         setOpenTabs((prev) => [...prev, newTab])
+
+        if (stats) {
+          setPathStatsByPath((prev) => ({
+            ...prev,
+            [filePath]: stats,
+          }))
+        }
+
         setActiveTabPath(filePath)
       } catch (error) {
         window.alert((error as Error).message)
@@ -400,14 +808,416 @@ function App() {
     }
 
     await holo.writeFile(activeTab.path, activeTab.content)
+    const stats = await holo.getPathStats(activeTab.path).catch(() => null)
     setOpenTabs((prev) =>
       prev.map((tab) =>
         tab.path === activeTab.path ? { ...tab, isDirty: false } : tab,
       ),
     )
+
+    if (stats) {
+      setPathStatsByPath((prev) => ({
+        ...prev,
+        [activeTab.path]: stats,
+      }))
+    }
+
     await refreshTree()
     await refreshGitState(false)
   }, [activeTab, getHoloApi, refreshGitState, refreshTree])
+
+  const updateActiveTabContent = useCallback(
+    (nextContent: string) => {
+      if (!activeTabPath) {
+        return
+      }
+
+      setOpenTabs((prev) =>
+        prev.map((tab) =>
+          tab.path === activeTabPath
+            ? { ...tab, content: nextContent, isDirty: true }
+            : tab,
+        ),
+      )
+    },
+    [activeTabPath],
+  )
+
+  const updateEditableHeader = useCallback(
+    (field: keyof EditableMarkdownHeader, value: string) => {
+      if (!activeTab) {
+        return
+      }
+
+      const nextMarkdown = updateMarkdownHeaderField(activeTab.content, field, value)
+      updateActiveTabContent(nextMarkdown)
+    },
+    [activeTab, updateActiveTabContent],
+  )
+
+  const updateActiveTabBody = useCallback(
+    (nextBody: string) => {
+      if (!activeTab) {
+        return
+      }
+
+      const nextMarkdown = updateMarkdownBody(activeTab.content, nextBody)
+      updateActiveTabContent(nextMarkdown)
+    },
+    [activeTab, updateActiveTabContent],
+  )
+
+  const markdownToHtml = useCallback((markdown: string) => {
+    const parsed = marked.parse(markdown)
+    return typeof parsed === 'string' ? parsed : ''
+  }, [])
+
+  const syncWysiwygFromMarkdown = useCallback(
+    (markdown: string) => {
+      const editor = wysiwygEditorRef.current
+
+      if (!editor) {
+        return
+      }
+
+      isSyncingWysiwygRef.current = true
+      editor.innerHTML = markdownToHtml(markdown)
+      isSyncingWysiwygRef.current = false
+    },
+    [markdownToHtml],
+  )
+
+  useEffect(() => {
+    if (editorMode !== 'wysiwyg' || !activeTabPath) {
+      lastWysiwygSyncedTabRef.current = null
+      return
+    }
+
+    const tab = openTabs.find((item) => item.path === activeTabPath)
+
+    if (!tab) {
+      return
+    }
+
+    if (lastWysiwygSyncedTabRef.current !== activeTabPath) {
+      syncWysiwygFromMarkdown(splitMarkdownFrontMatter(tab.content).body)
+      lastWysiwygSyncedTabRef.current = activeTabPath
+    }
+  }, [activeTabPath, editorMode, openTabs, syncWysiwygFromMarkdown])
+
+  // Helpers for getting text context in the contentEditable editor
+  const getBlockTextBeforeCursor = useCallback((): { text: string; block: Element | null } => {
+    const sel = window.getSelection()
+    if (!sel?.rangeCount) return { text: '', block: null }
+    const editor = wysiwygEditorRef.current
+    if (!editor) return { text: '', block: null }
+    let node: Node | null = sel.anchorNode
+    while (node && node !== editor) {
+      const tag = (node as Element).tagName
+      if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
+      node = node.parentNode
+    }
+    if (!node || node === editor) return { text: '', block: null }
+    const blockRange = document.createRange()
+    blockRange.setStart(node, 0)
+    blockRange.setEnd(sel.anchorNode!, sel.anchorOffset)
+    return { text: blockRange.toString(), block: node as Element }
+  }, [])
+
+  const deleteCurrentBlockContents = useCallback(() => {
+    const sel = window.getSelection()
+    if (!sel?.rangeCount) return
+    const editor = wysiwygEditorRef.current
+    if (!editor) return
+    let node: Node | null = sel.anchorNode
+    while (node && node !== editor) {
+      const tag = (node as Element).tagName
+      if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
+      node = node.parentNode
+    }
+    if (!node || node === editor) return
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(sel.anchorNode!, sel.anchorOffset)
+    range.deleteContents()
+  }, [])
+
+  const executeSlashCommand = useCallback((cmd: SlashCommand) => {
+    const editor = wysiwygEditorRef.current
+    if (!editor) return
+    editor.focus()
+    // Delete the slash + query text
+    deleteCurrentBlockContents()
+    switch (cmd.id) {
+      case 'h1': document.execCommand('formatBlock', false, '<h1>'); break
+      case 'h2': document.execCommand('formatBlock', false, '<h2>'); break
+      case 'h3': document.execCommand('formatBlock', false, '<h3>'); break
+      case 'bullet': document.execCommand('insertUnorderedList'); break
+      case 'ordered': document.execCommand('insertOrderedList'); break
+      case 'quote': document.execCommand('formatBlock', false, '<blockquote>'); break
+      case 'code': document.execCommand('insertHTML', false, '<pre><code>\u200B</code></pre><p><br></p>'); break
+      case 'table': document.execCommand('insertHTML', false, '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>'); break
+      case 'todo': document.execCommand('insertHTML', false, '<ul><li><input type="checkbox"> Tâche</li></ul><p><br></p>'); break
+      default: break
+    }
+    setSlashMenu(null)
+    setSlashMenuIndex(0)
+    // Sync markdown
+    const md = turndownService.turndown(editor.innerHTML)
+    updateActiveTabBody(md)
+  }, [deleteCurrentBlockContents, turndownService, updateActiveTabBody])
+
+  const onWysiwygInput = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+
+    if (!editor || isSyncingWysiwygRef.current) {
+      return
+    }
+
+    // Update slash menu query
+    const { text } = getBlockTextBeforeCursor()
+    if (slashMenu && text.startsWith('/')) {
+      setSlashMenu((prev) => prev ? { ...prev, query: text.slice(1).toLowerCase() } : null)
+      return // don't convert to markdown while slash menu is open
+    }
+
+    const markdown = turndownService.turndown(editor.innerHTML)
+    updateActiveTabBody(markdown)
+  }, [getBlockTextBeforeCursor, slashMenu, turndownService, updateActiveTabBody])
+
+  const onWysiwygKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+
+      // Ne traiter que les événements venant du contentEditable WYSIWYG lui-même
+      // Ignorer ceux qui viennent des inputs ou autres éléments
+      if (event.currentTarget !== editor || !editor.contains(event.target as Node)) {
+        return
+      }
+
+      // ── Slash menu navigation ──────────────────────────────────────────
+      if (slashMenu) {
+        const filtered = SLASH_COMMANDS.filter(
+          (c) => !slashMenu.query || c.label.toLowerCase().includes(slashMenu.query),
+        )
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setSlashMenuIndex((i) => Math.min(i + 1, filtered.length - 1))
+          return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setSlashMenuIndex((i) => Math.max(i - 1, 0))
+          return
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          const target = filtered[slashMenuIndex]
+          if (target) executeSlashCommand(target)
+          return
+        }
+        if (event.key === 'Escape' || event.key === ' ') {
+          setSlashMenu(null)
+          setSlashMenuIndex(0)
+          return
+        }
+        if (event.key === 'Backspace') {
+          const { text } = getBlockTextBeforeCursor()
+          if (text === '/') {
+            setSlashMenu(null)
+            setSlashMenuIndex(0)
+          }
+        }
+        return
+      }
+
+      // ── Slash trigger ──────────────────────────────────────────────────
+      if (event.key === '/') {
+        const { text } = getBlockTextBeforeCursor()
+        if (text.trim() === '') {
+          // Show slash menu at cursor position
+          const sel = window.getSelection()
+          if (sel?.rangeCount) {
+            const rect = sel.getRangeAt(0).getBoundingClientRect()
+            setSlashMenu({ x: rect.left, y: rect.bottom + 6, query: '' })
+            setSlashMenuIndex(0)
+          }
+        }
+        return
+      }
+
+      // ── Markdown space shortcuts ───────────────────────────────────────
+      if (event.key === ' ') {
+        const { text, block } = getBlockTextBeforeCursor()
+        if (!block) return
+
+        const patterns: Array<[RegExp, () => void]> = [
+          [/^#{3}$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h3>') }],
+          [/^#{2}$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h2>') }],
+          [/^#$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h1>') }],
+          [/^-$/, () => { deleteCurrentBlockContents(); document.execCommand('insertUnorderedList') }],
+          [/^\*$/, () => { deleteCurrentBlockContents(); document.execCommand('insertUnorderedList') }],
+          [/^1\.$/, () => { deleteCurrentBlockContents(); document.execCommand('insertOrderedList') }],
+          [/^>$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<blockquote>') }],
+        ]
+
+        for (const [re, action] of patterns) {
+          if (re.test(text)) {
+            event.preventDefault()
+            action()
+            const md = turndownService.turndown(editor.innerHTML)
+            updateActiveTabBody(md)
+            return
+          }
+        }
+      }
+    },
+    [deleteCurrentBlockContents, executeSlashCommand, getBlockTextBeforeCursor, slashMenu, slashMenuIndex, turndownService, updateActiveTabBody],
+  )
+
+  // Selection change → show/hide floating popup
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || !editor.contains(sel.anchorNode)) {
+        setSelectionPopup(null)
+        return
+      }
+      if (sel.rangeCount) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect()
+        setSelectionPopup({ x: rect.left + rect.width / 2, y: rect.top - 8 })
+      }
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [])
+
+  const formatReadonlyDate = useCallback((value?: string | null) => {
+    if (!value) {
+      return '—'
+    }
+
+    const date = new Date(value)
+
+    if (Number.isNaN(date.getTime())) {
+      return '—'
+    }
+
+    return date.toLocaleString()
+  }, [])
+
+  const runWysiwygCommand = useCallback(
+    (
+      command:
+        | 'bold'
+        | 'italic'
+        | 'underline'
+        | 'strikeThrough'
+        | 'insertUnorderedList'
+        | 'insertOrderedList'
+        | 'formatBlock'
+        | 'createLink'
+        | 'insertHTML',
+      value?: string,
+    ) => {
+      const editor = wysiwygEditorRef.current
+
+      if (!editor) {
+        return
+      }
+
+      editor.focus()
+      document.execCommand(command, false, value)
+      onWysiwygInput()
+    },
+    [onWysiwygInput],
+  )
+
+  const closeTab = useCallback(
+    (tabPath: string) => {
+      const tabIndex = openTabs.findIndex((tab) => tab.path === tabPath)
+
+      if (tabIndex < 0) {
+        return
+      }
+
+      const nextActiveTab =
+        openTabs[tabIndex + 1]
+        ?? openTabs[tabIndex - 1]
+        ?? null
+
+      setOpenTabs((prev) => prev.filter((tab) => tab.path !== tabPath))
+
+      if (activeTabPath === tabPath) {
+        setActiveTabPath(nextActiveTab?.path ?? null)
+      }
+    },
+    [activeTabPath, openTabs],
+  )
+
+  const closeTabsForPath = useCallback(
+    (targetPath: string) => {
+      const isActiveTabRemoved = activeTabPath ? isSameOrChildPath(targetPath, activeTabPath) : false
+
+      if (isActiveTabRemoved && activeTabPath) {
+        const activeIndex = openTabs.findIndex((tab) => tab.path === activeTabPath)
+        const nextActiveTab =
+          openTabs
+            .slice(activeIndex + 1)
+            .find((tab) => !isSameOrChildPath(targetPath, tab.path))
+          ?? [...openTabs.slice(0, activeIndex)].reverse().find((tab) => !isSameOrChildPath(targetPath, tab.path))
+          ?? null
+
+        setActiveTabPath(nextActiveTab?.path ?? null)
+      }
+
+      setOpenTabs((prev) => prev.filter((tab) => !isSameOrChildPath(targetPath, tab.path)))
+    },
+    [activeTabPath, openTabs],
+  )
+
+  const moveNode = useCallback(
+    async (sourcePath: string, targetDirectoryPath: string) => {
+      const holo = getHoloApi()
+
+      if (!holo || sourcePath === targetDirectoryPath || isSameOrChildPath(sourcePath, targetDirectoryPath)) {
+        return
+      }
+
+      try {
+        const result = await holo.movePath(sourcePath, targetDirectoryPath)
+        const nextPath = result.newPath
+
+        setOpenTabs((prev) =>
+          prev.map((tab) =>
+            isSameOrChildPath(sourcePath, tab.path)
+              ? { ...tab, path: tab.path.replace(sourcePath, nextPath) }
+              : tab,
+          ),
+        )
+
+        if (selectedPath && isSameOrChildPath(sourcePath, selectedPath)) {
+          setSelectedPath(selectedPath.replace(sourcePath, nextPath))
+        }
+
+        if (activeTabPath && isSameOrChildPath(sourcePath, activeTabPath)) {
+          setActiveTabPath(activeTabPath.replace(sourcePath, nextPath))
+        }
+
+        await refreshTree()
+        await refreshGitState(false)
+      } catch (error) {
+        window.alert((error as Error).message)
+      } finally {
+        setDraggedPath(null)
+        setDropTargetPath(null)
+      }
+    },
+    [activeTabPath, getHoloApi, refreshGitState, refreshTree, selectedPath],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -427,49 +1237,123 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveCurrentFile, activeTab])
 
-  const directoryTarget = useMemo(
-    () => getDirectoryTarget(rootPath, selectedPath, selectedType),
-    [rootPath, selectedPath, selectedType],
+  useEffect(() => {
+    if (!contextMenu) {
+      return
+    }
+
+    const closeContextMenu = () => setContextMenu(null)
+    const onWindowBlur = () => setContextMenu(null)
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenu(null)
+      }
+    }
+
+    window.addEventListener('click', closeContextMenu)
+    window.addEventListener('resize', closeContextMenu)
+    window.addEventListener('blur', onWindowBlur)
+    window.addEventListener('keydown', onEscape)
+
+    return () => {
+      window.removeEventListener('click', closeContextMenu)
+      window.removeEventListener('resize', closeContextMenu)
+      window.removeEventListener('blur', onWindowBlur)
+      window.removeEventListener('keydown', onEscape)
+    }
+  }, [contextMenu])
+
+  const scrollToHeading = useCallback((headingIndex: number) => {
+    const editor = wysiwygEditorRef.current
+    if (!editor) {
+      return
+    }
+
+    const headings = Array.from(editor.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+    const target = headings[headingIndex] as HTMLElement | undefined
+
+    if (!target) {
+      return
+    }
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  const onTocItemClick = useCallback(
+    (headingIndex: number) => {
+      if (editorMode === 'wysiwyg') {
+        scrollToHeading(headingIndex)
+        return
+      }
+
+      setEditorMode('wysiwyg')
+      window.setTimeout(() => {
+        scrollToHeading(headingIndex)
+      }, 60)
+    },
+    [editorMode, scrollToHeading],
   )
 
-  const openCreateFileDialog = useCallback(() => {
+  const openCreateFileDialog = useCallback((targetPath?: string | null, targetType?: NodeType | null) => {
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
     }
 
-    setNameDialog({ mode: 'create-file', value: '' })
-  }, [rootPath])
+    const targetDirectory = getDirectoryTarget(
+      rootPath,
+      targetPath ?? selectedPath,
+      targetType ?? selectedType,
+    )
 
-  const openCreateDirectoryDialog = useCallback(() => {
+    setNameDialog({
+      mode: 'create-file',
+      value: '',
+      targetDirectoryPath: targetDirectory ?? rootPath,
+    })
+  }, [rootPath, selectedPath, selectedType])
+
+  const openCreateDirectoryDialog = useCallback((targetPath?: string | null, targetType?: NodeType | null) => {
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
     }
 
-    setNameDialog({ mode: 'create-directory', value: '' })
-  }, [rootPath])
+    const targetDirectory = getDirectoryTarget(
+      rootPath,
+      targetPath ?? selectedPath,
+      targetType ?? selectedType,
+    )
 
-  const openRenameDialog = useCallback(() => {
+    setNameDialog({
+      mode: 'create-directory',
+      value: '',
+      targetDirectoryPath: targetDirectory ?? rootPath,
+    })
+  }, [rootPath, selectedPath, selectedType])
+
+  const openRenameDialog = useCallback((targetPathOverride?: string | null) => {
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
     }
 
-    if (!selectedPath) {
+    const targetPath = targetPathOverride ?? selectedPath
+
+    if (!targetPath) {
       window.alert('Sélectionne un fichier ou un dossier à renommer.')
       return
     }
 
-    if (selectedPath === rootPath) {
+    if (targetPath === rootPath) {
       window.alert('Le dossier racine ne peut pas être renommé.')
       return
     }
 
     setNameDialog({
       mode: 'rename',
-      value: getBaseName(selectedPath),
-      targetPath: selectedPath,
+      value: getBaseName(targetPath),
+      targetPath,
     })
   }, [rootPath, selectedPath])
 
@@ -493,28 +1377,32 @@ function App() {
 
     try {
       if (nameDialog.mode === 'create-file') {
-        const targetDirectory = directoryTarget ?? rootPath
-        await holo.createFile(targetDirectory, value)
+        await holo.createFile(nameDialog.targetDirectoryPath, value)
       } else if (nameDialog.mode === 'create-directory') {
-        const targetDirectory = directoryTarget ?? rootPath
-        await holo.createDirectory(targetDirectory, value)
+        await holo.createDirectory(nameDialog.targetDirectoryPath, value)
       } else if (nameDialog.mode === 'rename') {
         const renameTargetPath = nameDialog.targetPath
         const result = await holo.renamePath(renameTargetPath, value)
 
-        // Mettre à jour les tabs si un onglet du fichier renommé est ouvert
         setOpenTabs((prev) =>
           prev.map((tab) =>
-            tab.path === renameTargetPath
-              ? { ...tab, path: result.newPath, name: getBaseName(result.newPath) }
+            isSameOrChildPath(renameTargetPath, tab.path)
+              ? {
+                ...tab,
+                path: tab.path.replace(renameTargetPath, result.newPath),
+                name: getBaseName(tab.path.replace(renameTargetPath, result.newPath)),
+              }
               : tab,
           ),
         )
-        if (activeTabPath === renameTargetPath) {
-          setActiveTabPath(result.newPath)
+
+        if (selectedPath && isSameOrChildPath(renameTargetPath, selectedPath)) {
+          setSelectedPath(selectedPath.replace(renameTargetPath, result.newPath))
         }
 
-        setSelectedPath(result.newPath)
+        if (activeTabPath && isSameOrChildPath(renameTargetPath, activeTabPath)) {
+          setActiveTabPath(activeTabPath.replace(renameTargetPath, result.newPath))
+        }
       }
 
       setNameDialog(null)
@@ -523,10 +1411,10 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [directoryTarget, getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath])
+  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath])
 
-  const deleteSelected = useCallback(async () => {
-    if (!selectedPath || !rootPath || selectedPath === rootPath) {
+  const deletePathTarget = useCallback(async (targetPath: string) => {
+    if (!rootPath || targetPath === rootPath) {
       return
     }
 
@@ -543,13 +1431,8 @@ function App() {
         return
       }
 
-      await holo.deletePath(selectedPath)
-
-      // Fermer les onglets du fichier supprimé
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== selectedPath))
-      if (activeTabPath === selectedPath) {
-        setActiveTabPath(null)
-      }
+      await holo.deletePath(targetPath)
+      closeTabsForPath(targetPath)
 
       setSelectedPath(rootPath)
       setSelectedType('directory')
@@ -558,7 +1441,18 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [getHoloApi, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath])
+  }, [closeTabsForPath, getHoloApi, refreshGitState, refreshTree, rootPath])
+
+  const openTreeContextMenu = useCallback((node: TreeNode, position: { x: number; y: number }) => {
+    setSelectedPath(node.path)
+    setSelectedType(node.type)
+    setContextMenu({ x: position.x, y: position.y, node })
+  }, [])
+
+  const runContextAction = useCallback((action: () => void) => {
+    setContextMenu(null)
+    action()
+  }, [])
 
   const openCommitDialog = useCallback(() => {
     if (!gitState.isRepo) {
@@ -742,22 +1636,100 @@ function App() {
     [openFile],
   )
 
+  const minimizeWindow = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    await holo.minimizeWindow()
+  }, [getHoloApi])
+
+  const toggleMaximizeWindow = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    await holo.toggleMaximizeWindow()
+  }, [getHoloApi])
+
+  const closeWindow = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    await holo.closeWindow()
+  }, [getHoloApi])
+
+  const openGithubCheckout = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo) {
+      window.open('https://github.com', '_blank', 'noopener,noreferrer')
+      return
+    }
+
+    await holo.openExternalUrl('https://github.com')
+  }, [getHoloApi])
+
+  const closeOpenedFolder = useCallback(() => {
+    setRootPath(null)
+    setTree(null)
+    setSelectedPath(null)
+    setSelectedType(null)
+    setExpandedDirectories(new Set())
+    setOpenTabs([])
+    setActiveTabPath(null)
+    setGitState(DEFAULT_GIT_STATE)
+    setSyncFeedback(DEFAULT_SYNC_FEEDBACK)
+    setContextMenu(null)
+  }, [])
+
 
   return (
     <main
-      className="h-screen bg-[#242527] text-white font-sans gap-x-2 grid overflow-hidden grid-cols-[auto_1fr] grid-rows-[64px_1fr]"
+      className="h-screen bg-[#242527] text-white rounded-lg font-sans gap-x-2 grid overflow-hidden grid-cols-[auto_1fr] grid-rows-[64px_1fr]"
       style={{ gridTemplateAreas: `'appbar appbar' 'sidebar content'` }}
     >
 
       {/* App header */}
       <header className="flex items-center pr-3" style={{ gridArea: 'appbar' }}>
-        <div className="flex-1">
+        <div className="flex-1 drag user-select-none">
           <img src="/logo.png" height={40} width={120} alt="logo" />
         </div>
-        <div className="flex gap-2 text-white/50">
-          <button className="size-8 text-white/50 hover:text-white cursor-pointer"><i className="fa-jelly-duo fa-regular fa-minus" /></button>
-          <button className="size-8 text-white/50 hover:text-white cursor-pointer"><i className="fa-jelly-duo fa-regular fa-square" /></button>
-          <button className="size-8 text-white/50 hover:text-white cursor-pointer"><i className="fa-jelly-duo fa-regular fa-xmark" /></button>
+        <div className="flex gap-2 text-white/50 no-drag">
+          <button
+            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
+            onClick={() => {
+              void minimizeWindow()
+            }}
+            title="Minimiser"
+          >
+            <i className="fa-jelly-duo fa-regular fa-minus" />
+          </button>
+          <button
+            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
+            onClick={() => {
+              void toggleMaximizeWindow()
+            }}
+            title="Agrandir / Restaurer"
+          >
+            <i className="fa-jelly-duo fa-regular fa-square" />
+          </button>
+          <button
+            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
+            onClick={() => {
+              void closeWindow()
+            }}
+            title="Fermer"
+          >
+            <i className="fa-jelly-duo fa-regular fa-xmark" />
+          </button>
         </div>
       </header>
 
@@ -776,6 +1748,11 @@ function App() {
             onClick={() => setActiveSidebar('files')}
           >
             <i className="fa-jelly-duo fa-regular fa-folder text-2xl" />
+            {openTabs.length > 0 && (
+              <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-[#242527] border-2 border-[#7B61FF]/70 text-[10px] font-bold text-white flex items-center justify-center">
+                {openTabs.length}
+              </div>
+            )}
           </div>
 
           {/* Bouton Git — badges incoming/outgoing juste en dessous */}
@@ -815,72 +1792,84 @@ function App() {
           <nav className="bg-[#1f2021] min-w-[300px] rounded-t-lg overflow-x-hidden overflow-y-auto flex-1 p-5 flex flex-col gap-3">
             
             {/* Titre du dossier */}
-            <div>
+            <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-white/80 truncate">
-                {rootPath ? `📁 ${getBaseName(rootPath)}` : 'Aucun dossier'}
+                {rootPath ? `Dossier ${getBaseName(rootPath)}` : 'Aucun dossier'}
               </h2>
+              {rootPath && (
+                <button
+                  className="size-6 shrink-0 rounded border border-white/10 text-white/55 hover:text-white hover:border-white/30 flex items-center justify-center"
+                  onClick={closeOpenedFolder}
+                  title="Fermer le dossier"
+                >
+                  <i className="fa-solid fa-xmark text-[10px]" />
+                </button>
+              )}
             </div>
 
-            {/* Boutons actions */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium bg-[#7B61FF]/20 border border-[#7B61FF]/50 text-[#7B61FF] hover:bg-[#7B61FF]/30 hover:border-[#7B61FF] disabled:opacity-50"
-                onClick={() => void openFolder()}
-                title="Ouvrir un dossier"
-              >
-                <i className="fa-solid fa-folder-open mr-1" />
-                Ouvrir
-              </button>
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium border border-white/10 text-white/70 hover:border-white/30 hover:text-white disabled:opacity-50"
-                onClick={() => void refreshTree()}
-                disabled={!rootPath}
-                title="Rafraîchir l'arborescence"
-              >
-                <i className="fa-solid fa-arrow-rotate-right mr-1" />
-                Rafraîchir
-              </button>
-            </div>
+            {!rootPath && (
+              <div className="rounded-2xl border border-[#7B61FF]/30 bg-gradient-to-b from-[#2b2450]/35 to-[#1f2021] p-3 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9d8bff]">Démarrer</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded px-2.5 py-1.5 text-xs font-medium bg-[#7B61FF] text-white hover:bg-[#6D4FD8]"
+                    onClick={() => void openFolder()}
+                    title="Ouvrir un dossier"
+                  >
+                    <i className="fa-solid fa-folder-open mr-1" />
+                    Ouvrir un dossier
+                  </button>
+                  <button
+                    className="rounded px-2.5 py-1.5 text-xs font-medium border border-white/15 text-white/85 hover:bg-white/10"
+                    onClick={() => {
+                      void openGithubCheckout()
+                    }}
+                    title="Checkout sur GitHub"
+                  >
+                    <i className="fa-brands fa-github mr-1" />
+                    Checkout GitHub
+                  </button>
+                </div>
+              </div>
+            )}
 
-            {/* Boutons CRUD */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium border border-white/10 text-white/70 hover:border-white/30 hover:text-white disabled:opacity-50"
-                onClick={openCreateFileDialog}
-                disabled={!rootPath}
-                title="Créer un fichier"
-              >
-                <i className="fa-solid fa-file-plus mr-1" />
-                Fichier
-              </button>
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium border border-white/10 text-white/70 hover:border-white/30 hover:text-white disabled:opacity-50"
-                onClick={openCreateDirectoryDialog}
-                disabled={!rootPath}
-                title="Créer un dossier"
-              >
-                <i className="fa-solid fa-folder-plus mr-1" />
-                Dossier
-              </button>
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium border border-white/10 text-white/70 hover:border-white/30 hover:text-white disabled:opacity-50"
-                onClick={openRenameDialog}
-                disabled={!selectedPath || selectedPath === rootPath}
-                title="Renommer"
-              >
-                <i className="fa-solid fa-pen mr-1" />
-                Renommer
-              </button>
-              <button
-                className="px-2.5 py-1 rounded text-xs font-medium border border-red-900/50 text-red-400 hover:border-red-700/80 hover:text-red-300 disabled:opacity-50"
-                onClick={() => void deleteSelected()}
-                disabled={!selectedPath || selectedPath === rootPath}
-                title="Supprimer"
-              >
-                <i className="fa-solid fa-trash mr-1" />
-                Supprimer
-              </button>
-            </div>
+            {!rootPath && recentFolders.length > 0 && (
+              <div className="rounded border border-white/10 bg-white/5 p-2 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-white/45">Récents</p>
+                <ul className="space-y-1">
+                  {recentFolders.map((folderPath) => {
+                    const isActive = rootPath === folderPath
+
+                    return (
+                      <li key={folderPath}>
+                        <div className={`flex items-center gap-1 rounded ${isActive ? 'bg-[#7B61FF]/20' : 'hover:bg-white/8'}`}>
+                          <button
+                            className={`min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs ${isActive ? 'text-[#7B61FF]' : 'text-white/70 hover:text-white'}`}
+                            onClick={() => {
+                              void openRecentFolder(folderPath)
+                            }}
+                            title={folderPath}
+                          >
+                            {getBaseName(folderPath)}
+                          </button>
+
+                          <button
+                            className="mr-1 size-5 shrink-0 rounded text-white/45 hover:text-red-300 hover:bg-red-500/10 flex items-center justify-center"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void removeRecentFolder(folderPath)
+                            }}
+                            title="Retirer des récents"
+                          >
+                            <i className="fa-solid fa-xmark text-[9px]" />
+                          </button>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )}
 
             {/* Arborescence */}
             {tree ? (
@@ -889,11 +1878,38 @@ function App() {
                   node={tree!}
                   selectedPath={selectedPath}
                   onSelect={onSelectNode}
+                  onContextMenu={openTreeContextMenu}
                   expandedDirectories={expandedDirectories}
                   onToggleDirectory={toggleDirectory}
+                  draggedPath={draggedPath}
+                  dropTargetPath={dropTargetPath}
+                  onDragStart={(node) => setDraggedPath(node.path)}
+                  onDragEnd={() => {
+                    setDraggedPath(null)
+                    setDropTargetPath(null)
+                  }}
+                  onDragOverDirectory={(node) => {
+                    if (!draggedPath || draggedPath === node.path || isSameOrChildPath(draggedPath, node.path)) {
+                      return
+                    }
+
+                    setDropTargetPath(node.path)
+                  }}
+                  onDragLeaveDirectory={(node) => {
+                    if (dropTargetPath === node.path) {
+                      setDropTargetPath(null)
+                    }
+                  }}
+                  onDropOnDirectory={(node) => {
+                    if (!draggedPath) {
+                      return
+                    }
+
+                    void moveNode(draggedPath, node.path)
+                  }}
                 />
               </ul>
-            ) : (
+            ) : !rootPath && recentFolders.length > 0 ? null : (
               <p className="text-xs text-white/40 text-center py-8">
                 {desktopApiAvailable ? 'Ouvre un dossier pour commencer' : 'API Electron indisponible'}
               </p>
@@ -1077,7 +2093,7 @@ function App() {
       </aside>
 
       {/* Zone d'édition principale */}
-      <section className="flex flex-1 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
+      <section className="flex flex-1 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
           {/* Tab bar */}
           <div className="flex items-center border-b border-white/10 bg-[#242527]">
             {openTabs.length === 0 ? (
@@ -1102,10 +2118,7 @@ function App() {
                       className="ml-1 rounded px-1 opacity-0 hover:bg-white/20 group-hover:opacity-100"
                       onClick={(e) => {
                         e.stopPropagation()
-                        setOpenTabs((prev) => prev.filter((t) => t.path !== tab.path))
-                        if (activeTabPath === tab.path) {
-                          setActiveTabPath(openTabs.length > 1 ? openTabs[0].path : null)
-                        }
+                        closeTab(tab.path)
                       }}
                       title="Fermer"
                     >
@@ -1118,37 +2131,191 @@ function App() {
           </div>
 
           {/* Éditeur */}
-          <div className="flex-1 p-4 flex flex-col">
+          <div className="flex-1 min-h-0 flex flex-col">
             {activeTab ? (
               <>
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs text-white/50">
-                    {activeTab.path} {activeTab.isDirty ? '• non sauvegardé' : ''}
+                {/* Barre de contrôles fine */}
+                <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-6 py-2">
+                  <span className="text-[10px] text-white/25">
+                    {activeTab.isDirty ? '● non sauvegardé' : ''}
                   </span>
-                  <button
-                    className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
-                    onClick={() => void saveCurrentFile()}
-                    disabled={!activeTab.isDirty}
-                    title="Sauvegarder (Ctrl+S)"
-                  >
-                    <i className="fa-solid fa-floppy-disk mr-1" />
-                    Sauvegarder
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center rounded border border-white/10 bg-[#1f2021] p-0.5">
+                      <button
+                        className={`rounded px-2 py-1 text-[10px] font-medium ${editorMode === 'raw' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
+                        onClick={() => setEditorMode('raw')}
+                        title="Mode RAW"
+                      >
+                        RAW
+                      </button>
+                      <button
+                        className={`rounded px-2 py-1 text-[10px] font-medium ${editorMode === 'wysiwyg' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
+                        onClick={() => setEditorMode('wysiwyg')}
+                        title="Mode WYSIWYG"
+                      >
+                        WYSIWYG
+                      </button>
+                    </div>
+                    <button
+                      className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
+                      onClick={() => void saveCurrentFile()}
+                      disabled={!activeTab.isDirty}
+                      title="Sauvegarder (Ctrl+S)"
+                    >
+                      <i className="fa-solid fa-floppy-disk mr-1" />
+                      Sauvegarder
+                    </button>
+                  </div>
                 </div>
-                <textarea
-                  className="flex-1 resize-none rounded bg-[#1f2021] border border-white/10 p-3 font-mono text-sm text-white/90 outline-none focus:border-[#7B61FF]/50 focus:bg-[#262729]"
-                  value={activeTab.content}
-                  onChange={(event) => {
-                    setOpenTabs((prev) =>
-                      prev.map((tab) =>
-                        tab.path === activeTabPath
-                          ? { ...tab, content: event.target.value, isDirty: true }
-                          : tab,
-                      ),
-                    )
-                  }}
-                  placeholder="Édite ton fichier ici..."
-                />
+
+                {/* Zone de page unifiée — tout scrolle ensemble */}
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <div className="mx-auto max-w-4xl px-8 pt-10 pb-32">
+
+                    {/* Titre */}
+                    <input
+                      className="mb-2 w-full bg-transparent text-[2rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
+                      value={editableHeader.title}
+                      onChange={(event) => updateEditableHeader('title', event.target.value)}
+                      placeholder="Sans titre"
+                    />
+
+                    {/* Description */}
+                    <textarea
+                      className="mb-3 w-full resize-none bg-transparent text-sm leading-relaxed text-white/55 outline-none placeholder:text-white/20"
+                      rows={2}
+                      value={editableHeader.description}
+                      onChange={(event) => updateEditableHeader('description', event.target.value)}
+                      placeholder="Ajouter une description…"
+                    />
+
+                    {/* Ligne de méta */}
+                    <div className="mb-8 flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-white/8 pb-5 text-xs text-white/30">
+                      <span className="flex items-center gap-1">
+                        <i className="fa-regular fa-user text-[10px]" />
+                        <input
+                          className="bg-transparent outline-none placeholder:text-white/20 hover:text-white/60 focus:text-white/80"
+                          value={editableHeader.author}
+                          onChange={(event) => updateEditableHeader('author', event.target.value)}
+                          placeholder="Auteur"
+                          size={Math.max(editableHeader.author.length, 6)}
+                        />
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <i className="fa-regular fa-calendar text-[10px]" />
+                        {formatReadonlyDate(activePathStats?.createdAt)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <i className="fa-regular fa-clock text-[10px]" />
+                        {formatReadonlyDate(activePathStats?.modifiedAt)}
+                      </span>
+                    </div>
+
+                    {/* Corps du document */}
+                    {editorMode === 'raw' ? (
+                      <textarea
+                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-relaxed text-white/85 outline-none placeholder:text-white/25"
+                        value={activeTabBody}
+                        onChange={(event) => updateActiveTabBody(event.target.value)}
+                        placeholder="Édite ton fichier ici…"
+                      />
+                    ) : (
+                      <div className="relative">
+                        <div
+                          ref={wysiwygEditorRef}
+                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-2 [&_th]:border [&_th]:border-white/20 [&_th]:p-2 [&_th]:bg-white/5 [&_td]:border [&_td]:border-white/10 [&_td]:p-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          contentEditable
+                          suppressContentEditableWarning
+                          onInput={onWysiwygInput}
+                          onKeyDown={onWysiwygKeyDown}
+                        />
+                        <div className="mt-4 text-right text-[9px] text-white/15 pointer-events-none select-none">
+                          <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {tocItems.length > 0 && (
+                  <aside className="fixed right-6 top-40 z-30 hidden max-h-[70vh] w-64 overflow-auto rounded-lg border border-white/10 bg-[#1a1b1c]/90 p-3 backdrop-blur-sm 2xl:block">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">
+                      Table des matières
+                    </p>
+                    <nav className="space-y-0.5">
+                      {tocItems.map((item) => (
+                        <button
+                          key={`${item.headingIndex}-${item.text}`}
+                          className="block w-full truncate rounded px-2 py-1 text-left text-xs text-white/65 hover:bg-white/8 hover:text-white"
+                          style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
+                          onClick={() => onTocItemClick(item.headingIndex)}
+                          title={item.text}
+                        >
+                          {item.text}
+                        </button>
+                      ))}
+                    </nav>
+                  </aside>
+                )}
+
+                {/* Floating selection popup */}
+                {selectionPopup && editorMode === 'wysiwyg' && (
+                  <div
+                    className="fixed z-50 flex items-center gap-0.5 rounded-lg border border-white/15 bg-[#18191a] shadow-2xl px-1 py-1"
+                    style={{ left: selectionPopup.x, top: selectionPopup.y, transform: 'translate(-50%, -100%)' }}
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <button className="rounded px-2 py-1 text-xs font-bold text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('bold')} title="Gras">B</button>
+                    <button className="rounded px-2 py-1 text-xs italic text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('italic')} title="Italique">I</button>
+                    <button className="rounded px-2 py-1 text-xs underline text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('underline')} title="Souligné">U</button>
+                    <button className="rounded px-2 py-1 text-xs line-through text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('strikeThrough')} title="Barré">S</button>
+                    <div className="w-px h-4 bg-white/15 mx-0.5" />
+                    <button className="rounded px-2 py-1 text-xs text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('formatBlock', '<h1>')} title="H1">H1</button>
+                    <button className="rounded px-2 py-1 text-xs text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('formatBlock', '<h2>')} title="H2">H2</button>
+                    <div className="w-px h-4 bg-white/15 mx-0.5" />
+                    <button
+                      className="rounded px-2 py-1 text-xs text-[#9d8bff] hover:bg-[#7B61FF]/20"
+                      onClick={() => {
+                        const link = window.prompt('URL du lien', 'https://')
+                        if (link) runWysiwygCommand('createLink', link)
+                      }}
+                      title="Lien"
+                    >
+                      <i className="fa-solid fa-link text-[10px]" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Slash command menu */}
+                {slashMenu && editorMode === 'wysiwyg' && (() => {
+                  const filtered = SLASH_COMMANDS.filter(
+                    (c) => !slashMenu.query || c.label.toLowerCase().includes(slashMenu.query),
+                  )
+                  return filtered.length > 0 ? (
+                    <div
+                      className="fixed z-50 min-w-[200px] rounded-lg border border-white/15 bg-[#18191a] shadow-2xl p-1"
+                      style={{ left: slashMenu.x, top: slashMenu.y }}
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      {slashMenu.query === '' && (
+                        <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-white/35">Insérer un bloc</p>
+                      )}
+                      {filtered.map((cmd, idx) => (
+                        <button
+                          key={cmd.id}
+                          className={`flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-xs ${idx === slashMenuIndex ? 'bg-[#7B61FF]/25 text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
+                          onClick={() => executeSlashCommand(cmd)}
+                        >
+                          <span className="w-5 text-center text-[11px] text-[#9d8bff]">
+                            <i className={cmd.icon} />
+                          </span>
+                          <span className="flex-1 font-medium">{cmd.label}</span>
+                          <span className="text-[10px] text-white/30">{cmd.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null
+                })()}
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center">
@@ -1159,6 +2326,59 @@ function App() {
             )}
           </div>
         </section>
+
+      {contextMenu && (
+        <div
+          className="fixed z-20 min-w-[180px] rounded-lg border border-white/10 bg-[#1b1c1d] p-1.5 shadow-2xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-white/35">
+            {contextMenu.node.type === 'directory' ? 'Dossier' : 'Fichier'} · {contextMenu.node.name}
+          </div>
+
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+            onClick={() => runContextAction(() => openCreateFileDialog(contextMenu.node.path, contextMenu.node.type))}
+          >
+            <i className="fa-solid fa-file-plus w-4 text-center" />
+            Nouveau fichier
+          </button>
+
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+            onClick={() => runContextAction(() => openCreateDirectoryDialog(contextMenu.node.path, contextMenu.node.type))}
+          >
+            <i className="fa-solid fa-folder-plus w-4 text-center" />
+            Nouveau dossier
+          </button>
+
+          {contextMenu.node.path !== rootPath && (
+            <>
+              <div className="my-1 h-px bg-white/8" />
+
+              <button
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                onClick={() => runContextAction(() => openRenameDialog(contextMenu.node.path))}
+              >
+                <i className="fa-solid fa-pen w-4 text-center" />
+                Renommer
+              </button>
+
+              <button
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                onClick={() => runContextAction(() => {
+                  void deletePathTarget(contextMenu.node.path)
+                })}
+              >
+                <i className="fa-solid fa-trash w-4 text-center" />
+                Supprimer
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {nameDialog && (
         <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/35 p-4">

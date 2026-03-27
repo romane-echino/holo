@@ -44,9 +44,17 @@ type HoloGitSyncResult = {
 
 interface HoloApi {
   appName: string
+  minimizeWindow: () => Promise<{ ok: true }>
+  toggleMaximizeWindow: () => Promise<{ ok: true; isMaximized: boolean }>
+  closeWindow: () => Promise<{ ok: true }>
+  openExternalUrl: (url: string) => Promise<{ ok: true }>
   openFolder: () => Promise<OpenFolderResult>
+  getRecentFolders: () => Promise<string[]>
+  removeRecentFolder: (folderPath: string) => Promise<string[]>
+  openRecentFolder: (folderPath: string) => Promise<OpenFolderResult>
   refreshTree: () => Promise<OpenFolderResult>
   readFile: (filePath: string) => Promise<string>
+  getPathStats: (targetPath: string) => Promise<{ modifiedAt: string; createdAt: string }>
   writeFile: (filePath: string, content: string) => Promise<{ ok: true }>
   createFile: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
   createDirectory: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
@@ -54,6 +62,10 @@ interface HoloApi {
   renamePath: (
     targetPath: string,
     newName: string,
+  ) => Promise<{ ok: true; newPath: string }>
+  movePath: (
+    sourcePath: string,
+    targetDirectoryPath: string,
   ) => Promise<{ ok: true; newPath: string }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
   gitFetch: () => Promise<{ ok: true; output: string }>

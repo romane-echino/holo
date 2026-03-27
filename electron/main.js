@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -10,6 +10,81 @@ const __dirname = path.dirname(__filename)
 const isDev = !app.isPackaged
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
+const MAX_RECENT_FOLDERS = 10
+
+function getRecentFoldersFilePath() {
+  return path.join(app.getPath('userData'), 'recent-folders.json')
+}
+
+async function readRecentFoldersRaw() {
+  try {
+    const raw = await fs.readFile(getRecentFoldersFilePath(), 'utf8')
+    const parsed = JSON.parse(raw)
+
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter((entry) => typeof entry === 'string')
+  } catch {
+    return []
+  }
+}
+
+async function writeRecentFolders(folders) {
+  await fs.mkdir(path.dirname(getRecentFoldersFilePath()), { recursive: true })
+  await fs.writeFile(getRecentFoldersFilePath(), JSON.stringify(folders, null, 2), 'utf8')
+}
+
+async function keepOnlyExistingDirectories(folderPaths) {
+  const existing = []
+
+  for (const folderPath of folderPaths) {
+    try {
+      const stats = await fs.stat(folderPath)
+
+      if (stats.isDirectory()) {
+        existing.push(folderPath)
+      }
+    } catch {
+      // ignore paths no longer available
+    }
+  }
+
+  return existing
+}
+
+async function getRecentFolders() {
+  const rawFolders = await readRecentFoldersRaw()
+  const existingFolders = await keepOnlyExistingDirectories(rawFolders)
+  const trimmed = existingFolders.slice(0, MAX_RECENT_FOLDERS)
+
+  if (JSON.stringify(trimmed) !== JSON.stringify(rawFolders)) {
+    await writeRecentFolders(trimmed)
+  }
+
+  return trimmed
+}
+
+async function addRecentFolder(folderPath) {
+  const normalizedTarget = path.resolve(folderPath)
+  const recentFolders = await getRecentFolders()
+  const deduplicated = [
+    normalizedTarget,
+    ...recentFolders.filter((entry) => path.resolve(entry) !== normalizedTarget),
+  ]
+  const trimmed = deduplicated.slice(0, MAX_RECENT_FOLDERS)
+  await writeRecentFolders(trimmed)
+  return trimmed
+}
+
+async function removeRecentFolder(folderPath) {
+  const normalizedTarget = path.resolve(folderPath)
+  const recentFolders = await getRecentFolders()
+  const filtered = recentFolders.filter((entry) => path.resolve(entry) !== normalizedTarget)
+  await writeRecentFolders(filtered)
+  return filtered
+}
 
 function createDefaultGitState() {
   return {
@@ -55,7 +130,8 @@ function sanitizeName(name) {
 
 async function buildTree(entryPath) {
   const entries = (await fs.readdir(entryPath, { withFileTypes: true })).filter(
-    (entry) => !entry.name.startsWith('.'),
+    (entry) => !entry.name.startsWith('.')
+      && (entry.isDirectory() || entry.name.toLowerCase().endsWith('.md')),
   )
 
   entries.sort((left, right) => {
@@ -319,18 +395,55 @@ function getGitErrorMessage(result, fallback) {
   return result.stderr || result.stdout || fallback
 }
 
+function getWindowFromEvent(event) {
+  const window = BrowserWindow.fromWebContents(event.sender)
+
+  if (!window) {
+    throw new Error('Fenêtre introuvable.')
+  }
+
+  return window
+}
+
+function assertExternalHttpUrl(rawUrl) {
+  let parsedUrl
+
+  try {
+    parsedUrl = new URL(rawUrl)
+  } catch {
+    throw new Error('URL invalide.')
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('Seules les URLs http(s) sont autorisées.')
+  }
+
+  return parsedUrl.toString()
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 980,
     minHeight: 640,
+    frame: false,
+    autoHideMenuBar: true,
+    transparent: true,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
+  })
+
+  window.setMenuBarVisibility(false)
+  window.removeMenu()
+
+  window.once('ready-to-show', () => {
+    window.show()
   })
 
   if (isDev) {
@@ -351,7 +464,55 @@ ipcMain.handle('fs:open-folder', async () => {
   }
 
   currentRootPath = result.filePaths[0]
+  await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
+})
+
+ipcMain.handle('fs:get-recent-folders', async () => getRecentFolders())
+
+ipcMain.handle('fs:remove-recent-folder', async (_event, folderPath) => removeRecentFolder(folderPath))
+
+ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
+  const targetPath = path.resolve(folderPath)
+  const stats = await fs.stat(targetPath).catch(() => null)
+
+  if (!stats || !stats.isDirectory()) {
+    throw new Error('Le dossier récent n’existe plus ou est inaccessible.')
+  }
+
+  currentRootPath = targetPath
+  await addRecentFolder(currentRootPath)
+  return getCurrentTreePayload()
+})
+
+ipcMain.handle('window:minimize', async (event) => {
+  const window = getWindowFromEvent(event)
+  window.minimize()
+  return { ok: true }
+})
+
+ipcMain.handle('window:toggle-maximize', async (event) => {
+  const window = getWindowFromEvent(event)
+
+  if (window.isMaximized()) {
+    window.unmaximize()
+    return { ok: true, isMaximized: false }
+  }
+
+  window.maximize()
+  return { ok: true, isMaximized: true }
+})
+
+ipcMain.handle('window:close', async (event) => {
+  const window = getWindowFromEvent(event)
+  window.close()
+  return { ok: true }
+})
+
+ipcMain.handle('app:open-external-url', async (_event, rawUrl) => {
+  const safeUrl = assertExternalHttpUrl(rawUrl)
+  await shell.openExternal(safeUrl)
+  return { ok: true }
 })
 
 ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
@@ -359,6 +520,16 @@ ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
 ipcMain.handle('fs:read-file', async (_event, filePath) => {
   assertPathInsideRoot(filePath)
   return fs.readFile(filePath, 'utf8')
+})
+
+ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
+  assertPathInsideRoot(targetPath)
+  const stats = await fs.stat(targetPath)
+
+  return {
+    modifiedAt: stats.mtime.toISOString(),
+    createdAt: stats.birthtime.toISOString(),
+  }
 })
 
 ipcMain.handle('fs:write-file', async (_event, filePath, content) => {
@@ -404,6 +575,32 @@ ipcMain.handle('fs:rename-path', async (_event, targetPath, newName) => {
   assertPathInsideRoot(newPath)
   await fs.rename(targetPath, newPath)
   return { ok: true, newPath }
+})
+
+ipcMain.handle('fs:move-path', async (_event, sourcePath, targetDirectoryPath) => {
+  assertPathInsideRoot(sourcePath)
+  assertPathInsideRoot(targetDirectoryPath)
+
+  if (sourcePath === currentRootPath) {
+    throw new Error('Impossible de déplacer le dossier racine ouvert.')
+  }
+
+  const sourceReal = path.resolve(sourcePath)
+  const targetReal = path.resolve(targetDirectoryPath)
+
+  if (sourceReal === targetReal) {
+    throw new Error('Source et destination identiques.')
+  }
+
+  if (targetReal.startsWith(`${sourceReal}${path.sep}`)) {
+    throw new Error('Impossible de déplacer un dossier dans lui-même.')
+  }
+
+  const targetPath = path.join(targetDirectoryPath, path.basename(sourcePath))
+  assertPathInsideRoot(targetPath)
+
+  await fs.rename(sourcePath, targetPath)
+  return { ok: true, newPath: targetPath }
 })
 
 ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
@@ -650,6 +847,7 @@ ipcMain.handle('git:merge', async (_event, branch) => {
 })
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
   createWindow()
 
   app.on('activate', () => {
