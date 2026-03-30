@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('holo', {
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
+  toggleDevTools: () => ipcRenderer.invoke('window:toggle-devtools'),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
@@ -28,4 +29,6 @@ contextBridge.exposeInMainWorld('holo', {
   gitSync: () => ipcRenderer.invoke('git:sync'),
   gitPull: () => ipcRenderer.invoke('git:pull'),
   gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
+  saveImage: (name, dataBase64) => ipcRenderer.invoke('fs:save-image', name, dataBase64),
+  loadImage: (relativePath) => ipcRenderer.invoke('fs:load-image', relativePath),
 })

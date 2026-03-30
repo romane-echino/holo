@@ -1,0 +1,28 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+  <!-- Fond dégradé -->
+  <defs>
+    <linearGradient id="holo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7B61FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#9d8bff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Cercle principal -->
+  <circle cx="100" cy="100" r="95" fill="#1a1b1c" stroke="url(#holo-gradient)" stroke-width="2"/>
+  
+  <!-- Forme abstraite : deux carrés / blocs de documents -->
+  <!-- Bloc 1 (haut-gauche) -->
+  <rect x="45" y="50" width="45" height="50" rx="4" fill="#7B61FF" opacity="0.9"/>
+  
+  <!-- Bloc 2 (bas-droit) -->
+  <rect x="110" y="100" width="45" height="50" rx="4" fill="#9d8bff" opacity="0.9"/>
+  
+  <!-- Liaison / connecteur (trait arrondi) -->
+  <line x1="92" y1="78" x2="115" y2="100" stroke="#7B61FF" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+  
+  <!-- Texte "H" stylisé dans le bloc 1 -->
+  <text x="67.5" y="88" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="white" text-anchor="middle">H</text>
+  
+  <!-- Texte "O" stylisé dans le bloc 2 -->
+  <text x="132.5" y="138" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="white" text-anchor="middle">O</text>
+</svg>

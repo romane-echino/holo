@@ -474,6 +474,8 @@ function App() {
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git'>('files')
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
+  const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
+  const imageDragDepthRef = useRef(0)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
   const isSyncingWysiwygRef = useRef(false)
   const lastWysiwygSyncedTabRef = useRef<string | null>(null)
@@ -487,6 +489,36 @@ function App() {
       bulletListMarker: '-',
     })
     service.use(gfm)
+    
+    
+    // Convert images back to markdown, restoring relative paths
+    service.addRule('localImage', {
+      filter: 'img',
+      replacement: (_content, node) => {
+        const img = node as HTMLImageElement
+        let src = img.getAttribute('src') ?? ''
+        const dataSrc = img.getAttribute('data-src')
+        const alt = img.getAttribute('alt') ?? ''
+        
+        // If data-src exists, use that for relative path
+        if (dataSrc) {
+          src = dataSrc
+        }
+        // Otherwise keep the src as is (data URLs, external URLs)
+        
+        return `![${alt}](${src})`
+      },
+    })
+    
+    // Table rule to use GFM markdown format
+    service.addRule('table', {
+      filter: 'table',
+      replacement: () => {
+        // The gfm plugin should handle this, but ensure proper formatting
+        return '\n\n' // This will be replaced by gfm's table handling
+      },
+    })
+    
     return service
   }, [])
   const desktopApiAvailable = typeof window.holo !== 'undefined'
@@ -824,7 +856,21 @@ function App() {
 
     await refreshTree()
     await refreshGitState(false)
-  }, [activeTab, getHoloApi, refreshGitState, refreshTree])
+
+    // Auto-commit if in a Git repository
+    if (gitState.isRepo) {
+      try {
+        const displayPath = activeTab.path
+          .replace(/^\//, '')
+          .replace(/\.md$/, '')
+        const commitMessage = `update/add ${displayPath}`
+        await holo.gitCommit(commitMessage)
+      } catch (error) {
+        // Silent fail - file was saved successfully, commit is just a bonus
+        console.error('Auto-commit failed:', error)
+      }
+    }
+  }, [activeTab, getHoloApi, refreshGitState, refreshTree, gitState.isRepo])
 
   const updateActiveTabContent = useCallback(
     (nextContent: string) => {
@@ -869,7 +915,45 @@ function App() {
 
   const markdownToHtml = useCallback((markdown: string) => {
     const parsed = marked.parse(markdown)
-    return typeof parsed === 'string' ? parsed : ''
+    const html = typeof parsed === 'string' ? parsed : ''
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    doc.querySelectorAll('img').forEach((img) => {
+      const rawSrc = img.getAttribute('src')?.trim()
+      if (!rawSrc) return
+
+      // Skip external URLs and data URLs
+      if (/^(https?:|data:)/i.test(rawSrc)) {
+        return
+      }
+
+      // Store relative path and use placeholder
+      let imagePath = rawSrc.replace(/^\/+/, '')
+      if (!imagePath.startsWith('images/')) {
+        imagePath = 'images/' + imagePath
+      }
+      
+      img.setAttribute('data-src', imagePath)
+      img.setAttribute('src', 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3C/svg%3E')
+    })
+
+    doc.querySelectorAll('li > input[type="checkbox"]').forEach((checkbox) => {
+      const input = checkbox as HTMLInputElement
+      input.removeAttribute('disabled')
+      input.classList.add('task-checkbox')
+
+      const parentLi = input.closest('li')
+      if (parentLi) {
+        parentLi.classList.add('task-item')
+        const parentUl = parentLi.closest('ul')
+        if (parentUl) {
+          parentUl.classList.add('task-list')
+        }
+      }
+    })
+
+    return doc.body.innerHTML
   }, [])
 
   const syncWysiwygFromMarkdown = useCallback(
@@ -904,6 +988,41 @@ function App() {
       lastWysiwygSyncedTabRef.current = activeTabPath
     }
   }, [activeTabPath, editorMode, openTabs, syncWysiwygFromMarkdown])
+
+  // Load images with data-src via IPC
+  useEffect(() => {
+    if (!desktopApiAvailable) return
+
+    const loadImagesInEditor = async () => {
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+
+      const images = editor.querySelectorAll('img[data-src]')
+      for (const img of images) {
+        if (img.getAttribute('data-loaded') === 'true') {
+          continue
+        }
+
+        const relativePath = img.getAttribute('data-src')
+        if (!relativePath) continue
+
+        try {
+          const holo = getHoloApi()
+          if (!holo) continue
+          
+          const result = await holo.loadImage(relativePath)
+          if (result.ok) {
+            img.setAttribute('src', result.dataUrl)
+            img.setAttribute('data-loaded', 'true')
+          }
+        } catch (error) {
+          console.error(`Failed to load image ${relativePath}:`, error)
+        }
+      }
+    }
+
+    loadImagesInEditor()
+  }, [editorMode, activeTabPath, desktopApiAvailable, getHoloApi])
 
   // Helpers for getting text context in the contentEditable editor
   const getBlockTextBeforeCursor = useCallback((): { text: string; block: Element | null } => {
@@ -945,9 +1064,10 @@ function App() {
   const executeSlashCommand = useCallback((cmd: SlashCommand) => {
     const editor = wysiwygEditorRef.current
     if (!editor) return
-    editor.focus()
+    
     // Delete the slash + query text
     deleteCurrentBlockContents()
+    
     switch (cmd.id) {
       case 'h1': document.execCommand('formatBlock', false, '<h1>'); break
       case 'h2': document.execCommand('formatBlock', false, '<h2>'); break
@@ -956,16 +1076,145 @@ function App() {
       case 'ordered': document.execCommand('insertOrderedList'); break
       case 'quote': document.execCommand('formatBlock', false, '<blockquote>'); break
       case 'code': document.execCommand('insertHTML', false, '<pre><code>\u200B</code></pre><p><br></p>'); break
-      case 'table': document.execCommand('insertHTML', false, '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>'); break
-      case 'todo': document.execCommand('insertHTML', false, '<ul><li><input type="checkbox"> Tâche</li></ul><p><br></p>'); break
+      case 'table': {
+        const html = '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>\u200B</td><td></td></tr></tbody></table><p><br></p>'
+        document.execCommand('insertHTML', false, html)
+        break
+      }
+      case 'todo': {
+        const html = '<ul class="task-list"><li class="task-item"><input class="task-checkbox" type="checkbox"> Tâche</li></ul><p><br></p>'
+        document.execCommand('insertHTML', false, html)
+        break
+      }
       default: break
     }
+    
     setSlashMenu(null)
     setSlashMenuIndex(0)
+    editor.focus()
+    
     // Sync markdown
     const md = turndownService.turndown(editor.innerHTML)
     updateActiveTabBody(md)
   }, [deleteCurrentBlockContents, turndownService, updateActiveTabBody])
+
+  // ── Image drag & drop helpers ────────────────────────────────────────
+
+  const isImageFile = useCallback((file: File) => {
+    if (file.type.startsWith('image/')) {
+      return true
+    }
+
+    return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(file.name)
+  }, [])
+
+  const hasImageInDragEvent = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (Array.from(event.dataTransfer.files).some(isImageFile)) {
+        return true
+      }
+
+      return Array.from(event.dataTransfer.items).some(
+        (item) => item.kind === 'file' && (item.type.startsWith('image/') || item.type === ''),
+      )
+    },
+    [isImageFile],
+  )
+
+  const onEditorDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (!hasImageInDragEvent(event)) return
+
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      setIsImageDragOverEditor(true)
+    },
+    [hasImageInDragEvent],
+  )
+
+  const onEditorDragEnter = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (!hasImageInDragEvent(event)) return
+
+      event.preventDefault()
+      imageDragDepthRef.current += 1
+      setIsImageDragOverEditor(true)
+    },
+    [hasImageInDragEvent],
+  )
+
+  const onEditorDragLeave = useCallback(() => {
+    imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1)
+    if (imageDragDepthRef.current === 0) {
+      setIsImageDragOverEditor(false)
+    }
+  }, [])
+
+  const handleImageFiles = useCallback(
+    async (
+      files: File[],
+      insertFn: (mdImage: string, relativePath: string, previewDataUrl: string) => void,
+    ) => {
+      const holo = getHoloApi()
+      if (!holo) return
+
+      for (const file of files) {
+        const reader = new FileReader()
+        reader.onload = async (e) => {
+          const dataUrl = e.target?.result as string
+          if (typeof dataUrl !== 'string') return
+          const base64 = dataUrl.split(',')[1]
+          if (!base64) return
+          try {
+            const result = await holo.saveImage(file.name, base64)
+            insertFn(`![${file.name}](${result.relativePath})`, result.relativePath, dataUrl)
+          } catch (err) {
+            console.error('saveImage error', err)
+          }
+        }
+        reader.readAsDataURL(file)
+      }
+    },
+    [getHoloApi],
+  )
+
+  const onWysiwygDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      imageDragDepthRef.current = 0
+      setIsImageDragOverEditor(false)
+      const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile)
+      if (imageFiles.length === 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+      void handleImageFiles(imageFiles, (_md, relativePath, previewDataUrl) => {
+        const safePath = relativePath.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+        const imgHtml = `<img data-src="${safePath}" src="${previewDataUrl}" alt="" style="max-width:100%;border-radius:4px">`
+        document.execCommand('insertHTML', false, imgHtml)
+        const md = turndownService.turndown(editor.innerHTML)
+        updateActiveTabBody(md)
+      })
+    },
+    [handleImageFiles, isImageFile, turndownService, updateActiveTabBody],
+  )
+
+  const onRawDrop = useCallback(
+    (event: React.DragEvent<HTMLTextAreaElement>) => {
+      imageDragDepthRef.current = 0
+      setIsImageDragOverEditor(false)
+      const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile)
+      if (imageFiles.length === 0) return
+      event.preventDefault()
+      const target = event.currentTarget
+      const cursor = target.selectionStart ?? target.value.length
+      void handleImageFiles(imageFiles, (mdImage) => {
+        const next = target.value.slice(0, cursor) + mdImage + '\n' + target.value.slice(cursor)
+        updateActiveTabBody(next)
+      })
+    },
+    [handleImageFiles, isImageFile, updateActiveTabBody],
+  )
 
   const onWysiwygInput = useCallback(() => {
     const editor = wysiwygEditorRef.current
@@ -984,7 +1233,6 @@ function App() {
     const markdown = turndownService.turndown(editor.innerHTML)
     updateActiveTabBody(markdown)
   }, [getBlockTextBeforeCursor, slashMenu, turndownService, updateActiveTabBody])
-
   const onWysiwygKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const editor = wysiwygEditorRef.current
@@ -1017,7 +1265,15 @@ function App() {
           if (target) executeSlashCommand(target)
           return
         }
-        if (event.key === 'Escape' || event.key === ' ') {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setSlashMenu(null)
+          setSlashMenuIndex(0)
+          // Remove the "/" typed by pressing backspace
+          document.execCommand('delete', false)
+          return
+        }
+        if (event.key === ' ') {
           setSlashMenu(null)
           setSlashMenuIndex(0)
           return
@@ -1039,12 +1295,53 @@ function App() {
           // Show slash menu at cursor position
           const sel = window.getSelection()
           if (sel?.rangeCount) {
-            const rect = sel.getRangeAt(0).getBoundingClientRect()
-            setSlashMenu({ x: rect.left, y: rect.bottom + 6, query: '' })
+            const range = sel.getRangeAt(0)
+            // Create a temporary span to measure cursor position
+            const tmpSpan = document.createElement('span')
+            tmpSpan.textContent = '|'
+            range.insertNode(tmpSpan)
+            const rect = tmpSpan.getBoundingClientRect()
+            tmpSpan.parentNode?.removeChild(tmpSpan)
+            // Position menu below the cursor, accounting for viewport
+            let x = rect.left
+            let y = rect.top + rect.height + 6
+            // Ensure menu doesn't go off-screen horizontally
+            setSlashMenu({ x, y, query: '' })
             setSlashMenuIndex(0)
           }
         }
         return
+      }
+
+      if (event.key === 'Enter') {
+        const sel = window.getSelection()
+        const anchor = sel?.anchorNode ?? null
+        const currentLi = anchor instanceof Element ? anchor.closest('li') : anchor?.parentElement?.closest('li')
+        const currentCheckbox = currentLi?.querySelector('input[type="checkbox"]')
+
+        if (currentLi && currentCheckbox) {
+          event.preventDefault()
+
+          const nextLi = document.createElement('li')
+          nextLi.className = 'task-item'
+          nextLi.innerHTML = '<input class="task-checkbox" type="checkbox"> '
+
+          if (currentLi.nextSibling) {
+            currentLi.parentNode?.insertBefore(nextLi, currentLi.nextSibling)
+          } else {
+            currentLi.parentNode?.appendChild(nextLi)
+          }
+
+          const range = document.createRange()
+          range.selectNodeContents(nextLi)
+          range.collapse(false)
+          sel?.removeAllRanges()
+          sel?.addRange(range)
+
+          const markdown = turndownService.turndown(editor.innerHTML)
+          updateActiveTabBody(markdown)
+          return
+        }
       }
 
       // ── Markdown space shortcuts ───────────────────────────────────────
@@ -1377,7 +1674,23 @@ function App() {
 
     try {
       if (nameDialog.mode === 'create-file') {
-        await holo.createFile(nameDialog.targetDirectoryPath, value)
+        // Auto-append .md extension if not provided
+        const filename = value.endsWith('.md') ? value : `${value}.md`
+        const newFilePath = `${nameDialog.targetDirectoryPath}/${filename}`
+        await holo.createFile(nameDialog.targetDirectoryPath, filename)
+        
+        // Auto-open the created file
+        const content = await holo.readFile(newFilePath)
+        setOpenTabs((prev) => [
+          ...prev,
+          {
+            path: newFilePath,
+            name: filename.replace(/\.md$/, ''),
+            content,
+            isDirty: false,
+          },
+        ])
+        setActiveTabPath(newFilePath)
       } else if (nameDialog.mode === 'create-directory') {
         await holo.createDirectory(nameDialog.targetDirectoryPath, value)
       } else if (nameDialog.mode === 'rename') {
@@ -1646,6 +1959,16 @@ function App() {
     await holo.minimizeWindow()
   }, [getHoloApi])
 
+  const toggleDevTools = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    await holo.toggleDevTools()
+  }, [getHoloApi])
+
   const toggleMaximizeWindow = useCallback(async () => {
     const holo = getHoloApi()
 
@@ -1703,6 +2026,15 @@ function App() {
           <img src="/logo.png" height={40} width={120} alt="logo" />
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
+          <button
+            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
+            onClick={() => {
+              void toggleDevTools()
+            }}
+            title="DevTools"
+          >
+            <i className="fa-regular fa-code" />
+          </button>
           <button
             className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
             onClick={() => {
@@ -2212,28 +2544,56 @@ function App() {
                     </div>
 
                     {/* Corps du document */}
+                    <div className="relative">
                     {editorMode === 'raw' ? (
                       <textarea
                         className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-relaxed text-white/85 outline-none placeholder:text-white/25"
                         value={activeTabBody}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
+                        onDrop={onRawDrop}
+                        onDragEnter={onEditorDragEnter}
+                        onDragOver={onEditorDragOver}
+                        onDragLeave={onEditorDragLeave}
                         placeholder="Édite ton fichier ici…"
                       />
                     ) : (
-                      <div className="relative">
+                      <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-2 [&_th]:border [&_th]:border-white/20 [&_th]:p-2 [&_th]:bg-white/5 [&_td]:border [&_td]:border-white/10 [&_td]:p-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-center [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:transition-colors [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable
                           suppressContentEditableWarning
                           onInput={onWysiwygInput}
                           onKeyDown={onWysiwygKeyDown}
+                          onDrop={onWysiwygDrop}
+                          onDragEnter={onEditorDragEnter}
+                          onDragOver={onEditorDragOver}
+                          onDragLeave={onEditorDragLeave}
+                          onClick={(e) => {
+                            const target = e.target as HTMLInputElement
+                            if (target.type === 'checkbox') {
+                              // Sync after checkbox toggle
+                              setTimeout(() => {
+                                const editor = wysiwygEditorRef.current
+                                if (editor) {
+                                  const markdown = turndownService.turndown(editor.innerHTML)
+                                  updateActiveTabBody(markdown)
+                                }
+                              }, 0)
+                            }
+                          }}
                         />
                         <div className="mt-4 text-right text-[9px] text-white/15 pointer-events-none select-none">
-                          <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste
+                          <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste · glisse une image
                         </div>
-                      </div>
+                      </>
                     )}
+                      {isImageDragOverEditor && (
+                        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border border-dashed border-[#7B61FF]/70 bg-[#111213]/75 px-4 text-sm font-medium text-white/90">
+                          Déposez une image pour l’insérer
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -2381,9 +2741,9 @@ function App() {
       )}
 
       {nameDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-lg">
-            <h2 className="text-base font-semibold text-slate-900">
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-white">
               {nameDialog!.mode === 'create-file'
                 ? 'Créer un fichier'
                 : nameDialog!.mode === 'create-directory'
@@ -2392,7 +2752,7 @@ function App() {
             </h2>
 
             <form
-              className="mt-3"
+              className="mt-4"
               onSubmit={(event) => {
                 event.preventDefault()
                 void submitNameDialog()
@@ -2400,7 +2760,7 @@ function App() {
             >
               <input
                 autoFocus
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
                 value={nameDialog!.value}
                 onChange={(event) =>
                   setNameDialog((previous) =>
@@ -2415,17 +2775,17 @@ function App() {
                 placeholder="Nom"
               />
 
-              <div className="mt-4 flex items-center justify-end gap-2">
+              <div className="mt-5 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100"
+                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
                   onClick={() => setNameDialog(null)}
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
                 >
                   Valider
                 </button>
@@ -2436,14 +2796,14 @@ function App() {
       )}
 
       {gitDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-lg">
-            <h2 className="text-base font-semibold text-slate-900">
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-white">
               {gitDialog!.mode === 'commit' ? 'Nouveau commit' : 'Merge une branche'}
             </h2>
 
             <form
-              className="mt-3"
+              className="mt-4"
               onSubmit={(event) => {
                 event.preventDefault()
                 void submitGitDialog()
@@ -2451,7 +2811,7 @@ function App() {
             >
               <input
                 autoFocus
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
                 value={gitDialog!.value}
                 onChange={(event) =>
                   setGitDialog((previous) =>
@@ -2466,17 +2826,17 @@ function App() {
                 placeholder={gitDialog!.mode === 'commit' ? 'Message de commit' : 'Nom de branche'}
               />
 
-              <div className="mt-4 flex items-center justify-end gap-2">
+              <div className="mt-5 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100"
+                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
                   onClick={() => setGitDialog(null)}
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
                 >
                   Valider
                 </button>

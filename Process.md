@@ -22,8 +22,8 @@ Objectif produit : proposer une expérience utilisateur proche de Loop (look & f
 ## 4) Roadmap par étapes
 
 ## Suivi d’avancement
-- Dernière mise à jour : 27/03/2026
-- Statut global : Étapes 1, 2, 3 terminées | Étape 4 en cours (UI finale + onglets terminés)
+- Dernière mise à jour : 30/03/2026
+- Statut global : Étapes 1 à 5 terminées | Étape 6 en cours (semi-prod : feedback utilisateur + corrections)
 
 | Étape | Statut | Date | Notes |
 |---|---|---|---|
@@ -31,9 +31,10 @@ Objectif produit : proposer une expérience utilisateur proche de Loop (look & f
 | Étape 2 — Application de base (fichiers) | ✅ Terminé | 23/03/2026 | Ouverture dossier, arborescence, édition RAW, sauvegarde Ctrl+S + bouton, CRUD fichiers/dossiers |
 | Étape 3 — Intégration Git | ✅ Terminé | 24/03/2026 | Détection repo, indicateurs locaux/distants, commit, fetch auto 60s, pull, merge, Synchroniser auto, conflits |
 | Étape 4A — UI/UX finale (Layout + Onglets) | ✅ Terminé | 27/03/2026 | Sidebar (2 icônes Files/Git), panneaux actifs Files/Git, badge onglets ouverts, système d'onglets multi-fichiers, éditeur RAW dark |
-| Étape 4B — Drag & drop | 🚧 En cours | 27/03/2026 | Première version branchée: déplacement fichier/dossier vers un dossier cible depuis l'arborescence |
-| Étape 4C — Éditeur WYSIWYG | 🚧 En cours | 27/03/2026 | Éditeur visuel éditable (contentEditable) avec toolbar minimale (gras/italique/titres/liste/lien), conversion HTML↔Markdown et bascule RAW/WYSIWYG |
-| Étape 5 — À définir | ⏳ À faire | — | Backlog d'améliorations |
+| Étape 4B — Drag & drop | ✅ Terminé | 30/03/2026 | Déplacement fichier/dossier vers un dossier cible depuis l'arborescence, avec rafraîchissement immédiat |
+| Étape 4C — Éditeur WYSIWYG | ✅ Terminé | 30/03/2026 | Éditeur visuel type Loop (slash commands, popup de sélection, raccourcis markdown, en-tête intégré au scroll) |
+| Étape 5 — Stabilisation & release | ✅ Terminé | 30/03/2026 | Stabilisation, corrections UX, pipeline release GitHub multi-OS (Windows/macOS/Linux) |
+| Étape 6 — Semi-production (feedback) | 🚧 En cours | 30/03/2026 | Boucle feedback utilisateur, priorisation, corrections rapides, suivi qualité |
 
 ---
 
@@ -165,15 +166,25 @@ Le choix de l’éditeur WYSIWYG est critique : valider tôt la personnalisation
 
 ---
 
-### Étape 5 — À définir
-Améliorations, suggestions et consolidation.
+### Étape 5 — Stabilisation & release (terminée)
+Consolidation et préparation à la diffusion.
 
-Proposition de sujets pour cette étape :
-- Stabilisation et correction de bugs.
-- Optimisation des performances sur gros dépôts.
-- Qualité (tests, logs, gestion d’erreurs avancée).
-- Packaging/distribution.
-- Durcissement sécurité Electron (IPC, permissions, isolation).
+Réalisé sur cette étape :
+- ✅ Stabilisation et correctifs UX prioritaires.
+- ✅ Préparation packaging desktop multi-plateforme.
+- ✅ Workflow GitHub Release automatisé (tag `v*`).
+- ✅ Rationalisation des assets de release publiés.
+
+---
+
+### Étape 6 — Semi-production (en cours)
+Objectif : passer en mode usage réel encadré et améliorer le produit via retours terrain.
+
+Cadre de travail :
+- Collecter les feedbacks utilisateurs de manière structurée.
+- Prioriser en cycles courts (impact / effort / criticité).
+- Déployer des correctifs rapides avec validation systématique.
+- Mettre à jour ce document à chaque intervention.
 
 
 ✅ WYSIWYG par défaut
@@ -205,11 +216,92 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 ## Feedback
 
 ### 30.03.26
-- Changer le Readme.md pour correspondre a un truc plus standard github (en anglais, description du produit pour l'utilisation et pas pour le développement)
-- Ajouter 
+- ✅ Changer le Readme.md pour correspondre a un truc plus standard github (en anglais, description du produit pour l'utilisation et pas pour le développement)
+- ✅ Ajouter un logo à l'application
 - Gestion des images
-	- masquer le dossier /images dans l'arboresence
-	- Dans l'editeur les images de fonctionne pas (reprendre puis dossier racine du projet /images)
-	- Pouvoir drag & drop une image dans l'éditeur (l'image est ajoutée dans /image et le code markdown est ajouter a l'endroit du curseur)
+	- ✅ masquer le dossier /images dans l'arboresence
+	- ✅ Dans l'editeur les images de fonctionne pas (reprendre puis dossier racine du projet /images)
+	- ✅ Pouvoir drag & drop une image dans l'éditeur (l'image est ajoutée dans /image et le code markdown est ajouter a l'endroit du curseur)
+- ✅ CTRL+ S autocommit (Commit message automatique) update/add [Chemindelapage/Nomdufichier]
+- ✅ Quand je tape "/" pour une commande le popup s'affiche tout en haut a gauche de l'app et pas sur la position du curseur. Et si je fait "echape" pour annuler le "/" reste
+- ✅Les popup de création de fichier / dossier et renommage mérite d'être adapté en terme de style (dark mode)
+- Améliorer l'UI/UX des liste de tâche dans l'editeur
+- Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
 - Connexion a github au démarage (logo ouverture du navigateur puis retour dans l'app)
-- CTRL+ S autocommit (Commit message automatique) update/add [Chemindelapage/Nomdufichier]
+- ✅ Améliorer le nom d'import des image pour éviter les doublon (nom-image+hashfichier)
+- Auto-update depuis les release github
+- ✅ Quand on crée des fichier est-ce que c'est possible d'omêtre le .md et de le rajouter si il est pas fourni?
+- Quand ton créé un fichier que ça l'ouvre directement
+- Améliorer l'ui / ux des tableau (plus comme loop)
+- Amélirations UX GIT
+	- Push direct quand CTRL+S
+	- Avertir si version plus récente de ce fichier en remote (proposer de pull)
+- Ajouter possibilité dans le header de mettre une icone (emoji) au fichier
+- Ajouter des Tag (etiquette)
+- Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
+- Quand on crée un nouveau fichier directement focus dans le titre
+- Espacer un peu plus le contenu 
+- Ajouter UI pour ajouter lignes et colonnes dans un tableau
+- Quand on ouvre un dossier dans le panel fichier avoir plusieurs section :
+	- Explorer l'arboresence normal
+	- Mes fichiers l'auteur correspond au nom saisie au départ de l'app
+	- Fichier récents (5 derniers fichiers ouverts)
+
+
+
+### 31.03.26 — Tâche feedback #1 (terminée : 30/03/2026)
+- ✅ Masquage dossier `images` dans l'arborescence (electron/main.js `buildTree`)
+- ✅ Affichage images corrigé : les chemins relatifs `images/foo.png` sont résolus en `file:///rootPath/images/foo.png` pour Electron (`markdownToHtml`)
+- ✅ Drag & drop image dans éditeur WYSIWYG : copie dans `/images`, insertion `<img>` au curseur, sync markdown
+- ✅ Drag & drop image dans éditeur RAW : copie dans `/images`, insertion `![alt](images/...)` à la position curseur
+- ✅ Turndown custom rule : reconvertit les URLs `file://` en chemins relatifs pour le markdown sauvegardé
+- ✅ IPC Electron `fs:save-image` : crée `/images` si absent, génère un nom unique horodaté, retourne le chemin relatif
+- ✅ Overlay drag & drop image : affiche "Déposez une image pour l'insérer" lors du survol avec stabilisation du clignotement
+
+### 31.03.26 — Tâche feedback #2 (terminée)
+- ✅ Logo de l'application : SVG moderne "HO" avec dégradé violet, créé en 200x200
+- ✅ Favicon : SVG cohérent avec le logo principal
+- ✅ Icon Electron : conversion SVG → PNG (256x256 + 512x512) pour compatibilité multi-plateforme
+- ✅ Intégration window icon : `logo-256.png` défini dans `electron/main.js` BrowserWindow config
+
+### 30.03.26 — Tâche feedback #3 (terminée : 30/03/2026)
+- ✅ Dark-mode modales : convertir les dialogues de création/renommage en dark theme (bg-[#1a1b1c], text-white, bordures white/20, boutons violets)
+- ✅ CTRL+S autocommit : intégration du commit automatique lors de la sauvegarde Ctrl+S (si dans un repo Git)
+  - Message format : "update/add [NomFichier]"
+  - Silent fail si commit échoue (fichier sauvegardé ira quand même)
+  - Dépendance ajoutée : `gitState.isRepo` dans les dépendances de `saveCurrentFile`
+
+### 30.03.26 — Tâche feedback #4 (terminée : 30/03/2026)
+- ✅ Slash command menu positioning : amélioration du calcul de position du curseur pour afficher le menu à la position réelle du "/" plutôt qu'en haut-à-gauche
+  - Utilisation d'une span temporaire pour mesurer la position précise
+  - Menu positionné directement sous le curseur avec offset calcul
+- ✅ Escape key cleanup : quand l'utilisateur appuie sur Échap pour annuler la commande slash, le "/" est automatiquement supprimé (document.execCommand('delete'))
+
+### 30.03.26 — Tâche feedback #5 (terminée : 30/03/2026)
+- ✅ Auto-add .md extension : lors de la création d'un fichier, if l'extension n'est pas fournie (ex: "mon-doc" → "mon-doc.md")
+- ✅ Image naming with hash : amélioration du nommage des images importées pour éviter les doublons (ex: nom-image-${hash}${ext} au lieu de nom-image-${timestamp}${ext})
+  - Utilisation de crypto.createHash('sha256') sur le contenu base64 de l'image
+  - Hash de 8 caractères hexadécimaux pour garantir l'unicité
+
+### 30.03.26 — Tâche feedback #6 (terminée : 30/03/2026)
+- ✅ Auto-open fichier : quand on crée un fichier via la modale, le fichier s'ouvre directement dans l'éditeur (ajout à openTabs + setActiveTabPath)
+- ✅ Improve checkbox styling : amélioration du style des checkboxes dans les listes de tâches
+  - Accent color: [#7B61FF] (violet cohérent)
+  - Size: w-4 h-4, cursor-pointer
+  - Margin: mr-2 pour l'espacement
+- ✅ Improve table styling : amélioration des tableaux pour une meilleure lisibilité
+  - En-têtes: bg-[#7B61FF]/10, border-[#7B61FF]/30, padding augmenté à p-3, font-semibold
+  - Cellules: border-white/10, padding p-3, bg-white/2 pour subtil contraste
+  - Table margin: my-3 pour plus d'espace
+- ✅ Fix slash command line issue : correction du bug où "/" affectait la ligne dessous
+  - Refactorisation de executeSlashCommand pour mieux gérer l'insertion HTML
+  - Séparation des insertions HTML pour code, table, todo (une insertion à la fois plutôt que tout ensemble)
+
+### 30.03.26 — Tâche feedback #7 (WIP - fixes pour "/" et checkboxes)
+- 🔧 Added Turndown rule for checkboxes: convertit les input checkboxes en markdown task lists (`[x]` ou `[ ]`)
+- 🔧 Fixed slash command structure: une seule insertion HTML pour éviter les problèmes de structure DOM
+- 🔧 Enhanced table styling v2: bordures arrondies, gradient header, hover effects, meilleur espacement
+  - `rounded-lg overflow-hidden` pour les bordures
+  - `bg-gradient-to-r from-[#7B61FF]/15 to-[#9d8bff]/10` pour le header
+  - `transition-colors` + `hover:bg-white/5` pour les lignes
+- 🔧 Added onClick handler for checkboxes: permet de cocher/décocher les tâches et synchroniser avec le markdown

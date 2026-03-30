@@ -1,127 +1,80 @@
 # Holo
 
-Éditeur Markdown desktop inspiré de Microsoft Loop, avec stockage local en fichiers `.md` et intégration Git/GitHub.
+Holo is a desktop Markdown editor inspired by Microsoft Loop, designed for fast writing and simple Git/GitHub synchronization.
 
-## Aperçu
+## What is Holo?
 
-Holo vise une expérience simple pour des utilisateurs non techniques : ouvrir un dossier, éditer un document, sauvegarder et synchroniser avec Git.
+Holo is built for teams who want a smooth writing experience without leaving a file-based workflow.
 
-Le projet combine :
+It combines:
 
-- une UI moderne type VS Code,
-- un mode `RAW` et un mode `WYSIWYG`,
-- des raccourcis et interactions orientées productivité,
-- une base Git intégrée (sync, commit, conflit).
+- a modern desktop UI,
+- RAW and WYSIWYG editing,
+- Markdown-first storage,
+- built-in Git operations for everyday sync.
 
-## Fonctionnalités principales
+## Key Features
 
-- Arborescence locale de fichiers/dossiers Markdown
-- Édition `RAW` (textarea) + `WYSIWYG` (contentEditable)
-- En-tête de document éditable (titre, description, auteur)
-- Commandes rapides type Loop (`/`, raccourcis markdown, popup de sélection)
-- Onglets multi-fichiers + indicateur non sauvegardé
-- Sauvegarde via bouton et `Ctrl+S` / `Cmd+S`
-- Intégration Git : état local/distant, commit, pull, merge, synchronisation
-- Build desktop Windows/macOS/Linux
+- Open and browse local Markdown folders
+- Multi-tab editing with unsaved state indicators
+- RAW mode and WYSIWYG mode switch
+- Editable document header (title, description, author)
+- Loop-style interactions (`/` commands, inline selection toolbar, markdown shortcuts)
+- Save with button or `Ctrl+S` / `Cmd+S`
+- Built-in Git status, commit, pull, merge, and sync flow
 
-## Stack technique
+## Releases
 
-- React + TypeScript
-- Vite
-- Electron
-- Tailwind CSS v4
-- Marked + Turndown (conversion HTML ↔ Markdown)
+Holo publishes desktop builds through GitHub Releases for:
 
-## Démarrage rapide
+- Windows (`.exe`)
+- macOS (`.dmg`, `.zip`)
+- Linux Debian (`.deb`)
 
-### Prérequis
+Release workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
 
-- Node.js (LTS recommandé)
-- npm
-
-### Installation
-
-```bash
-npm install
-```
-
-### Développement (Electron + Vite)
-
-```bash
-npm run dev
-```
-
-### Build web (renderer)
-
-```bash
-npm run build
-```
-
-### Lint
-
-```bash
-npm run lint
-```
-
-## Scripts disponibles
-
-- `npm run dev` : lance Electron + Vite en mode développement
-- `npm run start` : lance l’app Electron packagée localement
-- `npm run build` : build TypeScript + Vite
-- `npm run lint` : exécute ESLint
-- `npm run dist` : build desktop pour l’OS courant
-- `npm run dist:win` : build Windows (`nsis`, `portable`)
-- `npm run dist:mac` : build macOS (`dmg`, `zip`)
-- `npm run dist:linux` : build Linux (`deb`)
-
-## Releases GitHub (Windows / macOS / Linux)
-
-Le workflow [release.yml](.github/workflows/release.yml) compile automatiquement les binaires sur 3 OS et publie les artefacts dans une release GitHub.
-
-### Signature / notarization (optionnel)
-
-Pour activer la signature automatique, ajoute ces secrets dans GitHub (Settings → Secrets and variables → Actions) :
-
-- `CSC_LINK` : certificat de signature (base64 ou URL fichier)
-- `CSC_KEY_PASSWORD` : mot de passe du certificat
-- `APPLE_ID` : identifiant Apple Developer
-- `APPLE_APP_SPECIFIC_PASSWORD` : mot de passe spécifique d’app Apple
-- `APPLE_TEAM_ID` : Team ID Apple
-
-Déclenchement : push d’un tag `v*`.
-
-Exemple :
+Trigger a release by pushing a version tag:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Artefacts générés dans `release/` en local et attachés à la release en CI.
+## Signing / Notarization (optional)
 
-## Structure du projet
+If you want signed builds in CI, configure these GitHub Action secrets:
 
-```text
-.
-├── electron/             # Main process + preload
-├── src/                  # Interface React
-├── public/               # Assets packaging
-├── .github/workflows/    # CI/CD (build release)
-├── Process.md            # Cahier des charges / roadmap
-└── package.json
+- `CSC_LINK`
+- `CSC_KEY_PASSWORD`
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID`
+
+## Quick Start (local)
+
+Prerequisites:
+
+- Node.js (LTS recommended)
+- npm
+
+Install:
+
+```bash
+npm install
 ```
 
-## Roadmap
+Run in development:
 
-Le suivi détaillé est maintenu dans [Process.md](Process.md) (étapes, statut, backlog).
+```bash
+npm run dev
+```
 
-## Contribution
+Build renderer:
 
-1. Créer une branche feature
-2. Commiter des changements ciblés
-3. Vérifier `npm run lint` et `npm run build`
-4. Ouvrir une Pull Request
+```bash
+npm run build
+```
 
-## Licence
+## Project Status
 
-Aucune licence déclarée pour le moment.
+Roadmap and delivery tracking are maintained in [Process.md](Process.md).

@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import crypto from 'node:crypto'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -131,6 +132,7 @@ function sanitizeName(name) {
 async function buildTree(entryPath) {
   const entries = (await fs.readdir(entryPath, { withFileTypes: true })).filter(
     (entry) => !entry.name.startsWith('.')
+      && entry.name !== 'images'
       && (entry.isDirectory() || entry.name.toLowerCase().endsWith('.md')),
   )
 
@@ -431,6 +433,7 @@ function createWindow() {
     autoHideMenuBar: true,
     transparent: true,
     show: false,
+    icon: path.join(__dirname, '../public/app-icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -506,6 +509,16 @@ ipcMain.handle('window:toggle-maximize', async (event) => {
 ipcMain.handle('window:close', async (event) => {
   const window = getWindowFromEvent(event)
   window.close()
+  return { ok: true }
+})
+
+ipcMain.handle('window:toggle-devtools', async (event) => {
+  const window = getWindowFromEvent(event)
+  if (window.webContents.isDevToolsOpened()) {
+    window.webContents.closeDevTools()
+  } else {
+    window.webContents.openDevTools()
+  }
   return { ok: true }
 })
 
@@ -843,6 +856,64 @@ ipcMain.handle('git:merge', async (_event, branch) => {
   return {
     ok: true,
     output: result.stdout,
+  }
+})
+
+ipcMain.handle('fs:save-image', async (_event, name, dataBase64) => {
+  if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
+
+  const imagesDir = path.join(currentRootPath, 'images')
+  await fs.mkdir(imagesDir, { recursive: true })
+
+  const ext = path.extname(name) || '.png'
+  const base = path.basename(name, ext).replace(/[^a-z0-9_-]/gi, '_')
+  
+  // Generate hash from file content to avoid duplicates
+  const hash = crypto.createHash('sha256').update(dataBase64).digest('hex').substring(0, 8)
+  const uniqueName = `${base}-${hash}${ext}`
+  const destPath = path.join(imagesDir, uniqueName)
+
+  const buffer = Buffer.from(dataBase64, 'base64')
+  await fs.writeFile(destPath, buffer)
+
+  return { ok: true, relativePath: `images/${uniqueName}`, absolutePath: destPath }
+})
+
+ipcMain.handle('fs:load-image', async (_event, relativePath) => {
+  if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
+  
+  // Decode the path in case it contains URL-encoded characters
+  let decodedPath = String(relativePath ?? '')
+  try {
+    decodedPath = decodeURIComponent(decodedPath)
+  } catch {
+    // Keep original path when decode fails (e.g. stray %)
+  }
+  const imagePath = path.join(currentRootPath, decodedPath)
+  const normalizedRoot = path.normalize(currentRootPath)
+  const normalizedPath = path.normalize(imagePath)
+  const normalizedRootWithSep = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`
+  
+  // Security check: ensure file is within project root
+  if (normalizedPath !== normalizedRoot && !normalizedPath.startsWith(normalizedRootWithSep)) {
+    throw new Error('Accès refusé.')
+  }
+  
+  try {
+    const data = await fs.readFile(normalizedPath)
+    const base64 = data.toString('base64')
+    const ext = path.extname(normalizedPath).toLowerCase()
+    let mimeType = 'image/png'
+    if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg'
+    else if (ext === '.gif') mimeType = 'image/gif'
+    else if (ext === '.webp') mimeType = 'image/webp'
+    else if (ext === '.svg') mimeType = 'image/svg+xml'
+    
+    return { ok: true, dataUrl: `data:${mimeType};base64,${base64}` }
+  } catch (error) {
+    throw new Error(`Impossible de charger l'image: ${error instanceof Error ? error.message : String(error)}`)
   }
 })
 

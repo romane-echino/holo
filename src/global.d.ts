@@ -47,6 +47,7 @@ interface HoloApi {
   minimizeWindow: () => Promise<{ ok: true }>
   toggleMaximizeWindow: () => Promise<{ ok: true; isMaximized: boolean }>
   closeWindow: () => Promise<{ ok: true }>
+  toggleDevTools: () => Promise<{ ok: true }>
   openExternalUrl: (url: string) => Promise<{ ok: true }>
   openFolder: () => Promise<OpenFolderResult>
   getRecentFolders: () => Promise<string[]>
@@ -73,6 +74,8 @@ interface HoloApi {
   gitSync: () => Promise<HoloGitSyncResult>
   gitPull: () => Promise<{ ok: true; output: string }>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
+  saveImage: (name: string, dataBase64: string) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
+  loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
 }
 
 declare global {
