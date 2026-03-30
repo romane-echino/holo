@@ -13,7 +13,7 @@
     "dist": "npm run build && electron-builder --publish never -c.directories.output=release",
     "dist:win": "npm run build && electron-builder --win nsis portable --publish never -c.directories.output=release",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never -c.directories.output=release",
-    "dist:linux": "npm run build && electron-builder --linux AppImage tar.gz --publish never -c.directories.output=release",
+    "dist:linux": "npm run build && electron-builder --linux deb --publish never -c.directories.output=release",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -78,8 +78,7 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "tar.gz"
+        "deb"
       ],
       "category": "Office"
     }

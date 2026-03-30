@@ -72,11 +72,21 @@ npm run lint
 - `npm run dist` : build desktop pour l’OS courant
 - `npm run dist:win` : build Windows (`nsis`, `portable`)
 - `npm run dist:mac` : build macOS (`dmg`, `zip`)
-- `npm run dist:linux` : build Linux (`AppImage`, `tar.gz`)
+- `npm run dist:linux` : build Linux (`deb`)
 
 ## Releases GitHub (Windows / macOS / Linux)
 
 Le workflow [release.yml](.github/workflows/release.yml) compile automatiquement les binaires sur 3 OS et publie les artefacts dans une release GitHub.
+
+### Signature / notarization (optionnel)
+
+Pour activer la signature automatique, ajoute ces secrets dans GitHub (Settings → Secrets and variables → Actions) :
+
+- `CSC_LINK` : certificat de signature (base64 ou URL fichier)
+- `CSC_KEY_PASSWORD` : mot de passe du certificat
+- `APPLE_ID` : identifiant Apple Developer
+- `APPLE_APP_SPECIFIC_PASSWORD` : mot de passe spécifique d’app Apple
+- `APPLE_TEAM_ID` : Team ID Apple
 
 Déclenchement : push d’un tag `v*`.
 
