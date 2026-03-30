@@ -193,7 +193,23 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 
 ---
 
+
+
 ## 5) Définition de “fini” (global)
 - Les 4 premières étapes sont validées par leurs critères d’acceptation.
 - Le flux principal utilisateur est fluide : ouvrir un dossier, éditer, sauvegarder, committer, synchroniser.
 - L’application est utilisable par un utilisateur non technique avec messages d’erreur compréhensibles.
+
+
+
+## Feedback
+
+### 30.03.26
+- Changer le Readme.md pour correspondre a un truc plus standard github (en anglais, description du produit pour l'utilisation et pas pour le développement)
+- Ajouter 
+- Gestion des images
+	- masquer le dossier /images dans l'arboresence
+	- Dans l'editeur les images de fonctionne pas (reprendre puis dossier racine du projet /images)
+	- Pouvoir drag & drop une image dans l'éditeur (l'image est ajoutée dans /image et le code markdown est ajouter a l'endroit du curseur)
+- Connexion a github au démarage (logo ouverture du navigateur puis retour dans l'app)
+- CTRL+ S autocommit (Commit message automatique) update/add [Chemindelapage/Nomdufichier]
