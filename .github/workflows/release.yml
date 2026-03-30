@@ -58,13 +58,25 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.0
         with:
           path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -ls
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.0.0
         with:
           generate_release_notes: true
           files: |
-            artifacts/**/*
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.tar.gz
+            artifacts/**/*latest*.yml
+          fail_on_unmatched_files: true
