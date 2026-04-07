@@ -73,7 +73,17 @@ type EditableMarkdownHeader = {
   title: string
   description: string
   author: string
+  icon: string
 }
+
+const HEADER_EMOJIS = [
+  '📄','📝','📋','📌','📍','🗒️','🗓️','📅','📆','🔖',
+  '🏷️','💡','🎯','🚀','⭐','🔥','✅','⚠️','📣','💬',
+  '📊','📈','📉','🗂️','📁','💾','🖥️','🔐','🔑','🔒',
+  '🛡️','🎨','🎬','🎮','👥','👤','🧑‍💻','🌟','🌈','🌍',
+  '🌱','🏠','🏢','🛠️','⚙️','🔧','🔨','💼','📦','🏆',
+  '🎉','🧪','🔬','🧲','📡','🤖','🧠','❤️','⚡','🍀',
+]
 
 type FilePathStats = {
   modifiedAt: string
@@ -230,6 +240,7 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
     title: '',
     description: '',
     author: '',
+    icon: '',
   }
 
   for (const line of frontMatterLines) {
@@ -241,7 +252,7 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
 
     const key = match[1].toLowerCase()
 
-    if (key === 'title' || key === 'description' || key === 'author') {
+    if (key === 'title' || key === 'description' || key === 'author' || key === 'icon') {
       header[key] = readFrontMatterValue(line)
     }
   }
@@ -300,6 +311,11 @@ function updateMarkdownBody(markdown: string, nextBody: string): string {
   return ['---', ...frontMatterLines, '---', nextBody].join('\n')
 }
 
+function flatTreeFiles(node: TreeNode): string[] {
+  if (node.type === 'file') return [node.path]
+  return (node.children ?? []).flatMap(flatTreeFiles)
+}
+
 function TreeItem({
   node,
   selectedPath,
@@ -350,8 +366,6 @@ function TreeItem({
         draggable={node.path.length > 0}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={() => {
-          onSelect(node)
-
           if (isDirectory) {
             onToggleDirectory(node.path)
           }
@@ -472,14 +486,22 @@ function App() {
   const [gitDialog, setGitDialog] = useState<GitDialog | null>(null)
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git'>('files')
+  const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
+  const [appAuthor, setAppAuthor] = useState('')
+  const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
   const imageDragDepthRef = useRef(0)
+  const titleInputRef = useRef<HTMLInputElement | null>(null)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
   const isSyncingWysiwygRef = useRef(false)
   const lastWysiwygSyncedTabRef = useRef<string | null>(null)
+  const [pendingTitleFocusPath, setPendingTitleFocusPath] = useState<string | null>(null)
   const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null)
+  const [tablePopup, setTablePopup] = useState<{ x: number; y: number } | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
   const turndownService = useMemo(() => {
@@ -598,7 +620,7 @@ function App() {
   }, [])
 
   const refreshTree = useCallback(async () => {
-    const holo = getHoloApi()
+    const holo = window.holo
 
     if (!holo) {
       return
@@ -657,7 +679,15 @@ function App() {
 
     const nextGitState = await holo.gitGetState(true)
     setGitState(normalizeGitState(nextGitState))
-  }, [applyOpenedFolder, getHoloApi, refreshRecentFolders])
+
+    // Pull silencieux au démarrage
+    if (nextGitState?.isRepo) {
+      try { await holo.gitPull() } catch { /* silent */ }
+      await refreshTree()
+      const afterPull = await holo.gitGetState(false).catch(() => null)
+      if (afterPull) setGitState(normalizeGitState(afterPull))
+    }
+  }, [applyOpenedFolder, getHoloApi, refreshRecentFolders, refreshTree])
 
   const openRecentFolder = useCallback(
     async (folderPath: string) => {
@@ -679,12 +709,20 @@ function App() {
 
         const nextGitState = await holo.gitGetState(true)
         setGitState(normalizeGitState(nextGitState))
+
+        // Pull silencieux au démarrage
+        if (nextGitState?.isRepo) {
+          try { await holo.gitPull() } catch { /* silent */ }
+          await refreshTree()
+          const afterPull = await holo.gitGetState(false).catch(() => null)
+          if (afterPull) setGitState(normalizeGitState(afterPull))
+        }
       } catch (error) {
         window.alert((error as Error).message)
         await refreshRecentFolders()
       }
     },
-    [applyOpenedFolder, getHoloApi, refreshRecentFolders],
+    [applyOpenedFolder, getHoloApi, refreshRecentFolders, refreshTree],
   )
 
   const removeRecentFolder = useCallback(
@@ -738,6 +776,76 @@ function App() {
   }, [refreshRecentFolders])
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const storedAuthor = window.localStorage.getItem('holo-author')
+    if (storedAuthor) {
+      setAppAuthor(storedAuthor)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem('holo-author', appAuthor)
+  }, [appAuthor])
+
+  const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
+  const [myFilePaths, setMyFilePaths] = useState<string[]>([])
+
+  useEffect(() => {
+    const authorNeedle = appAuthor.trim().toLowerCase()
+
+    if (!authorNeedle || allFilePaths.length === 0) {
+      setMyFilePaths([])
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) {
+      setMyFilePaths([])
+      return
+    }
+
+    let cancelled = false
+
+    const scan = async () => {
+      const mine: string[] = []
+
+      for (const filePath of allFilePaths) {
+        try {
+          const content = await holo.readFile(filePath)
+          const header = getEditableMarkdownHeader(content)
+          if (header.author.trim().toLowerCase() === authorNeedle) {
+            mine.push(filePath)
+          }
+        } catch {
+          // ignore unreadable files
+        }
+      }
+
+      if (!cancelled) {
+        setMyFilePaths(mine)
+      }
+    }
+
+    void scan()
+
+    return () => {
+      cancelled = true
+    }
+  }, [allFilePaths, appAuthor])
+
+  const visibleRecentFilePaths = useMemo(
+    () => recentFilePaths.filter((filePath) => allFilePaths.includes(filePath)).slice(0, 5),
+    [allFilePaths, recentFilePaths],
+  )
+
+  useEffect(() => {
     if (!rootPath || !gitState.isRepo) {
       return
     }
@@ -776,6 +884,7 @@ function App() {
         const existingTab = openTabs.find((tab) => tab.path === filePath)
         if (existingTab) {
           setActiveTabPath(filePath)
+          setRecentFilePaths((prev) => [filePath, ...prev.filter((path) => path !== filePath)].slice(0, 20))
           return
         }
 
@@ -798,6 +907,7 @@ function App() {
         }
 
         setActiveTabPath(filePath)
+        setRecentFilePaths((prev) => [filePath, ...prev.filter((path) => path !== filePath)].slice(0, 20))
       } catch (error) {
         window.alert((error as Error).message)
       }
@@ -857,17 +967,22 @@ function App() {
     await refreshTree()
     await refreshGitState(false)
 
-    // Auto-commit if in a Git repository
+    // Auto-commit + push if in a Git repository
     if (gitState.isRepo) {
+      setSaveStatus('saving')
       try {
         const displayPath = activeTab.path
           .replace(/^\//, '')
           .replace(/\.md$/, '')
         const commitMessage = `update/add ${displayPath}`
-        await holo.gitCommit(commitMessage)
+        const result = await holo.gitCommit(commitMessage)
+        setSaveStatus(result.pushed ? 'synced' : 'local')
       } catch (error) {
         // Silent fail - file was saved successfully, commit is just a bonus
+        setSaveStatus('local')
         console.error('Auto-commit failed:', error)
+      } finally {
+        setTimeout(() => setSaveStatus('idle'), 3000)
       }
     }
   }, [activeTab, getHoloApi, refreshGitState, refreshTree, gitState.isRepo])
@@ -950,6 +1065,25 @@ function App() {
         if (parentUl) {
           parentUl.classList.add('task-list')
         }
+
+        if (!parentLi.querySelector('.task-label')) {
+          const label = doc.createElement('span')
+          label.classList.add('task-label')
+
+          while (input.nextSibling) {
+            label.appendChild(input.nextSibling)
+          }
+
+          if (!label.textContent?.trim()) {
+            label.textContent = 'Tâche'
+          }
+
+          parentLi.appendChild(label)
+        }
+
+        if (input.checked) {
+          parentLi.classList.add('task-item-checked')
+        }
       }
     })
 
@@ -988,6 +1122,20 @@ function App() {
       lastWysiwygSyncedTabRef.current = activeTabPath
     }
   }, [activeTabPath, editorMode, openTabs, syncWysiwygFromMarkdown])
+
+  useEffect(() => {
+    if (!pendingTitleFocusPath || activeTabPath !== pendingTitleFocusPath) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      titleInputRef.current?.focus()
+      titleInputRef.current?.select()
+      setPendingTitleFocusPath(null)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [activeTabPath, pendingTitleFocusPath])
 
   // Load images with data-src via IPC
   useEffect(() => {
@@ -1082,7 +1230,7 @@ function App() {
         break
       }
       case 'todo': {
-        const html = '<ul class="task-list"><li class="task-item"><input class="task-checkbox" type="checkbox"> Tâche</li></ul><p><br></p>'
+        const html = '<ul class="task-list"><li class="task-item"><input class="task-checkbox" type="checkbox"><span class="task-label">Tâche</span></li></ul><p><br></p>'
         document.execCommand('insertHTML', false, html)
         break
       }
@@ -1322,9 +1470,45 @@ function App() {
         if (currentLi && currentCheckbox) {
           event.preventDefault()
 
+          if (event.shiftKey) {
+            document.execCommand('insertLineBreak')
+            const markdown = turndownService.turndown(editor.innerHTML)
+            updateActiveTabBody(markdown)
+            return
+          }
+
+          const currentList = currentLi.parentElement
+          const currentLabel = currentLi.querySelector('.task-label')
+          const currentText = currentLabel?.textContent?.replace(/\u200B/g, '').trim() ?? ''
+
+          if (!currentText) {
+            const paragraph = document.createElement('p')
+            paragraph.innerHTML = '<br>'
+
+            if (currentList?.parentNode) {
+              currentList.parentNode.insertBefore(paragraph, currentList.nextSibling)
+            }
+
+            currentLi.remove()
+
+            if (currentList && currentList.children.length === 0) {
+              currentList.remove()
+            }
+
+            const range = document.createRange()
+            range.selectNodeContents(paragraph)
+            range.collapse(true)
+            sel?.removeAllRanges()
+            sel?.addRange(range)
+
+            const markdown = turndownService.turndown(editor.innerHTML)
+            updateActiveTabBody(markdown)
+            return
+          }
+
           const nextLi = document.createElement('li')
           nextLi.className = 'task-item'
-          nextLi.innerHTML = '<input class="task-checkbox" type="checkbox"> '
+          nextLi.innerHTML = '<input class="task-checkbox" type="checkbox"><span class="task-label"><br></span>'
 
           if (currentLi.nextSibling) {
             currentLi.parentNode?.insertBefore(nextLi, currentLi.nextSibling)
@@ -1332,15 +1516,68 @@ function App() {
             currentLi.parentNode?.appendChild(nextLi)
           }
 
+          const label = nextLi.querySelector('.task-label')
           const range = document.createRange()
-          range.selectNodeContents(nextLi)
-          range.collapse(false)
+          if (label) {
+            range.selectNodeContents(label)
+            range.collapse(true)
+          } else {
+            range.selectNodeContents(nextLi)
+            range.collapse(false)
+          }
           sel?.removeAllRanges()
           sel?.addRange(range)
 
           const markdown = turndownService.turndown(editor.innerHTML)
           updateActiveTabBody(markdown)
           return
+        }
+      }
+
+      if (event.key === 'Backspace') {
+        const sel = window.getSelection()
+        const anchor = sel?.anchorNode ?? null
+        const currentLi = anchor instanceof Element ? anchor.closest('li') : anchor?.parentElement?.closest('li')
+        const currentCheckbox = currentLi?.querySelector('input[type="checkbox"]')
+
+        if (currentLi && currentCheckbox) {
+          const currentLabel = currentLi.querySelector('.task-label')
+          const currentText = currentLabel?.textContent?.replace(/\u200B/g, '').trim() ?? ''
+
+          if (!currentText) {
+            event.preventDefault()
+
+            const currentList = currentLi.parentElement
+            const previousLi = currentLi.previousElementSibling as HTMLElement | null
+            const nextLi = currentLi.nextElementSibling as HTMLElement | null
+
+            currentLi.remove()
+
+            let focusTarget: HTMLElement | null = previousLi?.querySelector('.task-label') as HTMLElement | null
+            if (!focusTarget) {
+              focusTarget = nextLi?.querySelector('.task-label') as HTMLElement | null
+            }
+
+            if (currentList && currentList.children.length === 0) {
+              const paragraph = document.createElement('p')
+              paragraph.innerHTML = '<br>'
+              currentList.parentNode?.insertBefore(paragraph, currentList.nextSibling)
+              currentList.remove()
+              focusTarget = paragraph
+            }
+
+            if (focusTarget) {
+              const range = document.createRange()
+              range.selectNodeContents(focusTarget)
+              range.collapse(false)
+              sel?.removeAllRanges()
+              sel?.addRange(range)
+            }
+
+            const markdown = turndownService.turndown(editor.innerHTML)
+            updateActiveTabBody(markdown)
+            return
+          }
         }
       }
 
@@ -1379,10 +1616,27 @@ function App() {
       const editor = wysiwygEditorRef.current
       if (!editor) return
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || !editor.contains(sel.anchorNode)) {
+      if (!sel || !editor.contains(sel.anchorNode)) {
+        setSelectionPopup(null)
+        setTablePopup(null)
+        return
+      }
+
+      const anchorElement = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement ?? null
+      const currentTable = anchorElement?.closest('table')
+
+      if (currentTable) {
+        const rect = currentTable.getBoundingClientRect()
+        setTablePopup({ x: rect.right - 8, y: rect.top - 10 })
+      } else {
+        setTablePopup(null)
+      }
+
+      if (sel.isCollapsed) {
         setSelectionPopup(null)
         return
       }
+
       if (sel.rangeCount) {
         const rect = sel.getRangeAt(0).getBoundingClientRect()
         setSelectionPopup({ x: rect.left + rect.width / 2, y: rect.top - 8 })
@@ -1432,6 +1686,86 @@ function App() {
     },
     [onWysiwygInput],
   )
+
+  const insertTableRow = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+    const sel = window.getSelection()
+
+    if (!editor || !sel?.anchorNode) {
+      return
+    }
+
+    const anchorElement = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
+    const currentCell = anchorElement?.closest('td, th') as HTMLTableCellElement | null
+    const currentRow = currentCell?.closest('tr') as HTMLTableRowElement | null
+    const table = currentRow?.closest('table') as HTMLTableElement | null
+
+    if (!currentRow || !table) {
+      return
+    }
+
+    const columnCount = Math.max(...Array.from(table.rows).map((row) => row.cells.length), 1)
+    const newRow = document.createElement('tr')
+
+    for (let index = 0; index < columnCount; index += 1) {
+      const cell = document.createElement('td')
+      cell.innerHTML = index === 0 ? '\u200B' : ''
+      newRow.appendChild(cell)
+    }
+
+    currentRow.parentNode?.insertBefore(newRow, currentRow.nextSibling)
+
+    const firstCell = newRow.cells[0]
+    if (firstCell) {
+      const range = document.createRange()
+      range.selectNodeContents(firstCell)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+
+    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
+  }, [turndownService, updateActiveTabBody])
+
+  const insertTableColumn = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+    const sel = window.getSelection()
+
+    if (!editor || !sel?.anchorNode) {
+      return
+    }
+
+    const anchorElement = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
+    const currentCell = anchorElement?.closest('td, th') as HTMLTableCellElement | null
+    const table = currentCell?.closest('table') as HTMLTableElement | null
+
+    if (!currentCell || !table) {
+      return
+    }
+
+    const columnIndex = currentCell.cellIndex
+
+    Array.from(table.rows).forEach((row, rowIndex) => {
+      const referenceCell = row.cells[columnIndex]
+      const isHeaderRow = row.parentElement?.tagName === 'THEAD' || rowIndex === 0
+      const nextCell = document.createElement(isHeaderRow ? 'th' : 'td')
+      nextCell.innerHTML = rowIndex === 0 ? 'Nouvelle col.' : rowIndex === 1 ? '\u200B' : ''
+      row.insertBefore(nextCell, referenceCell?.nextSibling ?? null)
+    })
+
+    const currentRow = currentCell.closest('tr') as HTMLTableRowElement | null
+    const targetRow = table.rows[currentRow?.rowIndex ?? 0]
+    const targetCell = targetRow?.cells[columnIndex + 1]
+    if (targetCell) {
+      const range = document.createRange()
+      range.selectNodeContents(targetCell)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+
+    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
+  }, [turndownService, updateActiveTabBody])
 
   const closeTab = useCallback(
     (tabPath: string) => {
@@ -1691,6 +2025,7 @@ function App() {
           },
         ])
         setActiveTabPath(newFilePath)
+        setPendingTitleFocusPath(newFilePath)
       } else if (nameDialog.mode === 'create-directory') {
         await holo.createDirectory(nameDialog.targetDirectoryPath, value)
       } else if (nameDialog.mode === 'rename') {
@@ -2139,6 +2474,43 @@ function App() {
               )}
             </div>
 
+            {rootPath && (
+              <div className="space-y-2">
+                <div className="flex items-center rounded border border-white/10 bg-[#242527] p-0.5">
+                  <button
+                    className={`flex-1 rounded px-2 py-1 text-[10px] font-medium ${filesSection === 'explorer' ? 'bg-[#7B61FF] text-white' : 'text-white/65 hover:text-white'}`}
+                    onClick={() => setFilesSection('explorer')}
+                  >
+                    Explorer
+                  </button>
+                  <button
+                    className={`flex-1 rounded px-2 py-1 text-[10px] font-medium ${filesSection === 'mine' ? 'bg-[#7B61FF] text-white' : 'text-white/65 hover:text-white'}`}
+                    onClick={() => setFilesSection('mine')}
+                  >
+                    Mes fichiers
+                  </button>
+                  <button
+                    className={`flex-1 rounded px-2 py-1 text-[10px] font-medium ${filesSection === 'recent' ? 'bg-[#7B61FF] text-white' : 'text-white/65 hover:text-white'}`}
+                    onClick={() => setFilesSection('recent')}
+                  >
+                    Récents
+                  </button>
+                </div>
+
+                {filesSection === 'mine' && (
+                  <div className="rounded border border-white/10 bg-white/5 px-2 py-1.5">
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-white/40">Auteur</p>
+                    <input
+                      className="w-full rounded bg-transparent px-1 py-0.5 text-xs text-white/80 outline-none placeholder:text-white/25"
+                      value={appAuthor}
+                      onChange={(event) => setAppAuthor(event.target.value)}
+                      placeholder="Nom de l'auteur"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {!rootPath && (
               <div className="rounded-2xl border border-[#7B61FF]/30 bg-gradient-to-b from-[#2b2450]/35 to-[#1f2021] p-3 space-y-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9d8bff]">Démarrer</p>
@@ -2203,8 +2575,8 @@ function App() {
               </div>
             )}
 
-            {/* Arborescence */}
-            {tree ? (
+            {/* Contenu section Explorer */}
+            {filesSection === 'explorer' && tree ? (
               <ul className="space-y-0.5 flex-1 overflow-auto">
                 <TreeItem
                   node={tree!}
@@ -2241,6 +2613,58 @@ function App() {
                   }}
                 />
               </ul>
+            ) : filesSection === 'mine' && rootPath ? (
+              <div className="flex-1 overflow-auto">
+                {!appAuthor.trim() ? (
+                  <p className="text-xs text-white/40 text-center py-8">
+                    Renseigne un auteur pour afficher Mes fichiers.
+                  </p>
+                ) : myFilePaths.length === 0 ? (
+                  <p className="text-xs text-white/40 text-center py-8">
+                    Aucun fichier trouvé pour l'auteur “{appAuthor}”.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {myFilePaths.map((filePath) => (
+                      <li key={filePath}>
+                        <button
+                          className={`w-full truncate rounded px-2 py-1 text-left text-xs ${selectedPath === filePath ? 'bg-[#7B61FF]/20 text-[#9d8bff]' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
+                          onClick={() => {
+                            void openFile(filePath)
+                          }}
+                          title={filePath}
+                        >
+                          {getBaseName(filePath).replace(/\.md$/i, '')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : filesSection === 'recent' && rootPath ? (
+              <div className="flex-1 overflow-auto">
+                {visibleRecentFilePaths.length === 0 ? (
+                  <p className="text-xs text-white/40 text-center py-8">
+                    Aucun fichier récent.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {visibleRecentFilePaths.map((filePath) => (
+                      <li key={filePath}>
+                        <button
+                          className={`w-full truncate rounded px-2 py-1 text-left text-xs ${selectedPath === filePath ? 'bg-[#7B61FF]/20 text-[#9d8bff]' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
+                          onClick={() => {
+                            void openFile(filePath)
+                          }}
+                          title={filePath}
+                        >
+                          {getBaseName(filePath).replace(/\.md$/i, '')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             ) : !rootPath && recentFolders.length > 0 ? null : (
               <p className="text-xs text-white/40 text-center py-8">
                 {desktopApiAvailable ? 'Ouvre un dossier pour commencer' : 'API Electron indisponible'}
@@ -2444,7 +2868,10 @@ function App() {
                     }`}
                     onClick={() => setActiveTabPath(tab.path)}
                   >
-                    <span className="truncate max-w-[150px]">{tab.name}</span>
+                    <span className="truncate max-w-[150px]">
+                      {(() => { const ic = getEditableMarkdownHeader(tab.content).icon; return ic ? <span className="mr-1">{ic}</span> : null })()}
+                      {tab.name}
+                    </span>
                     {tab.isDirty && <span className="text-xs">•</span>}
                     <button
                       className="ml-1 rounded px-1 opacity-0 hover:bg-white/20 group-hover:opacity-100"
@@ -2488,33 +2915,107 @@ function App() {
                         WYSIWYG
                       </button>
                     </div>
+                    {saveStatus === 'synced' && (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+                        <i className="fa-solid fa-cloud-arrow-up" />
+                        Synchronisé
+                      </span>
+                    )}
+                    {saveStatus === 'local' && (
+                      <span className="flex items-center gap-1 text-[10px] text-amber-400">
+                        <i className="fa-solid fa-floppy-disk" />
+                        Sauvegardé
+                      </span>
+                    )}
                     <button
                       className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
                       onClick={() => void saveCurrentFile()}
-                      disabled={!activeTab.isDirty}
+                      disabled={!activeTab.isDirty || saveStatus === 'saving'}
                       title="Sauvegarder (Ctrl+S)"
                     >
-                      <i className="fa-solid fa-floppy-disk mr-1" />
-                      Sauvegarder
+                      {saveStatus === 'saving' ? (
+                        <><i className="fa-solid fa-spinner fa-spin mr-1" />Sync…</>
+                      ) : (
+                        <><i className="fa-solid fa-floppy-disk mr-1" />Sauvegarder</>
+                      )}
                     </button>
                   </div>
                 </div>
 
                 {/* Zone de page unifiée — tout scrolle ensemble */}
                 <div className="flex-1 min-h-0 overflow-auto">
-                  <div className="mx-auto max-w-4xl px-8 pt-10 pb-32">
+                  <div className="mx-auto max-w-[68rem] px-10 pt-12 pb-40 xl:px-14">
 
-                    {/* Titre */}
-                    <input
-                      className="mb-2 w-full bg-transparent text-[2rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
-                      value={editableHeader.title}
-                      onChange={(event) => updateEditableHeader('title', event.target.value)}
-                      placeholder="Sans titre"
-                    />
+                    {/* Titre avec emoji */}
+                    <div className="mb-3 flex items-center gap-3">
+                      {/* Bouton emoji */}
+                      <div className="relative shrink-0">
+                        <button
+                          className={`flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-colors ${
+                            editableHeader.icon
+                              ? 'hover:bg-white/8'
+                              : 'opacity-0 hover:opacity-100 hover:bg-white/8 focus:opacity-100'
+                          } group-hover:opacity-100`}
+                          onClick={() => setShowEmojiPicker((v) => !v)}
+                          title="Ajouter une icône"
+                        >
+                          {editableHeader.icon ? (
+                            <span>{editableHeader.icon}</span>
+                          ) : (
+                            <i className="fa-regular fa-face-smile text-lg text-white/25" />
+                          )}
+                        </button>
+
+                        {showEmojiPicker && (
+                          <>
+                            {/* Backdrop transparent pour fermer */}
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setShowEmojiPicker(false)}
+                            />
+                            <div className="absolute left-0 top-12 z-50 w-[280px] rounded-xl border border-white/10 bg-[#1a1b1c] p-3 shadow-2xl">
+                              <div className="mb-2 flex items-center justify-between">
+                                <span className="text-xs font-medium text-white/50">Choisir une icône</span>
+                                {editableHeader.icon && (
+                                  <button
+                                    className="rounded px-2 py-0.5 text-xs text-white/40 hover:bg-white/8 hover:text-white/70"
+                                    onClick={() => { updateEditableHeader('icon', ''); setShowEmojiPicker(false) }}
+                                  >
+                                    Supprimer
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-10 gap-0.5">
+                                {HEADER_EMOJIS.map((emoji) => (
+                                  <button
+                                    key={emoji}
+                                    className={`rounded p-1.5 text-lg leading-none transition-colors hover:bg-white/10 ${
+                                      editableHeader.icon === emoji ? 'bg-[#7B61FF]/30 ring-1 ring-[#7B61FF]/50' : ''
+                                    }`}
+                                    onClick={() => { updateEditableHeader('icon', emoji); setShowEmojiPicker(false) }}
+                                    title={emoji}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <input
+                        ref={titleInputRef}
+                        className="flex-1 bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
+                        value={editableHeader.title}
+                        onChange={(event) => updateEditableHeader('title', event.target.value)}
+                        placeholder="Sans titre"
+                      />
+                    </div>
 
                     {/* Description */}
                     <textarea
-                      className="mb-3 w-full resize-none bg-transparent text-sm leading-relaxed text-white/55 outline-none placeholder:text-white/20"
+                      className="mb-5 w-full resize-none bg-transparent text-sm leading-7 text-white/55 outline-none placeholder:text-white/20"
                       rows={2}
                       value={editableHeader.description}
                       onChange={(event) => updateEditableHeader('description', event.target.value)}
@@ -2522,7 +3023,7 @@ function App() {
                     />
 
                     {/* Ligne de méta */}
-                    <div className="mb-8 flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-white/8 pb-5 text-xs text-white/30">
+                    <div className="mb-10 flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-white/8 pb-6 text-xs text-white/30">
                       <span className="flex items-center gap-1">
                         <i className="fa-regular fa-user text-[10px]" />
                         <input
@@ -2547,7 +3048,7 @@ function App() {
                     <div className="relative">
                     {editorMode === 'raw' ? (
                       <textarea
-                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-relaxed text-white/85 outline-none placeholder:text-white/25"
+                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25"
                         value={activeTabBody}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
                         onDrop={onRawDrop}
@@ -2560,7 +3061,7 @@ function App() {
                       <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-center [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:transition-colors [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable
                           suppressContentEditableWarning
                           onInput={onWysiwygInput}
@@ -2572,6 +3073,8 @@ function App() {
                           onClick={(e) => {
                             const target = e.target as HTMLInputElement
                             if (target.type === 'checkbox') {
+                              const taskItem = target.closest('.task-item')
+                              taskItem?.classList.toggle('task-item-checked', target.checked)
                               // Sync after checkbox toggle
                               setTimeout(() => {
                                 const editor = wysiwygEditorRef.current
@@ -2583,7 +3086,7 @@ function App() {
                             }
                           }}
                         />
-                        <div className="mt-4 text-right text-[9px] text-white/15 pointer-events-none select-none">
+                        <div className="mt-5 text-right text-[9px] text-white/15 pointer-events-none select-none">
                           <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste · glisse une image
                         </div>
                       </>
@@ -2642,6 +3145,31 @@ function App() {
                       title="Lien"
                     >
                       <i className="fa-solid fa-link text-[10px]" />
+                    </button>
+                  </div>
+                )}
+
+                {tablePopup && editorMode === 'wysiwyg' && (
+                  <div
+                    className="fixed z-50 flex items-center gap-1 rounded-lg border border-white/15 bg-[#18191a] px-1 py-1 shadow-2xl"
+                    style={{ left: tablePopup.x, top: tablePopup.y, transform: 'translate(-100%, -100%)' }}
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <button
+                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-white/10 hover:text-white"
+                      onClick={insertTableRow}
+                      title="Ajouter une ligne"
+                    >
+                      <i className="fa-solid fa-grip-lines mr-1 text-[10px]" />
+                      Ligne
+                    </button>
+                    <button
+                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-white/10 hover:text-white"
+                      onClick={insertTableColumn}
+                      title="Ajouter une colonne"
+                    >
+                      <i className="fa-solid fa-table-columns mr-1 text-[10px]" />
+                      Colonne
                     </button>
                   </div>
                 )}

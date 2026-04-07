@@ -22,7 +22,7 @@ Objectif produit : proposer une expérience utilisateur proche de Loop (look & f
 ## 4) Roadmap par étapes
 
 ## Suivi d’avancement
-- Dernière mise à jour : 30/03/2026
+- Dernière mise à jour : 07/04/2026
 - Statut global : Étapes 1 à 5 terminées | Étape 6 en cours (semi-prod : feedback utilisateur + corrections)
 
 | Étape | Statut | Date | Notes |
@@ -231,21 +231,28 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - ✅ Améliorer le nom d'import des image pour éviter les doublon (nom-image+hashfichier)
 - Auto-update depuis les release github
 - ✅ Quand on crée des fichier est-ce que c'est possible d'omêtre le .md et de le rajouter si il est pas fourni?
-- Quand ton créé un fichier que ça l'ouvre directement
-- Améliorer l'ui / ux des tableau (plus comme loop)
+- ✅ Quand ton créé un fichier que ça l'ouvre directement
+- ✅ Améliorer l'ui / ux des tableau (plus comme loop)
 - Amélirations UX GIT
-	- Push direct quand CTRL+S
+	- ✅ Push direct quand CTRL+S
 	- Avertir si version plus récente de ce fichier en remote (proposer de pull)
-- Ajouter possibilité dans le header de mettre une icone (emoji) au fichier
+- ✅ Ajouter possibilité dans le header de mettre une icone (emoji) au fichier
 - Ajouter des Tag (etiquette)
 - Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
-- Quand on crée un nouveau fichier directement focus dans le titre
-- Espacer un peu plus le contenu 
-- Ajouter UI pour ajouter lignes et colonnes dans un tableau
-- Quand on ouvre un dossier dans le panel fichier avoir plusieurs section :
+
+- ✅ Quand on crée un nouveau fichier directement focus dans le titre
+- ✅ Espacer un peu plus le contenu 
+- ✅ Ajouter UI pour ajouter lignes et colonnes dans un tableau
+- ✅ Quand on ouvre un dossier dans le panel fichier avoir plusieurs section :
 	- Explorer l'arboresence normal
 	- Mes fichiers l'auteur correspond au nom saisie au départ de l'app
 	- Fichier récents (5 derniers fichiers ouverts)
+- ✅ Fetch/Pull directement quand on arrive dans l'app
+- detecte si l'utilisateur s'appelle Virgile il faut rajouter dans titre de l'app dynamiquement "TypeR" en beau rouge
+- fixer les taille des colonnes (3 colonnes 1/3*3)
+- Proposer la liste complète d'emoji pour les icones de fichier avec un champ de recherche
+- Afficher l'icone dans l'arboresence
+- Fixer la largeur du panneau Fichier (c'est pas beau qu'il change de largeur quand on change d'onglet)
 
 
 
@@ -305,3 +312,23 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
   - `bg-gradient-to-r from-[#7B61FF]/15 to-[#9d8bff]/10` pour le header
   - `transition-colors` + `hover:bg-white/5` pour les lignes
 - 🔧 Added onClick handler for checkboxes: permet de cocher/décocher les tâches et synchroniser avec le markdown
+
+### 07.04.26 — Tâche feedback #8 (terminée)
+- ✅ Header fichier : ajout d’une icône emoji sélectionnable (picker), stockage dans le frontmatter (`icon`)
+- ✅ Affichage de l’emoji dans les onglets
+- ✅ Focus automatique du titre lors de la création d’un nouveau fichier
+- ✅ Ajustement du spacing de la zone page (respiration visuelle)
+
+### 07.04.26 — Tâche feedback #9 (terminée)
+- ✅ Tableau : ajout d’une mini-toolbar contextuelle dans l’éditeur WYSIWYG
+- ✅ Actions rapides : ajouter une ligne et ajouter une colonne
+
+### 07.04.26 — Tâche feedback #10 (terminée)
+- ✅ Sauvegarde Ctrl+S : feedback visuel de statut (sync en cours, synchronisé, sauvegardé local)
+- ✅ Push direct après sauvegarde (via flux commit+push Git existant)
+- ✅ Démarrage dossier : pull silencieux initial + rafraîchissement arbre/statut Git
+
+### 07.04.26 — Tâche feedback #11 (terminée)
+- ✅ Panel Fichiers en 3 sections : Explorer / Mes fichiers / Récents
+- ✅ Section Mes fichiers basée sur l’auteur (nom stocké localement)
+- ✅ Section Récents limitée aux 5 derniers fichiers ouverts
