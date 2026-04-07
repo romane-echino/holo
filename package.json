@@ -2,6 +2,11 @@
   "name": "holo",
   "private": true,
   "version": "0.1.2",
+  "description": "Desktop Markdown editor with WYSIWYG experience and Git/GitHub workflow.",
+  "author": {
+    "name": "Romane Donnet",
+    "email": "romane.donnet@outlook.com"
+  },
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -64,12 +69,14 @@
       "main": "electron/main.js"
     },
     "win": {
+      "icon": "public/logo-512.png",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "mac": {
+      "icon": "public/logo-512.png",
       "target": [
         "dmg",
         "zip"
@@ -77,6 +84,8 @@
       "category": "public.app-category.productivity"
     },
     "linux": {
+      "icon": "public/logo-512.png",
+      "maintainer": "Romane Donnet <romane.donnet@outlook.com>",
       "target": [
         "deb"
       ],

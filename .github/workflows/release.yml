@@ -46,46 +46,17 @@ jobs:
       - name: Build distributables
         run: ${{ matrix.command }}
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: holo-${{ matrix.platform }}
-          path: release/**/*
-          if-no-files-found: error
-
-  release:
-    name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4.1.0
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: List artifacts
-        run: |
-          echo "Downloaded artifacts:"
-          find artifacts -type f -ls
-
-      - name: Publish release
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2.0.0
         with:
-          generate_release_notes: true
+          generate_release_notes: ${{ matrix.platform == 'linux' }}
           files: |
-            artifacts/**/Holo-0.0.0-*.exe
-            artifacts/**/Holo-0.0.0-*.dmg
-            artifacts/**/Holo-0.0.0-*.zip
-            artifacts/**/Holo-0.0.0-*.deb
-            artifacts/**/latest*.yml
+            release/Holo-*.exe
+            release/Holo-*.dmg
+            release/Holo-*.zip
+            release/Holo-*.deb
           fail_on_unmatched_files: true
