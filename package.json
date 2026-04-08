@@ -78,14 +78,14 @@
       "main": "electron/main.js"
     },
     "win": {
-      "icon": "public/logo-512.png",
+      "icon": "public/app-icon.png",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "mac": {
-      "icon": "public/logo-512.png",
+      "icon": "public/app-icon.png",
       "target": [
         "dmg",
         "zip"
@@ -93,7 +93,7 @@
       "category": "public.app-category.productivity"
     },
     "linux": {
-      "icon": "public/logo-512.png",
+      "icon": "public/app-icon.png",
       "maintainer": "Romane Donnet <romane.donnet@outlook.com>",
       "target": [
         "deb"
