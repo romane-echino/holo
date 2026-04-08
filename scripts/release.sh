@@ -12,6 +12,7 @@ Usage:
 Description:
   - Runs build
   - Bumps package.json + package-lock.json version
+  - Auto-skips already existing tags for patch/minor/major
   - Commits version files
   - Creates git tag vX.Y.Z
   - Pushes commit + tag to origin/main
@@ -30,6 +31,33 @@ if [[ -z "${1:-}" ]]; then
 fi
 
 bump="$1"
+
+inc_version() {
+  local version="$1"
+  local mode="$2"
+  IFS='.' read -r major minor patch <<<"$version"
+
+  case "$mode" in
+    patch)
+      patch=$((patch + 1))
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    *)
+      echo "Erreur: mode d'incrément invalide: $mode"
+      exit 1
+      ;;
+  esac
+
+  echo "${major}.${minor}.${patch}"
+}
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "Erreur: npm introuvable."
@@ -53,15 +81,44 @@ if [[ "$current_branch" != "main" ]]; then
   exit 1
 fi
 
+echo "→ Sync tags"
+git fetch --tags --quiet || true
+
 echo "→ Build"
 npm run build
 
 echo "→ Bump version ($bump)"
+current_version="$(node -p "require('./package.json').version")"
+resolved_version=""
+
 if [[ "$bump" =~ ^(patch|minor|major)$ ]]; then
-  npm version "$bump" -m "chore(release): v%s"
+  candidate_version="$(inc_version "$current_version" "$bump")"
+  candidate_tag="v${candidate_version}"
+
+  while git rev-parse -q --verify "refs/tags/${candidate_tag}" >/dev/null; do
+    echo "Tag ${candidate_tag} déjà existant, recherche du prochain..."
+    candidate_version="$(inc_version "$candidate_version" "$bump")"
+    candidate_tag="v${candidate_version}"
+  done
+
+  resolved_version="$candidate_version"
 else
-  npm version "$bump" -m "chore(release): v%s"
+  if ! [[ "$bump" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Erreur: version explicite invalide: $bump"
+    echo "Format attendu: X.Y.Z"
+    exit 1
+  fi
+
+  if git rev-parse -q --verify "refs/tags/v${bump}" >/dev/null; then
+    echo "Erreur: le tag v${bump} existe déjà."
+    echo "Utilise patch/minor/major ou une version libre."
+    exit 1
+  fi
+
+  resolved_version="$bump"
 fi
+
+npm version "$resolved_version" -m "chore(release): v%s"
 
 new_version="$(node -p "require('./package.json').version")"
 new_tag="v${new_version}"
