@@ -368,6 +368,8 @@ function TreeItem({
         onClick={() => {
           if (isDirectory) {
             onToggleDirectory(node.path)
+          } else {
+            onSelect(node)
           }
         }}
         onContextMenu={(event) => {
@@ -504,6 +506,9 @@ function App() {
   const [tablePopup, setTablePopup] = useState<{ x: number; y: number } | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [updateReady, setUpdateReady] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState(0)
   const turndownService = useMemo(() => {
     const service = new TurndownService({
       headingStyle: 'atx',
@@ -856,6 +861,46 @@ function App() {
 
     return () => window.clearInterval(interval)
   }, [gitState.isRepo, refreshGitState, rootPath])
+
+  // Listen for update notifications from Electron
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const holo = window.holo as any
+
+    if (!holo) {
+      return
+    }
+
+    let unsubUpdateAvailable: (() => void) | undefined
+    let unsubUpdateReady: (() => void) | undefined
+    let unsubUpdateProgress: (() => void) | undefined
+
+    try {
+      unsubUpdateAvailable = holo.onUpdateAvailable?.(() => {
+        setUpdateAvailable(true)
+      })
+
+      unsubUpdateReady = holo.onUpdateReady?.(() => {
+        setUpdateReady(true)
+        setUpdateProgress(100)
+      })
+
+      unsubUpdateProgress = holo.onUpdateProgress?.((data: { percent: number }) => {
+        setUpdateProgress(Math.round(data.percent))
+      })
+    } catch (error) {
+      console.error('Failed to setup update listeners:', error)
+    }
+
+    return () => {
+      unsubUpdateAvailable?.()
+      unsubUpdateReady?.()
+      unsubUpdateProgress?.()
+    }
+  }, [])
 
   const toggleDirectory = useCallback((directoryPath: string) => {
     setExpandedDirectories((previous) => {
@@ -3370,6 +3415,68 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {updateAvailable && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-6 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <i className="fa-regular fa-cloud-arrow-down text-[#7B61FF] text-2xl" />
+              <h2 className="text-lg font-semibold text-white">Mise à jour disponible</h2>
+            </div>
+
+            <p className="mt-4 text-sm text-white/70">
+              Une nouvelle version de Holo est disponible et est en train d'être téléchargée.
+            </p>
+
+            {updateReady ? (
+              <>
+                <p className="mt-4 text-sm text-white/70">
+                  Téléchargement terminé. Redémarrez pour installer.
+                </p>
+                <div className="mt-6 flex gap-2">
+                  <button
+                    className="flex-1 rounded border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/5"
+                    onClick={() => setUpdateAvailable(false)}
+                  >
+                    Plus tard
+                  </button>
+                  <button
+                    className="flex-1 rounded bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
+                    onClick={() => {
+                      const holo = window.holo as any
+                      if (holo) {
+                        void holo.installUpdate()
+                      }
+                    }}
+                  >
+                    Redémarrer et installer
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mt-4">
+                  <div className="h-2 w-full rounded-full bg-white/10">
+                    <div
+                      className="h-2 rounded-full bg-[#7B61FF] transition-all"
+                      style={{ width: `${updateProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-white/50">{updateProgress}%</p>
+                </div>
+                <div className="mt-6">
+                  <button
+                    className="w-full rounded border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/5"
+                    onClick={() => setUpdateAvailable(false)}
+                  >
+                    En arrière-plan
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

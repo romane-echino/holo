@@ -7,6 +7,10 @@
     "name": "Romane Donnet",
     "email": "romane.donnet@outlook.com"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/romane-echino/holo.git"
+  },
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -27,6 +31,7 @@
     "release:version": "bash ./scripts/release.sh"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "marked": "^17.0.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

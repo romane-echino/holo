@@ -1,5 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+const updateListeners = {
+  'update-available': [],
+  'update-ready': [],
+  'update-progress': [],
+}
+
 contextBridge.exposeInMainWorld('holo', {
   appName: 'Holo',
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
@@ -31,4 +37,44 @@ contextBridge.exposeInMainWorld('holo', {
   gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
   saveImage: (name, dataBase64) => ipcRenderer.invoke('fs:save-image', name, dataBase64),
   loadImage: (relativePath) => ipcRenderer.invoke('fs:load-image', relativePath),
+  checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('app:install-update'),
+  getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
+  onUpdateAvailable: (callback) => {
+    if (!updateListeners['update-available'].includes(callback)) {
+      updateListeners['update-available'].push(callback)
+    }
+    return () => {
+      updateListeners['update-available'] = updateListeners['update-available'].filter(c => c !== callback)
+    }
+  },
+  onUpdateReady: (callback) => {
+    if (!updateListeners['update-ready'].includes(callback)) {
+      updateListeners['update-ready'].push(callback)
+    }
+    return () => {
+      updateListeners['update-ready'] = updateListeners['update-ready'].filter(c => c !== callback)
+    }
+  },
+  onUpdateProgress: (callback) => {
+    if (!updateListeners['update-progress'].includes(callback)) {
+      updateListeners['update-progress'].push(callback)
+    }
+    return () => {
+      updateListeners['update-progress'] = updateListeners['update-progress'].filter(c => c !== callback)
+    }
+  },
+})
+
+// Set up IPC event listeners
+ipcRenderer.on('app:update-available', () => {
+  updateListeners['update-available'].forEach(cb => cb())
+})
+
+ipcRenderer.on('app:update-ready', () => {
+  updateListeners['update-ready'].forEach(cb => cb())
+})
+
+ipcRenderer.on('app:update-progress', (_event, data) => {
+  updateListeners['update-progress'].forEach(cb => cb(data))
 })

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -12,6 +13,7 @@ const isDev = !app.isPackaged
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
 const MAX_RECENT_FOLDERS = 10
+let updateState = { available: false, downloading: false, ready: false }
 
 function getRecentFoldersFilePath() {
   return path.join(app.getPath('userData'), 'recent-folders.json')
@@ -447,6 +449,8 @@ function createWindow() {
 
   window.once('ready-to-show', () => {
     window.show()
+    // Open devtools by default for debugging
+    window.webContents.openDevTools()
   })
 
   if (isDev) {
@@ -527,6 +531,28 @@ ipcMain.handle('app:open-external-url', async (_event, rawUrl) => {
   await shell.openExternal(safeUrl)
   return { ok: true }
 })
+
+ipcMain.handle('app:check-for-updates', async () => {
+  try {
+    await autoUpdater.checkForUpdatesAndNotify()
+    return { ok: true, updateState }
+  } catch (error) {
+    console.error('Update check failed:', error)
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('app:install-update', async () => {
+  try {
+    autoUpdater.quitAndInstall()
+    return { ok: true }
+  } catch (error) {
+    console.error('Update install failed:', error)
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('app:get-update-state', async () => updateState)
 
 ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
 
@@ -920,6 +946,43 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   createWindow()
+
+  // Configure auto-updater
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify()
+    
+    autoUpdater.on('update-available', () => {
+      updateState.available = true
+      updateState.downloading = false
+      console.log('Update available')
+      // Notify all windows about available update
+      BrowserWindow.getAllWindows().forEach(window => {
+        window.webContents.send('app:update-available')
+      })
+    })
+    
+    autoUpdater.on('update-downloaded', () => {
+      updateState.downloading = false
+      updateState.ready = true
+      console.log('Update downloaded and ready to install')
+      // Notify all windows that update is ready
+      BrowserWindow.getAllWindows().forEach(window => {
+        window.webContents.send('app:update-ready')
+      })
+    })
+    
+    autoUpdater.on('download-progress', (progressObj) => {
+      console.log(`Download speed: ${progressObj.bytesPerSecond}, Downloaded: ${Math.round(progressObj.percent)}%`)
+      BrowserWindow.getAllWindows().forEach(window => {
+        window.webContents.send('app:update-progress', { percent: progressObj.percent })
+      })
+    })
+    
+    // Check for updates every 60 minutes
+    setInterval(() => {
+      autoUpdater.checkForUpdates()
+    }, 60 * 60 * 1000)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

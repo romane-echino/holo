@@ -253,7 +253,23 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - Proposer la liste complète d'emoji pour les icones de fichier avec un champ de recherche
 - Afficher l'icone dans l'arboresence
 - Fixer la largeur du panneau Fichier (c'est pas beau qu'il change de largeur quand on change d'onglet)
+
+### 08.04.26 — Tâche feedback #12+ (en cours)
+- ✅ Devtools par défaut : ajout de `window.webContents.openDevTools()` dans `createWindow()` pour déboguer le .deb qui n'affiche rien
+- ✅ Auto-updates : intégration de `electron-updater` avec vérification automatique des releases GitHub
+  - Contrôle: `checkForUpdates()`, `installUpdate()`
+  - État: `updateAvailable`, `updateReady`, `updateProgress`
+  - Modal: affiche progression du téléchargement + bouton "Redémarrer et installer"
+  - Vérification toutes les 60 minutes + fetch initiale au démarrage
+  - Dépendance: `electron-updater` install dans package.json
+  - Repository field ajouté pour electron-updater (pointe vers GitHub releases)
 - Updates automatiques
+- BUG : j'arrive plus a ouvrir de fichier (`TreeItem onClick`) — ✅ CORRIGÉ (ajout `else { onSelect(node) }` pour les fichiers)
+- Refonte git checkout
+	- On saisie le lien https du repo / le login et mdp git et ça demande ou on veut mettre le dossier, ça le checkout et ça l'ouvre
+	- si y'a des trucs fortement lié a github on enleve
+- Modifier le placement du bouton icone dans les pages (au dessus du titre et pas a gauche)
+
 
 
 
