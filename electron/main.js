@@ -460,7 +460,8 @@ function createWindow() {
     return
   }
 
-  window.loadFile(path.join(__dirname, '../dist/index.html'))
+  const indexPath = path.join(__dirname, '../dist/index.html')
+  window.loadURL(`file://${indexPath}`)
 }
 
 ipcMain.handle('fs:open-folder', async () => {
@@ -980,9 +981,16 @@ app.whenReady().then(() => {
       })
     })
     
+    autoUpdater.on('error', (error) => {
+      console.error('Update check error:', error)
+      // Silently fail - don't crash the app
+    })
+    
     // Check for updates every 60 minutes
     setInterval(() => {
-      autoUpdater.checkForUpdates()
+      autoUpdater.checkForUpdates().catch((error) => {
+        console.error('Periodic update check failed:', error)
+      })
     }, 60 * 60 * 1000)
   }
 
