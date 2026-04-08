@@ -253,6 +253,7 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - Proposer la liste complète d'emoji pour les icones de fichier avec un champ de recherche
 - Afficher l'icone dans l'arboresence
 - Fixer la largeur du panneau Fichier (c'est pas beau qu'il change de largeur quand on change d'onglet)
+- Updates automatiques
 
 
 
