@@ -75,5 +75,6 @@ jobs:
         with:
           files: |
             release/Holo-*.exe
+            release/Holo-*.exe.blockmap
             release/latest.yml
           fail_on_unmatched_files: true
