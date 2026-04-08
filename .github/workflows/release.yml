@@ -49,14 +49,28 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish release assets
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish release assets (Linux)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'linux'
         uses: softprops/action-gh-release@v2.0.0
         with:
-          generate_release_notes: ${{ matrix.platform == 'linux' }}
+          generate_release_notes: true
           files: |
-            release/Holo-*.exe
+            release/Holo-*.deb
+          fail_on_unmatched_files: true
+
+      - name: Publish release assets (macOS)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'macos'
+        uses: softprops/action-gh-release@v2.0.0
+        with:
+          files: |
             release/Holo-*.dmg
             release/Holo-*.zip
-            release/Holo-*.deb
+          fail_on_unmatched_files: true
+
+      - name: Publish release assets (Windows)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows'
+        uses: softprops/action-gh-release@v2.0.0
+        with:
+          files: |
+            release/Holo-*.exe
           fail_on_unmatched_files: true
