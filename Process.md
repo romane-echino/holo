@@ -225,11 +225,11 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - ✅ CTRL+ S autocommit (Commit message automatique) update/add [Chemindelapage/Nomdufichier]
 - ✅ Quand je tape "/" pour une commande le popup s'affiche tout en haut a gauche de l'app et pas sur la position du curseur. Et si je fait "echape" pour annuler le "/" reste
 - ✅Les popup de création de fichier / dossier et renommage mérite d'être adapté en terme de style (dark mode)
-- Améliorer l'UI/UX des liste de tâche dans l'editeur
-- Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
-- Connexion a github au démarage (logo ouverture du navigateur puis retour dans l'app)
+- ✅ Améliorer l'UI/UX des liste de tâche dans l'editeur
+
+- ✅ Connexion a github au démarage (logo ouverture du navigateur puis retour dans l'app)
 - ✅ Améliorer le nom d'import des image pour éviter les doublon (nom-image+hashfichier)
-- Auto-update depuis les release github
+- ✅ Auto-update depuis les release github
 - ✅ Quand on crée des fichier est-ce que c'est possible d'omêtre le .md et de le rajouter si il est pas fourni?
 - ✅ Quand ton créé un fichier que ça l'ouvre directement
 - ✅ Améliorer l'ui / ux des tableau (plus comme loop)
@@ -237,9 +237,6 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 	- ✅ Push direct quand CTRL+S
 	- Avertir si version plus récente de ce fichier en remote (proposer de pull)
 - ✅ Ajouter possibilité dans le header de mettre une icone (emoji) au fichier
-- Ajouter des Tag (etiquette)
-- Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
-
 - ✅ Quand on crée un nouveau fichier directement focus dans le titre
 - ✅ Espacer un peu plus le contenu 
 - ✅ Ajouter UI pour ajouter lignes et colonnes dans un tableau
@@ -280,9 +277,31 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - Quand je fais une commande "/" ça agit sur le bloc de text en dessus. Par exemple je fais un paragraphe je vais a la ligne je met la commande "titre 2" et mon paragraphe se transforme en titre deux. Cela ne dois affecter que la ligne courrante. EDIT: Toujours pas bon!
 - ✅ faire des scroll bar qui s'affiche seulement au survol de la div scrollable et plus dans un style moderne (iOS)
 - ✅ Quand je fait un retour a la ligne dans une citation doit revenir a du texte normal
-- gérer un style pour titre 1 à 4
+
+
+### 09.04.26
+- Gérer un style pour titre 1 à 4
 - Quand je tape une commande "/" dans la première ligne la commande est pas appliquée
 - Quand je coche une tâche ça ne modifie pas le code à - [x], donc pas de sauvegarde
+- Assombrir la couleur de fond quand y'a pas le focus sur la fenêtre
+- Mettre une ombre a la fenêtre
+- Quand on est dans un tableau et qu'on presse tab va a la case suivante, si c'est la dernière case -> a la ligne suivante, si c'est la dernière case de la dernière ligne -> crée une nouvelle ligne
+- Pouvoir supprimer une ligne d'un tableau / Supprimer une colonne
+- Ajouter des Tag (etiquette) aux document
+- Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
+- Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
+- Panneau Settings
+  - paramêtre git (name, email)
+  - apikey chatgpt
+  - prompt IA (on trouve un prompt idéal par défaut pour le makdown)
+- Ajouter l'ia dans les page (commande + sélection)
+- Dans les tableau ajouter l'index de ligne 1,2,3,...
+- Dans les tableau : En tête colonne choix du type de colonne (Sauvegardé via un emoji?) (Nombre, Montétaire, Texte) Ligne de fin de tableau (nombre de ligne, nombre d'occurence)
+- La commande "Tâche" n'est que accessible quand ont tape le circonflexe
+- Commandes manquante 
+  - Séparateur
+  - Lien
+  - Insérer une image -> Prompt natif
 
 
 
