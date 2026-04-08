@@ -953,60 +953,56 @@ app.whenReady().then(() => {
 
   // Configure auto-updater
   if (!isDev) {
-    // TODO: Enable when releases are published on GitHub
-    // try {
-    //   autoUpdater.checkForUpdatesAndNotify().catch((error) => {
-    //     console.error('Update check failed:', error.message)
-    //   })
-    // } catch (error) {
-    //   console.error('Update initialization failed:', error)
-    // }
-    
-    // autoUpdater.on('update-available', () => {
-    //   updateState.available = true
-    //   updateState.downloading = false
-    //   console.log('Update available')
-    //   // Notify all windows about available update
-    //   BrowserWindow.getAllWindows().forEach(window => {
-    //     window.webContents.send('app:update-available')
-    //   })
-    // })
-    
-    // autoUpdater.on('update-downloaded', () => {
-    //   updateState.downloading = false
-    //   updateState.ready = true
-    //   console.log('Update downloaded and ready to install')
-    //   // Notify all windows that update is ready
-    //   BrowserWindow.getAllWindows().forEach(window => {
-    //     window.webContents.send('app:update-ready')
-    //   })
-    // })
-    
-    // autoUpdater.on('download-progress', (progressObj) => {
-    //   console.log(`Download speed: ${progressObj.bytesPerSecond}, Downloaded: ${Math.round(progressObj.percent)}%`)
-    //   BrowserWindow.getAllWindows().forEach(window => {
-    //     window.webContents.send('app:update-progress', { percent: progressObj.percent })
-    //   })
-    // })
-    
-    // autoUpdater.on('error', (error) => {
-    //   console.error('Update check error:', error)
-    //   // Silently fail - don't crash the app
-    // })
-    
-    // // Check for updates every 60 minutes
-    // setInterval(() => {
-    //   autoUpdater.checkForUpdates().catch((error) => {
-    //     console.error('Periodic update check failed:', error.message)
-    //   })
-    // }, 60 * 60 * 1000)
-    
-    // process.on('unhandledRejection', (reason, promise) => {
-    //   // Handle unhandled rejections from electron-updater
-    //   if (reason && typeof reason === 'object' && reason.code === 'HTTP_ERROR_404') {
-    //     console.error('Update check: repository not found or no releases available')
-    //   }
-    // })
+    const isIgnorableUpdateError = (error) => {
+      const code = error && typeof error === 'object' ? error.code : null
+      const statusCode = error && typeof error === 'object' ? error.statusCode : null
+      return code === 'HTTP_ERROR_404' || statusCode === 404
+    }
+
+    autoUpdater.on('update-available', () => {
+      updateState.available = true
+      updateState.downloading = true
+      BrowserWindow.getAllWindows().forEach((window) => {
+        window.webContents.send('app:update-available')
+      })
+    })
+
+    autoUpdater.on('update-downloaded', () => {
+      updateState.downloading = false
+      updateState.ready = true
+      BrowserWindow.getAllWindows().forEach((window) => {
+        window.webContents.send('app:update-ready')
+      })
+    })
+
+    autoUpdater.on('download-progress', (progressObj) => {
+      BrowserWindow.getAllWindows().forEach((window) => {
+        window.webContents.send('app:update-progress', { percent: progressObj.percent })
+      })
+    })
+
+    autoUpdater.on('error', (error) => {
+      if (isIgnorableUpdateError(error)) {
+        console.log('Updater: aucune release disponible (404), vérification ignorée.')
+        return
+      }
+
+      console.error('Updater error:', error)
+    })
+
+    autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      if (!isIgnorableUpdateError(error)) {
+        console.error('Initial update check failed:', error)
+      }
+    })
+
+    setInterval(() => {
+      autoUpdater.checkForUpdates().catch((error) => {
+        if (!isIgnorableUpdateError(error)) {
+          console.error('Periodic update check failed:', error)
+        }
+      })
+    }, 60 * 60 * 1000)
   }
 
   app.on('activate', () => {
