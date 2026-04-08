@@ -56,6 +56,7 @@ jobs:
           generate_release_notes: true
           files: |
             release/Holo-*.deb
+            release/latest-linux.yml
           fail_on_unmatched_files: true
 
       - name: Publish release assets (macOS)
@@ -65,6 +66,7 @@ jobs:
           files: |
             release/Holo-*.dmg
             release/Holo-*.zip
+            release/latest-mac.yml
           fail_on_unmatched_files: true
 
       - name: Publish release assets (Windows)
@@ -73,4 +75,5 @@ jobs:
         with:
           files: |
             release/Holo-*.exe
+            release/latest.yml
           fail_on_unmatched_files: true
