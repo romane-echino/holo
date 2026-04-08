@@ -460,8 +460,9 @@ function createWindow() {
     return
   }
 
-  const indexPath = path.join(__dirname, '../dist/index.html')
-  window.loadURL(`file://${indexPath}`)
+  // Use app.getAppPath() for better compatibility with packaged apps (.asar)
+  const indexPath = path.join(app.getAppPath(), 'dist', 'index.html')
+  window.loadFile(indexPath)
 }
 
 ipcMain.handle('fs:open-folder', async () => {
@@ -952,46 +953,60 @@ app.whenReady().then(() => {
 
   // Configure auto-updater
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify()
+    // TODO: Enable when releases are published on GitHub
+    // try {
+    //   autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+    //     console.error('Update check failed:', error.message)
+    //   })
+    // } catch (error) {
+    //   console.error('Update initialization failed:', error)
+    // }
     
-    autoUpdater.on('update-available', () => {
-      updateState.available = true
-      updateState.downloading = false
-      console.log('Update available')
-      // Notify all windows about available update
-      BrowserWindow.getAllWindows().forEach(window => {
-        window.webContents.send('app:update-available')
-      })
-    })
+    // autoUpdater.on('update-available', () => {
+    //   updateState.available = true
+    //   updateState.downloading = false
+    //   console.log('Update available')
+    //   // Notify all windows about available update
+    //   BrowserWindow.getAllWindows().forEach(window => {
+    //     window.webContents.send('app:update-available')
+    //   })
+    // })
     
-    autoUpdater.on('update-downloaded', () => {
-      updateState.downloading = false
-      updateState.ready = true
-      console.log('Update downloaded and ready to install')
-      // Notify all windows that update is ready
-      BrowserWindow.getAllWindows().forEach(window => {
-        window.webContents.send('app:update-ready')
-      })
-    })
+    // autoUpdater.on('update-downloaded', () => {
+    //   updateState.downloading = false
+    //   updateState.ready = true
+    //   console.log('Update downloaded and ready to install')
+    //   // Notify all windows that update is ready
+    //   BrowserWindow.getAllWindows().forEach(window => {
+    //     window.webContents.send('app:update-ready')
+    //   })
+    // })
     
-    autoUpdater.on('download-progress', (progressObj) => {
-      console.log(`Download speed: ${progressObj.bytesPerSecond}, Downloaded: ${Math.round(progressObj.percent)}%`)
-      BrowserWindow.getAllWindows().forEach(window => {
-        window.webContents.send('app:update-progress', { percent: progressObj.percent })
-      })
-    })
+    // autoUpdater.on('download-progress', (progressObj) => {
+    //   console.log(`Download speed: ${progressObj.bytesPerSecond}, Downloaded: ${Math.round(progressObj.percent)}%`)
+    //   BrowserWindow.getAllWindows().forEach(window => {
+    //     window.webContents.send('app:update-progress', { percent: progressObj.percent })
+    //   })
+    // })
     
-    autoUpdater.on('error', (error) => {
-      console.error('Update check error:', error)
-      // Silently fail - don't crash the app
-    })
+    // autoUpdater.on('error', (error) => {
+    //   console.error('Update check error:', error)
+    //   // Silently fail - don't crash the app
+    // })
     
-    // Check for updates every 60 minutes
-    setInterval(() => {
-      autoUpdater.checkForUpdates().catch((error) => {
-        console.error('Periodic update check failed:', error)
-      })
-    }, 60 * 60 * 1000)
+    // // Check for updates every 60 minutes
+    // setInterval(() => {
+    //   autoUpdater.checkForUpdates().catch((error) => {
+    //     console.error('Periodic update check failed:', error.message)
+    //   })
+    // }, 60 * 60 * 1000)
+    
+    // process.on('unhandledRejection', (reason, promise) => {
+    //   // Handle unhandled rejections from electron-updater
+    //   if (reason && typeof reason === 'object' && reason.code === 'HTTP_ERROR_404') {
+    //     console.error('Update check: repository not found or no releases available')
+    //   }
+    // })
   }
 
   app.on('activate', () => {

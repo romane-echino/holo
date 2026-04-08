@@ -2403,7 +2403,7 @@ function App() {
       {/* App header */}
       <header className="flex items-center pr-3" style={{ gridArea: 'appbar' }}>
         <div className="flex-1 drag user-select-none">
-          <img src="/logo.png" height={40} width={120} alt="logo" />
+          <img src="./logo.png" height={40} width={120} alt="logo" />
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
           <button
