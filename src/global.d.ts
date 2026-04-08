@@ -42,8 +42,16 @@ type HoloGitSyncResult = {
   error: string | null
 }
 
+type HoloGitClonePayload = {
+  repoUrl: string
+  username?: string
+  password?: string
+  destinationPath: string
+}
+
 interface HoloApi {
   appName: string
+  getAppVersion: () => Promise<string>
   minimizeWindow: () => Promise<{ ok: true }>
   toggleMaximizeWindow: () => Promise<{ ok: true; isMaximized: boolean }>
   closeWindow: () => Promise<{ ok: true }>
@@ -69,6 +77,8 @@ interface HoloApi {
     targetDirectoryPath: string,
   ) => Promise<{ ok: true; newPath: string }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
+  gitPickCloneDirectory: () => Promise<string | null>
+  gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>
   gitFetch: () => Promise<{ ok: true; output: string }>
   gitCommit: (message: string) => Promise<HoloGitCommitResult>
   gitSync: () => Promise<HoloGitSyncResult>

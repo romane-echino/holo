@@ -133,6 +133,35 @@ function sanitizeName(name) {
   return trimmed
 }
 
+function getRepoNameFromUrl(rawUrl) {
+  const cleaned = String(rawUrl ?? '').trim().replace(/\/+$/, '')
+
+  if (!cleaned) {
+    throw new Error('Le lien du dépôt est requis.')
+  }
+
+  const lastSegment = cleaned.split('/').pop() ?? ''
+  const withoutGit = lastSegment.replace(/\.git$/i, '')
+  const safeName = sanitizeName(withoutGit)
+
+  return safeName
+}
+
+function withOptionalCredentials(rawUrl, username, password) {
+  const safeUrl = assertExternalHttpUrl(rawUrl)
+  const user = String(username ?? '').trim()
+  const pass = String(password ?? '').trim()
+
+  if (!user) {
+    return safeUrl
+  }
+
+  const parsed = new URL(safeUrl)
+  parsed.username = encodeURIComponent(user)
+  parsed.password = encodeURIComponent(pass)
+  return parsed.toString()
+}
+
 async function buildTree(entryPath) {
   const entries = (await fs.readdir(entryPath, { withFileTypes: true })).filter(
     (entry) => !entry.name.startsWith('.')
@@ -451,8 +480,6 @@ function createWindow() {
 
   window.once('ready-to-show', () => {
     window.show()
-    // Open devtools by default for debugging
-    window.webContents.openDevTools()
   })
 
   if (isDev) {
@@ -475,6 +502,58 @@ ipcMain.handle('fs:open-folder', async () => {
   }
 
   currentRootPath = result.filePaths[0]
+  await addRecentFolder(currentRootPath)
+  return getCurrentTreePayload()
+})
+
+ipcMain.handle('git:pick-clone-directory', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
+})
+
+ipcMain.handle('git:clone-repository', async (_event, payload) => {
+  const repoUrl = String(payload?.repoUrl ?? '').trim()
+  const username = String(payload?.username ?? '').trim()
+  const password = String(payload?.password ?? '').trim()
+  const destinationPath = String(payload?.destinationPath ?? '').trim()
+
+  if (!repoUrl) {
+    throw new Error('Le lien du dépôt est requis.')
+  }
+
+  if (!destinationPath) {
+    throw new Error('Le dossier de destination est requis.')
+  }
+
+  const destinationStats = await fs.stat(destinationPath).catch(() => null)
+
+  if (!destinationStats || !destinationStats.isDirectory()) {
+    throw new Error('Le dossier de destination est invalide.')
+  }
+
+  const repoName = getRepoNameFromUrl(repoUrl)
+  const cloneTargetPath = path.join(destinationPath, repoName)
+  const cloneTargetExists = await fs.stat(cloneTargetPath).catch(() => null)
+
+  if (cloneTargetExists) {
+    throw new Error(`Le dossier cible existe déjà: ${cloneTargetPath}`)
+  }
+
+  const cloneUrl = withOptionalCredentials(repoUrl, username, password)
+  const cloneResult = await runGit(['clone', cloneUrl, cloneTargetPath], destinationPath)
+
+  if (!cloneResult.ok) {
+    throw new Error(getGitErrorMessage(cloneResult, 'Échec du clone du dépôt.'))
+  }
+
+  currentRootPath = cloneTargetPath
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
@@ -557,6 +636,7 @@ ipcMain.handle('app:install-update', async () => {
 })
 
 ipcMain.handle('app:get-update-state', async () => updateState)
+ipcMain.handle('app:get-version', async () => app.getVersion())
 
 ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
 

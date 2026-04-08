@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('holo', {
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggle-devtools'),
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
@@ -30,6 +31,8 @@ contextBridge.exposeInMainWorld('holo', {
   movePath: (sourcePath, targetDirectoryPath) =>
     ipcRenderer.invoke('fs:move-path', sourcePath, targetDirectoryPath),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
+  gitPickCloneDirectory: () => ipcRenderer.invoke('git:pick-clone-directory'),
+  gitCloneRepository: (payload) => ipcRenderer.invoke('git:clone-repository', payload),
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitSync: () => ipcRenderer.invoke('git:sync'),

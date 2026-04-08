@@ -93,7 +93,7 @@
       "category": "public.app-category.productivity"
     },
     "linux": {
-      "icon": "public/app-icon.png",
+      "icon": "public/app-icon-512.png",
       "maintainer": "Romane Donnet <romane.donnet@outlook.com>",
       "target": [
         "deb"

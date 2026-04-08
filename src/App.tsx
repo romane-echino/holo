@@ -39,6 +39,14 @@ type GitDialog =
     value: string
   }
 
+type CloneDialog = {
+  repoUrl: string
+  username: string
+  password: string
+  destinationPath: string
+  isSubmitting: boolean
+}
+
 type GitState = {
   isRepo: boolean
   branch: string | null
@@ -319,6 +327,7 @@ function flatTreeFiles(node: TreeNode): string[] {
 function TreeItem({
   node,
   selectedPath,
+  fileIconByPath,
   onSelect,
   onContextMenu,
   expandedDirectories,
@@ -334,6 +343,7 @@ function TreeItem({
 }: {
   node: TreeNode
   selectedPath: string | null
+  fileIconByPath: Record<string, string>
   onSelect: (node: TreeNode) => void
   onContextMenu: (node: TreeNode, position: { x: number; y: number }) => void
   expandedDirectories: Set<string>
@@ -418,7 +428,7 @@ function TreeItem({
           {node.type === 'directory' ? (
             <i className={`fa-regular ${isExpanded ? 'fa-folder-open' : 'fa-folder'}`} />
           ) : (
-            <i className="fa-regular fa-file-lines" />
+            fileIconByPath[node.path] ? <span>{fileIconByPath[node.path]}</span> : <i className="fa-regular fa-file-lines" />
           )}
         </span>
         <span className="truncate text-xs">{node.type === 'file' ? node.name.replace(/\.md$/i, '') : node.name}</span>
@@ -431,6 +441,7 @@ function TreeItem({
               key={childNode.path}
               node={childNode}
               selectedPath={selectedPath}
+              fileIconByPath={fileIconByPath}
               onSelect={onSelect}
               onContextMenu={onContextMenu}
               expandedDirectories={expandedDirectories}
@@ -486,13 +497,16 @@ function App() {
   const [nameDialog, setNameDialog] = useState<NameDialog | null>(null)
   const [gitState, setGitState] = useState<GitState>(DEFAULT_GIT_STATE)
   const [gitDialog, setGitDialog] = useState<GitDialog | null>(null)
+  const [cloneDialog, setCloneDialog] = useState<CloneDialog | null>(null)
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git'>('files')
+  const [appVersion, setAppVersion] = useState('')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
   const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
+  const [fileIconByPath, setFileIconByPath] = useState<Record<string, string>>({})
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
   const imageDragDepthRef = useRef(0)
@@ -798,6 +812,93 @@ function App() {
 
     window.localStorage.setItem('holo-author', appAuthor)
   }, [appAuthor])
+
+  useEffect(() => {
+    const filePaths = tree ? flatTreeFiles(tree) : []
+
+    if (filePaths.length === 0) {
+      setFileIconByPath({})
+      return
+    }
+
+    if (!window.holo) {
+      return
+    }
+
+    let cancelled = false
+
+    const loadIcons = async () => {
+      const pairs = await Promise.all(
+        filePaths.map(async (filePath) => {
+          try {
+            const content = await window.holo!.readFile(filePath)
+            const icon = getEditableMarkdownHeader(content).icon.trim()
+            return [filePath, icon] as const
+          } catch {
+            return [filePath, ''] as const
+          }
+        }),
+      )
+
+      if (cancelled) {
+        return
+      }
+
+      const next: Record<string, string> = {}
+      for (const [filePath, icon] of pairs) {
+        if (icon) {
+          next[filePath] = icon
+        }
+      }
+
+      setFileIconByPath(next)
+    }
+
+    void loadIcons()
+
+    return () => {
+      cancelled = true
+    }
+  }, [tree])
+
+  useEffect(() => {
+    if (!activeTabPath || !activeTab) {
+      return
+    }
+
+    const icon = getEditableMarkdownHeader(activeTab.content).icon.trim()
+
+    setFileIconByPath((previous) => {
+      if (!icon && !(activeTabPath in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+
+      if (icon) {
+        next[activeTabPath] = icon
+      } else {
+        delete next[activeTabPath]
+      }
+
+      return next
+    })
+  }, [activeTab, activeTabPath])
+
+  useEffect(() => {
+    const loadAppVersion = async () => {
+      if (!window.holo) {
+        return
+      }
+
+      const version = await window.holo.getAppVersion().catch(() => '')
+      if (version) {
+        setAppVersion(version)
+      }
+    }
+
+    void loadAppVersion()
+  }, [])
 
   const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
   const [myFilePaths, setMyFilePaths] = useState<string[]>([])
@@ -2369,16 +2470,97 @@ function App() {
     await holo.closeWindow()
   }, [getHoloApi])
 
-  const openGithubCheckout = useCallback(async () => {
+  const openCloneDialog = useCallback(() => {
+    setCloneDialog({
+      repoUrl: '',
+      username: '',
+      password: '',
+      destinationPath: '',
+      isSubmitting: false,
+    })
+  }, [])
+
+  const pickCloneDirectory = useCallback(async () => {
     const holo = getHoloApi()
 
-    if (!holo) {
-      window.open('https://github.com', '_blank', 'noopener,noreferrer')
+    if (!holo || !cloneDialog) {
       return
     }
 
-    await holo.openExternalUrl('https://github.com')
-  }, [getHoloApi])
+    try {
+      const selectedPath = await holo.gitPickCloneDirectory()
+
+      if (!selectedPath) {
+        return
+      }
+
+      setCloneDialog((previous) =>
+        previous
+          ? {
+            ...previous,
+            destinationPath: selectedPath,
+          }
+          : previous,
+      )
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [cloneDialog, getHoloApi])
+
+  const submitCloneDialog = useCallback(async () => {
+    const holo = getHoloApi()
+
+    if (!holo || !cloneDialog) {
+      return
+    }
+
+    const repoUrl = cloneDialog.repoUrl.trim()
+    const destinationPath = cloneDialog.destinationPath.trim()
+
+    if (!repoUrl) {
+      window.alert('Le lien du dépôt est requis.')
+      return
+    }
+
+    if (!destinationPath) {
+      window.alert('Choisis un dossier de destination.')
+      return
+    }
+
+    setCloneDialog((previous) =>
+      previous
+        ? {
+          ...previous,
+          isSubmitting: true,
+        }
+        : previous,
+    )
+
+    try {
+      const result = await holo.gitCloneRepository({
+        repoUrl,
+        username: cloneDialog.username.trim(),
+        password: cloneDialog.password,
+        destinationPath,
+      })
+
+      applyOpenedFolder(result)
+      setCloneDialog(null)
+      await refreshRecentFolders()
+      const nextGitState = await holo.gitGetState(true)
+      setGitState(normalizeGitState(nextGitState))
+    } catch (error) {
+      window.alert((error as Error).message)
+      setCloneDialog((previous) =>
+        previous
+          ? {
+            ...previous,
+            isSubmitting: false,
+          }
+          : previous,
+      )
+    }
+  }, [applyOpenedFolder, cloneDialog, getHoloApi, refreshRecentFolders])
 
   const closeOpenedFolder = useCallback(() => {
     setRootPath(null)
@@ -2403,7 +2585,10 @@ function App() {
       {/* App header */}
       <header className="flex items-center pr-3" style={{ gridArea: 'appbar' }}>
         <div className="flex-1 drag user-select-none">
-          <img src="./logo.png" height={40} width={120} alt="logo" />
+          <div className="flex items-end gap-2">
+            <img src="./logo.png" height={40} width={120} alt="logo" />
+            {appVersion && <span className="text-[10px] text-white/35">v{appVersion}</span>}
+          </div>
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
           <button
@@ -2445,7 +2630,7 @@ function App() {
         </div>
       </header>
 
-      <aside className="max-w-[492px] flex gap-2 z-10 pl-2 font-quicksand" style={{ gridArea: 'sidebar' }}>
+      <aside className="flex gap-2 z-10 pl-2 font-quicksand" style={{ gridArea: 'sidebar' }}>
 
         {/* Icônes de navigation principale */}
         <nav className="flex flex-col gap-4 pt-4">
@@ -2501,7 +2686,7 @@ function App() {
 
         {/* Panel Fichiers */}
         {activeSidebar === 'files' && (
-          <nav className="bg-[#1f2021] min-w-[300px] rounded-t-lg overflow-x-hidden overflow-y-auto flex-1 p-5 flex flex-col gap-3">
+          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
             
             {/* Titre du dossier */}
             <div className="flex items-center justify-between gap-2">
@@ -2571,12 +2756,12 @@ function App() {
                   <button
                     className="rounded px-2.5 py-1.5 text-xs font-medium border border-white/15 text-white/85 hover:bg-white/10"
                     onClick={() => {
-                      void openGithubCheckout()
+                      openCloneDialog()
                     }}
-                    title="Checkout sur GitHub"
+                    title="Cloner un dépôt Git"
                   >
-                    <i className="fa-brands fa-github mr-1" />
-                    Checkout GitHub
+                    <i className="fa-solid fa-code-branch mr-1" />
+                    Cloner un dépôt
                   </button>
                 </div>
               </div>
@@ -2626,6 +2811,7 @@ function App() {
                 <TreeItem
                   node={tree!}
                   selectedPath={selectedPath}
+                  fileIconByPath={fileIconByPath}
                   onSelect={onSelectNode}
                   onContextMenu={openTreeContextMenu}
                   expandedDirectories={expandedDirectories}
@@ -2720,7 +2906,7 @@ function App() {
 
         {/* Panel Git */}
         {activeSidebar === 'git' && (
-          <nav className="bg-[#1f2021] w-[300px] rounded-t-lg overflow-x-hidden overflow-y-auto flex-1 p-5 flex flex-col gap-3">
+          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
             
             {/* Titre */}
             <div>
@@ -2991,10 +3177,9 @@ function App() {
                 <div className="flex-1 min-h-0 overflow-auto">
                   <div className="mx-auto max-w-[68rem] px-10 pt-12 pb-40 xl:px-14">
 
-                    {/* Titre avec emoji */}
-                    <div className="mb-3 flex items-center gap-3">
-                      {/* Bouton emoji */}
-                      <div className="relative shrink-0">
+                    {/* Bouton icône au-dessus du titre */}
+                    <div className="mb-3">
+                      <div className="relative mb-2">
                         <button
                           className={`flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-colors ${
                             editableHeader.icon
@@ -3013,7 +3198,6 @@ function App() {
 
                         {showEmojiPicker && (
                           <>
-                            {/* Backdrop transparent pour fermer */}
                             <div
                               className="fixed inset-0 z-40"
                               onClick={() => setShowEmojiPicker(false)}
@@ -3051,7 +3235,7 @@ function App() {
 
                       <input
                         ref={titleInputRef}
-                        className="flex-1 bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
+                        className="w-full bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
                         value={editableHeader.title}
                         onChange={(event) => updateEditableHeader('title', event.target.value)}
                         placeholder="Sans titre"
@@ -3361,6 +3545,118 @@ function App() {
                   className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
                 >
                   Valider
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {cloneDialog && (
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-white">Cloner un dépôt Git</h2>
+
+            <form
+              className="mt-4 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submitCloneDialog()
+              }}
+            >
+              <input
+                autoFocus
+                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
+                value={cloneDialog.repoUrl}
+                onChange={(event) =>
+                  setCloneDialog((previous) =>
+                    previous
+                      ? {
+                        ...previous,
+                        repoUrl: event.target.value,
+                      }
+                      : previous,
+                  )
+                }
+                placeholder="https://github.com/owner/repo.git"
+              />
+
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
+                  value={cloneDialog.username}
+                  onChange={(event) =>
+                    setCloneDialog((previous) =>
+                      previous
+                        ? {
+                          ...previous,
+                          username: event.target.value,
+                        }
+                        : previous,
+                    )
+                  }
+                  placeholder="Login Git (optionnel)"
+                />
+                <input
+                  type="password"
+                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
+                  value={cloneDialog.password}
+                  onChange={(event) =>
+                    setCloneDialog((previous) =>
+                      previous
+                        ? {
+                          ...previous,
+                          password: event.target.value,
+                        }
+                        : previous,
+                    )
+                  }
+                  placeholder="Mot de passe/token (optionnel)"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white/80 outline-none placeholder:text-white/35"
+                  value={cloneDialog.destinationPath}
+                  onChange={(event) =>
+                    setCloneDialog((previous) =>
+                      previous
+                        ? {
+                          ...previous,
+                          destinationPath: event.target.value,
+                        }
+                        : previous,
+                    )
+                  }
+                  placeholder="Dossier de destination"
+                />
+                <button
+                  type="button"
+                  className="shrink-0 rounded border border-white/20 px-3 py-2 text-xs text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                  onClick={() => {
+                    void pickCloneDirectory()
+                  }}
+                >
+                  Choisir
+                </button>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                  onClick={() => setCloneDialog(null)}
+                  disabled={cloneDialog.isSubmitting}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8] disabled:opacity-50"
+                  disabled={cloneDialog.isSubmitting}
+                >
+                  {cloneDialog.isSubmitting ? 'Clonage...' : 'Cloner et ouvrir'}
                 </button>
               </div>
             </form>

@@ -265,11 +265,13 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
   - Repository field ajouté pour electron-updater (pointe vers GitHub releases)
 - Updates automatiques
 - BUG : j'arrive plus a ouvrir de fichier (`TreeItem onClick`) — ✅ CORRIGÉ (ajout `else { onSelect(node) }` pour les fichiers)
-- Refonte git checkout
-	- On saisie le lien https du repo / le login et mdp git et ça demande ou on veut mettre le dossier, ça le checkout et ça l'ouvre
-	- si y'a des trucs fortement lié a github on enleve
-- Modifier le placement du bouton icone dans les pages (au dessus du titre et pas a gauche)
-
+- ✅ Refonte git checkout
+	- Clone HTTPS depuis l'app (URL + login/mot de passe optionnels)
+	- Sélection du dossier destination
+	- Clone + ouverture automatique du dossier cloné
+- ✅ Modifier le placement du bouton icone dans les pages (au dessus du titre et pas a gauche)
+- ✅ Ajouter le numero de version en petit qq part (affiché en en-tête)
+- Quand on créé ou renomme un fichier giter la modification directement, pareil pour le déplacement d'un fichier dans un dossier
 
 
 
