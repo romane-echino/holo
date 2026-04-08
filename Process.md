@@ -248,11 +248,11 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 	- Mes fichiers l'auteur correspond au nom saisie au départ de l'app
 	- Fichier récents (5 derniers fichiers ouverts)
 - ✅ Fetch/Pull directement quand on arrive dans l'app
-- detecte si l'utilisateur s'appelle Virgile il faut rajouter dans titre de l'app dynamiquement "TypeR" en beau rouge
-- fixer les taille des colonnes (3 colonnes 1/3*3)
-- Proposer la liste complète d'emoji pour les icones de fichier avec un champ de recherche
-- Afficher l'icone dans l'arboresence
-- Fixer la largeur du panneau Fichier (c'est pas beau qu'il change de largeur quand on change d'onglet)
+- ✅ detecte si l'utilisateur s'appelle Virgile il faut rajouter dans titre de l'app dynamiquement "TypeR" en beau rouge
+- ✅ fixer les taille des colonnes (3 colonnes 1/3*3)
+- ✅ Proposer la liste complète d'emoji pour les icones de fichier avec un champ de recherche
+- ✅ Afficher l'icone dans l'arboresence
+- ✅ Fixer la largeur du panneau Fichier (c'est pas beau qu'il change de largeur quand on change d'onglet)
 
 ### 08.04.26 — Tâche feedback #12+ (en cours)
 - ✅ Devtools par défaut : ajout de `window.webContents.openDevTools()` dans `createWindow()` pour déboguer le .deb qui n'affiche rien
@@ -271,7 +271,19 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 	- Clone + ouverture automatique du dossier cloné
 - ✅ Modifier le placement du bouton icone dans les pages (au dessus du titre et pas a gauche)
 - ✅ Ajouter le numero de version en petit qq part (affiché en en-tête)
-- Quand on créé ou renomme un fichier giter la modification directement, pareil pour le déplacement d'un fichier dans un dossier
+- ✅ Quand on créé ou renomme un fichier giter la modification directement, pareil pour le déplacement d'un fichier dans un dossier et la suppression
+- ✅ Est-ce qu'il y'a un darkmode pour l'emoji picker?
+- ✅ Quand on écrit une commande "/" dans la première ligne le "/" reste, dans les autres lignes ça fonctionne
+- ✅ désactiver le user-select dans le reste de l'interface (pas dans l'éditeur)
+- ✅ Quand on colle du texte ne pas reprendre de mise en forme (j'ai copier qqch depuis un site internet et il a mis un fond blanc), on reprend que le texte brute (éventuellement le code markdown)
+- ✅ Espacer un bcp plus en hauteur les paragraphes et les titre, les liste, etc...
+- Quand je fais une commande "/" ça agit sur le bloc de text en dessus. Par exemple je fais un paragraphe je vais a la ligne je met la commande "titre 2" et mon paragraphe se transforme en titre deux. Cela ne dois affecter que la ligne courrante. EDIT: Toujours pas bon!
+- ✅ faire des scroll bar qui s'affiche seulement au survol de la div scrollable et plus dans un style moderne (iOS)
+- ✅ Quand je fait un retour a la ligne dans une citation doit revenir a du texte normal
+- gérer un style pour titre 1 à 4
+- Quand je tape une commande "/" dans la première ligne la commande est pas appliquée
+- Quand je coche une tâche ça ne modifie pas le code à - [x], donc pas de sauvegarde
+
 
 
 

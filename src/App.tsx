@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
+import EmojiPicker from 'emoji-picker-react'
+import { Theme } from 'emoji-picker-react'
 
 type NodeType = 'file' | 'directory'
 
@@ -83,15 +85,6 @@ type EditableMarkdownHeader = {
   author: string
   icon: string
 }
-
-const HEADER_EMOJIS = [
-  '📄','📝','📋','📌','📍','🗒️','🗓️','📅','📆','🔖',
-  '🏷️','💡','🎯','🚀','⭐','🔥','✅','⚠️','📣','💬',
-  '📊','📈','📉','🗂️','📁','💾','🖥️','🔐','🔑','🔒',
-  '🛡️','🎨','🎬','🎮','👥','👤','🧑‍💻','🌟','🌈','🌍',
-  '🌱','🏠','🏢','🛠️','⚙️','🔧','🔨','💼','📦','🏆',
-  '🎉','🧪','🔬','🧲','📡','🤖','🧠','❤️','⚡','🍀',
-]
 
 type FilePathStats = {
   modifiedAt: string
@@ -562,6 +555,7 @@ function App() {
     
     return service
   }, [])
+  const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
 
   // Récupérer l'onglet actif
@@ -1330,7 +1324,14 @@ function App() {
       if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
       node = node.parentNode
     }
-    if (!node || node === editor) return { text: '', block: null }
+    // If cursor is directly in editor (no block wrapper), use the direct child
+    if (node === editor) {
+      let child: Node | null = sel.anchorNode
+      while (child && child.parentNode !== editor) { child = child.parentNode }
+      if (child && child !== editor) node = child
+      else return { text: '', block: null }
+    }
+    if (!node) return { text: '', block: null }
     const blockRange = document.createRange()
     blockRange.setStart(node, 0)
     blockRange.setEnd(sel.anchorNode!, sel.anchorOffset)
@@ -1348,7 +1349,14 @@ function App() {
       if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
       node = node.parentNode
     }
-    if (!node || node === editor) return
+    // If cursor is directly in editor (no block wrapper), use the direct child
+    if (node === editor) {
+      let child: Node | null = sel.anchorNode
+      while (child && child.parentNode !== editor) { child = child.parentNode }
+      if (child && child !== editor) node = child
+      else return
+    }
+    if (!node) return
     const range = document.createRange()
     range.setStart(node, 0)
     range.setEnd(sel.anchorNode!, sel.anchorOffset)
@@ -1358,9 +1366,22 @@ function App() {
   const executeSlashCommand = useCallback((cmd: SlashCommand) => {
     const editor = wysiwygEditorRef.current
     if (!editor) return
-    
+
+    // Save the block reference BEFORE deletion so we can re-anchor the cursor
+    const { block: targetBlock } = getBlockTextBeforeCursor()
+
     // Delete the slash + query text
     deleteCurrentBlockContents()
+
+    // Re-place cursor explicitly into targetBlock to avoid browser moving it to the block above
+    if (targetBlock && editor.contains(targetBlock)) {
+      const sel = window.getSelection()
+      const r = document.createRange()
+      r.selectNodeContents(targetBlock)
+      r.collapse(true)
+      sel?.removeAllRanges()
+      sel?.addRange(r)
+    }
     
     switch (cmd.id) {
       case 'h1': document.execCommand('formatBlock', false, '<h1>'); break
@@ -1610,6 +1631,24 @@ function App() {
       if (event.key === 'Enter') {
         const sel = window.getSelection()
         const anchor = sel?.anchorNode ?? null
+
+        // ── Exit blockquote on Enter ──────────────────────────────────────
+        const bq = anchor instanceof Element ? anchor.closest('blockquote') : anchor?.parentElement?.closest('blockquote')
+        if (bq) {
+          event.preventDefault()
+          const p = document.createElement('p')
+          p.innerHTML = '<br>'
+          bq.parentNode?.insertBefore(p, bq.nextSibling)
+          const r = document.createRange()
+          r.selectNodeContents(p)
+          r.collapse(true)
+          sel?.removeAllRanges()
+          sel?.addRange(r)
+          const md = turndownService.turndown(editor.innerHTML)
+          updateActiveTabBody(md)
+          return
+        }
+
         const currentLi = anchor instanceof Element ? anchor.closest('li') : anchor?.parentElement?.closest('li')
         const currentCheckbox = currentLi?.querySelector('input[type="checkbox"]')
 
@@ -1956,6 +1995,18 @@ function App() {
     [activeTabPath, openTabs],
   )
 
+  const autoCommitStructuralChange = useCallback(async (commitMessage: string) => {
+    if (!gitState.isRepo || !window.holo) {
+      return
+    }
+
+    try {
+      await window.holo.gitCommit(commitMessage)
+    } catch (error) {
+      console.error('Auto-commit (structure) failed:', error)
+    }
+  }, [gitState.isRepo])
+
   const moveNode = useCallback(
     async (sourcePath: string, targetDirectoryPath: string) => {
       const holo = getHoloApi()
@@ -1986,6 +2037,7 @@ function App() {
 
         await refreshTree()
         await refreshGitState(false)
+        await autoCommitStructuralChange(`move ${getBaseName(sourcePath)} -> ${getBaseName(targetDirectoryPath)}`)
       } catch (error) {
         window.alert((error as Error).message)
       } finally {
@@ -1993,7 +2045,7 @@ function App() {
         setDropTargetPath(null)
       }
     },
-    [activeTabPath, getHoloApi, refreshGitState, refreshTree, selectedPath],
+    [activeTabPath, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, selectedPath],
   )
 
   useEffect(() => {
@@ -2153,11 +2205,14 @@ function App() {
     }
 
     try {
+      let commitMessage: string | null = null
+
       if (nameDialog.mode === 'create-file') {
         // Auto-append .md extension if not provided
         const filename = value.endsWith('.md') ? value : `${value}.md`
         const newFilePath = `${nameDialog.targetDirectoryPath}/${filename}`
         await holo.createFile(nameDialog.targetDirectoryPath, filename)
+        commitMessage = `create ${filename}`
         
         // Auto-open the created file
         const content = await holo.readFile(newFilePath)
@@ -2174,9 +2229,11 @@ function App() {
         setPendingTitleFocusPath(newFilePath)
       } else if (nameDialog.mode === 'create-directory') {
         await holo.createDirectory(nameDialog.targetDirectoryPath, value)
+        commitMessage = `create folder ${value}`
       } else if (nameDialog.mode === 'rename') {
         const renameTargetPath = nameDialog.targetPath
         const result = await holo.renamePath(renameTargetPath, value)
+        commitMessage = `rename ${getBaseName(renameTargetPath)} -> ${getBaseName(result.newPath)}`
 
         setOpenTabs((prev) =>
           prev.map((tab) =>
@@ -2202,10 +2259,13 @@ function App() {
       setNameDialog(null)
       await refreshTree()
       await refreshGitState(false)
+      if (commitMessage) {
+        await autoCommitStructuralChange(commitMessage)
+      }
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath])
+  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath, autoCommitStructuralChange])
 
   const deletePathTarget = useCallback(async (targetPath: string) => {
     if (!rootPath || targetPath === rootPath) {
@@ -2232,10 +2292,11 @@ function App() {
       setSelectedType('directory')
       await refreshTree()
       await refreshGitState(false)
+      await autoCommitStructuralChange(`delete ${getBaseName(targetPath)}`)
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [closeTabsForPath, getHoloApi, refreshGitState, refreshTree, rootPath])
+  }, [autoCommitStructuralChange, closeTabsForPath, getHoloApi, refreshGitState, refreshTree, rootPath])
 
   const openTreeContextMenu = useCallback((node: TreeNode, position: { x: number; y: number }) => {
     setSelectedPath(node.path)
@@ -2578,7 +2639,7 @@ function App() {
 
   return (
     <main
-      className="h-screen bg-[#242527] text-white rounded-lg font-sans gap-x-2 grid overflow-hidden grid-cols-[auto_1fr] grid-rows-[64px_1fr]"
+      className="h-screen bg-[#242527] text-white rounded-lg font-sans gap-x-2 grid overflow-hidden grid-cols-[auto_1fr] grid-rows-[64px_1fr] select-none"
       style={{ gridTemplateAreas: `'appbar appbar' 'sidebar content'` }}
     >
 
@@ -2587,6 +2648,7 @@ function App() {
         <div className="flex-1 drag user-select-none">
           <div className="flex items-end gap-2">
             <img src="./logo.png" height={40} width={120} alt="logo" />
+            {showTypeRBadge && <span className="text-sm font-bold text-red-500">TypeR</span>}
             {appVersion && <span className="text-[10px] text-white/35">v{appVersion}</span>}
           </div>
         </div>
@@ -3202,7 +3264,7 @@ function App() {
                               className="fixed inset-0 z-40"
                               onClick={() => setShowEmojiPicker(false)}
                             />
-                            <div className="absolute left-0 top-12 z-50 w-[280px] rounded-xl border border-white/10 bg-[#1a1b1c] p-3 shadow-2xl">
+                            <div className="absolute left-0 top-12 z-50 rounded-xl border border-white/10 bg-[#1a1b1c] p-2 shadow-2xl">
                               <div className="mb-2 flex items-center justify-between">
                                 <span className="text-xs font-medium text-white/50">Choisir une icône</span>
                                 {editableHeader.icon && (
@@ -3214,20 +3276,18 @@ function App() {
                                   </button>
                                 )}
                               </div>
-                              <div className="grid grid-cols-10 gap-0.5">
-                                {HEADER_EMOJIS.map((emoji) => (
-                                  <button
-                                    key={emoji}
-                                    className={`rounded p-1.5 text-lg leading-none transition-colors hover:bg-white/10 ${
-                                      editableHeader.icon === emoji ? 'bg-[#7B61FF]/30 ring-1 ring-[#7B61FF]/50' : ''
-                                    }`}
-                                    onClick={() => { updateEditableHeader('icon', emoji); setShowEmojiPicker(false) }}
-                                    title={emoji}
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
+                              <EmojiPicker
+                                width={320}
+                                height={380}
+                                theme={Theme.DARK}
+                                searchDisabled={false}
+                                skinTonesDisabled
+                                previewConfig={{ showPreview: false }}
+                                onEmojiClick={(emojiData) => {
+                                  updateEditableHeader('icon', emojiData.emoji)
+                                  setShowEmojiPicker(false)
+                                }}
+                              />
                             </div>
                           </>
                         )}
@@ -3277,7 +3337,7 @@ function App() {
                     <div className="relative">
                     {editorMode === 'raw' ? (
                       <textarea
-                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25"
+                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25 select-text"
                         value={activeTabBody}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
                         onDrop={onRawDrop}
@@ -3290,11 +3350,16 @@ function App() {
                       <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="min-h-[400px] text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-white [&_p]:my-1.5 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-8 [&_h1]:mb-4 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-7 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:text-white [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable
                           suppressContentEditableWarning
                           onInput={onWysiwygInput}
                           onKeyDown={onWysiwygKeyDown}
+                          onPaste={(e) => {
+                            e.preventDefault()
+                            const text = e.clipboardData?.getData('text/plain') ?? ''
+                            document.execCommand('insertText', false, text)
+                          }}
                           onDrop={onWysiwygDrop}
                           onDragEnter={onEditorDragEnter}
                           onDragOver={onEditorDragOver}
