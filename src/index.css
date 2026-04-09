@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300..700&display=swap');
 @import "tailwindcss";
+@import 'highlight.js/styles/github-dark-dimmed.css';
 
 @theme {
   --font-quicksand:'Quicksand', sans-serif;
@@ -47,4 +48,128 @@ body,
 }
 *:hover::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
+}
+
+/* Table row index — purely visual, does not affect markdown */
+.wysiwyg-editor tbody {
+  counter-reset: row-index;
+}
+.wysiwyg-editor tbody tr {
+  counter-increment: row-index;
+}
+/* Même padding sur les th pour aligner avec les td */
+.wysiwyg-editor thead tr th:first-child,
+.wysiwyg-editor tbody tr td:first-child {
+  padding-left: 2.75rem !important;
+  position: relative;
+}
+/* Cellule vide visuelle dans l'en-tête (aligne avec les numéros) */
+.wysiwyg-editor thead tr th:first-child::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  user-select: none;
+}
+/* Numéros dans les lignes de données */
+.wysiwyg-editor tbody tr td:first-child::before {
+  content: counter(row-index);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Table column types */
+.wysiwyg-editor td.col-type-number,
+.wysiwyg-editor td.table-summary-cell.col-type-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.wysiwyg-editor td.col-checkbox-cell {
+  text-align: center;
+}
+.wysiwyg-editor td.col-checkbox-cell .col-checkbox {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.wysiwyg-editor tfoot td.table-summary-cell {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.35);
+  border-top: 1px solid rgba(255,255,255,0.12);
+  border-bottom: none;
+  background: rgba(255,255,255,0.03);
+  padding: 0.5rem 1rem;
+}
+
+/* Code blocks in WYSIWYG editor */
+.wysiwyg-editor pre {
+  border-radius: 0.5rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  position: relative;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* No spellcheck in code blocks */
+.wysiwyg-editor pre [contenteditable],
+.wysiwyg-editor pre {
+  -webkit-spell-check: false;
+  spellcheck: false;
+}
+
+.wysiwyg-editor pre code.hljs {
+  border-radius: 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding-left: 0 !important;
+  counter-reset: line-number;
+}
+
+/* Line numbers */
+.wysiwyg-editor pre .code-line {
+  display: block;
+  padding-left: 3.25rem;
+  position: relative;
+  counter-increment: line-number;
+  min-height: 1em;
+}
+
+.wysiwyg-editor pre .code-line::before {
+  content: counter(line-number);
+  position: absolute;
+  left: 0;
+  width: 2.5rem;
+  text-align: right;
+  padding-right: 0.6rem;
+  color: rgba(255, 255, 255, 0.18);
+  font-size: 0.72rem;
+  line-height: inherit;
+  pointer-events: none;
+  user-select: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.wysiwyg-editor code:not(pre code) {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
 }

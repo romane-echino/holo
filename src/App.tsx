@@ -4,6 +4,7 @@ import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 import EmojiPicker from 'emoji-picker-react'
 import { Theme } from 'emoji-picker-react'
+import hljs from 'highlight.js'
 
 type NodeType = 'file' | 'directory'
 
@@ -84,6 +85,7 @@ type EditableMarkdownHeader = {
   description: string
   author: string
   icon: string
+  tags: string[]
 }
 
 type FilePathStats = {
@@ -242,6 +244,7 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
     description: '',
     author: '',
     icon: '',
+    tags: [],
   }
 
   for (const line of frontMatterLines) {
@@ -255,6 +258,16 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
 
     if (key === 'title' || key === 'description' || key === 'author' || key === 'icon') {
       header[key] = readFrontMatterValue(line)
+    }
+
+    if (key === 'tags') {
+      const raw = line.replace(/^tags\s*:/i, '').trim()
+      // Support both inline [a, b] and bare a, b
+      const inner = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
+      header.tags = inner
+        .split(',')
+        .map((t) => t.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean)
     }
   }
 
@@ -299,6 +312,17 @@ function updateMarkdownHeaderField(
     return body
   }
 
+  return ['---', ...nextLines, '---', body].join('\n')
+}
+
+function updateTagsInMarkdown(markdown: string, tags: string[]): string {
+  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
+  const nextLines = frontMatterLines.filter((l) => !/^tags\s*:/i.test(l))
+  if (tags.length > 0) {
+    const serialized = '[' + tags.map((t) => `"${t.replace(/"/g, '\\"')}"`).join(', ') + ']'
+    nextLines.push(`tags: ${serialized}`)
+  }
+  if (nextLines.length === 0) return body
   return ['---', ...nextLines, '---', body].join('\n')
 }
 
@@ -460,19 +484,49 @@ type SlashCommand = {
   icon: string
   label: string
   hint: string
+  keywords?: string[]
+  requiresApiKey?: boolean
+}
+
+const normalize = (s: string) =>
+  s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+
+const matchesSlashQuery = (cmd: SlashCommand, query: string) => {
+  if (!query) return true
+  const q = normalize(query)
+  return (
+    normalize(cmd.label).includes(q) ||
+    normalize(cmd.id).includes(q) ||
+    (cmd.keywords ?? []).some((k) => normalize(k).includes(q))
+  )
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'h1', icon: 'fa-solid fa-1', label: 'Titre 1', hint: 'Grand titre' },
   { id: 'h2', icon: 'fa-solid fa-2', label: 'Titre 2', hint: 'Titre moyen' },
   { id: 'h3', icon: 'fa-solid fa-3', label: 'Titre 3', hint: 'Petit titre' },
+  { id: 'h4', icon: 'fa-solid fa-4', label: 'Titre 4', hint: 'Sous-titre' },
   { id: 'bullet', icon: 'fa-solid fa-list-ul', label: 'Liste à puces', hint: '—' },
   { id: 'ordered', icon: 'fa-solid fa-list-ol', label: 'Liste numérotée', hint: '1. 2. 3.' },
   { id: 'quote', icon: 'fa-solid fa-quote-left', label: 'Citation', hint: 'Bloc citation' },
   { id: 'code', icon: 'fa-solid fa-code', label: 'Bloc code', hint: 'Monospace' },
   { id: 'table', icon: 'fa-solid fa-table', label: 'Tableau', hint: 'Grille' },
-  { id: 'todo', icon: 'fa-solid fa-square-check', label: 'Tâches', hint: 'Checklist' },
+  { id: 'todo', icon: 'fa-solid fa-square-check', label: 'Tâches', hint: 'Checklist', keywords: ['tache', 'todo', 'task', 'checklist'] },
+  { id: 'separator', icon: 'fa-solid fa-minus', label: 'Séparateur', hint: 'Ligne horizontale' },
+  { id: 'link', icon: 'fa-solid fa-link', label: 'Lien', hint: 'Insérer un lien' },
+  { id: 'image', icon: 'fa-solid fa-image', label: 'Image', hint: 'Depuis le disque' },
+  { id: 'ai', icon: 'fa-solid fa-wand-magic-sparkles', label: 'Demander à l\'IA', hint: 'Générer du contenu', keywords: ['ia', 'ai', 'gpt', 'chatgpt', 'intelligence', 'artificielle'], requiresApiKey: true },
 ]
+
+const COLUMN_TYPES = [
+  { emoji: '', label: 'Texte' },
+  { emoji: '🔢', label: 'Nombre' },
+  { emoji: '💰', label: 'Monétaire' },
+  { emoji: '📅', label: 'Date' },
+  { emoji: '☑️', label: 'Checkbox' },
+]
+
+const TYPE_EMOJIS = COLUMN_TYPES.filter((t) => t.emoji).map((t) => t.emoji)
 
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null)
@@ -491,13 +545,24 @@ function App() {
   const [gitState, setGitState] = useState<GitState>(DEFAULT_GIT_STATE)
   const [gitDialog, setGitDialog] = useState<GitDialog | null>(null)
   const [cloneDialog, setCloneDialog] = useState<CloneDialog | null>(null)
+  const [linkDialog, setLinkDialog] = useState<{ text: string; url: string } | null>(null)
+  const [tagInput, setTagInput] = useState('')
+  const [showTagInput, setShowTagInput] = useState(false)
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabPath: string } | null>(null)
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
-  const [activeSidebar, setActiveSidebar] = useState<'files' | 'git'>('files')
+  const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
+  const [gitEmail, setGitEmail] = useState('')
+  const [openaiApiKey, setOpenaiApiKey] = useState('')
+  const [openaiPrompt, setOpenaiPrompt] = useState('Tu es un assistant qui aide à rédiger de la documentation technique en Markdown. Réponds toujours en Markdown bien structuré, avec des titres, listes et code blocks si nécessaire.')
+  const [showSettings, setShowSettings] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; excerpt: string; matchType: 'content' | 'tag' }>>([])  
+  const [isSearching, setIsSearching] = useState(false)
   const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
   const [fileIconByPath, setFileIconByPath] = useState<Record<string, string>>({})
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
@@ -506,13 +571,21 @@ function App() {
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
+  const tabBarScrollRef = useRef<HTMLDivElement | null>(null)
+  const codeBlockLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSyncingWysiwygRef = useRef(false)
   const lastWysiwygSyncedTabRef = useRef<string | null>(null)
+  const [hoveredCodeBlock, setHoveredCodeBlock] = useState<{ x: number; y: number; codeEl: HTMLElement } | null>(null)
   const [pendingTitleFocusPath, setPendingTitleFocusPath] = useState<string | null>(null)
   const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null)
   const [tablePopup, setTablePopup] = useState<{ x: number; y: number } | null>(null)
+  const [codeBlockPopup, setCodeBlockPopup] = useState<{ x: number; y: number; codeEl: HTMLElement } | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
+  const [aiDialog, setAiDialog] = useState<{ mode: 'generate' | 'transform'; prompt: string; isLoading: boolean; selectedText: string; error?: string } | null>(null)
+  const aiSavedRangeRef = useRef<Range | null>(null)
+  const aiTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [columnTypePopup, setColumnTypePopup] = useState<{ x: number; y: number; thEl: HTMLElement } | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
@@ -544,14 +617,54 @@ function App() {
       },
     })
     
-    // Table rule to use GFM markdown format
-    service.addRule('table', {
-      filter: 'table',
-      replacement: () => {
-        // The gfm plugin should handle this, but ensure proper formatting
-        return '\n\n' // This will be replaced by gfm's table handling
+    // Task list items with custom classes (task-item / task-label)
+    service.addRule('taskListItem', {
+      filter: (node) => {
+        return node.nodeName === 'LI' && (node as HTMLElement).classList.contains('task-item')
+      },
+      replacement: (_content, node) => {
+        const li = node as HTMLElement
+        const checkbox = li.querySelector('input[type="checkbox"]') as HTMLInputElement | null
+        const label = li.querySelector('.task-label')
+        const text = (label?.textContent ?? '').replace(/\u200B/g, '').trim()
+        const checked = checkbox?.hasAttribute('checked') ?? false
+        return `\n- [${checked ? 'x' : ' '}] ${text}`
       },
     })
+
+    // Code block rule — preserve language from class
+    service.addRule('codeBlock', {
+      filter: (node) => node.nodeName === 'PRE' && Boolean((node as HTMLElement).querySelector('code')),
+      replacement: (_content, node) => {
+        const code = (node as HTMLElement).querySelector('code')
+        const lang = Array.from(code?.classList ?? [])
+          .find((c) => c.startsWith('language-'))
+          ?.replace('language-', '') ?? ''
+        const actualLang = lang === 'plaintext' ? '' : lang
+        const text = (code?.textContent ?? '').replace(/\u200B/g, '').trim()
+        return `\n\n\`\`\`${actualLang}\n${text}\n\`\`\`\n\n`
+      },
+    })
+
+    // Checkbox cell in table → "x" or ""
+    service.addRule('tableCheckboxCell', {
+      filter: (node) => node.nodeName === 'TD' && (node as HTMLElement).classList.contains('col-checkbox-cell'),
+      replacement: (_content, node) => {
+        return (node as HTMLElement).dataset.checked === 'true' ? 'x' : ''
+      },
+    })
+
+    // Monkey-patch turndown to strip generated tfoot rows before conversion
+    const origTurndown = service.turndown.bind(service)
+    service.turndown = (html: string | Node) => {
+      if (typeof html === 'string') {
+        const div = document.createElement('div')
+        div.innerHTML = html
+        div.querySelectorAll('.table-summary-row, tfoot').forEach((el) => el.remove())
+        return origTurndown(div.innerHTML)
+      }
+      return origTurndown(html as HTMLElement)
+    }
     
     return service
   }, [])
@@ -806,6 +919,19 @@ function App() {
 
     window.localStorage.setItem('holo-author', appAuthor)
   }, [appAuthor])
+
+  useEffect(() => {
+    const email = window.localStorage.getItem('holo-git-email')
+    const key = window.localStorage.getItem('holo-openai-key')
+    const prompt = window.localStorage.getItem('holo-openai-prompt')
+    if (email) setGitEmail(email)
+    if (key) setOpenaiApiKey(key)
+    if (prompt) setOpenaiPrompt(prompt)
+  }, [])
+
+  useEffect(() => { window.localStorage.setItem('holo-git-email', gitEmail) }, [gitEmail])
+  useEffect(() => { window.localStorage.setItem('holo-openai-key', openaiApiKey) }, [openaiApiKey])
+  useEffect(() => { window.localStorage.setItem('holo-openai-prompt', openaiPrompt) }, [openaiPrompt])
 
   useEffect(() => {
     const filePaths = tree ? flatTreeFiles(tree) : []
@@ -1156,6 +1282,64 @@ function App() {
     [activeTab, updateActiveTabContent],
   )
 
+  const updateTags = useCallback(
+    (tags: string[]) => {
+      if (!activeTab) return
+      const nextMarkdown = updateTagsInMarkdown(activeTab.content, tags)
+      updateActiveTabContent(nextMarkdown)
+    },
+    [activeTab, updateActiveTabContent],
+  )
+
+  const runSearch = useCallback(async (query: string) => {
+    const holo = getHoloApi()
+    if (!holo || !query.trim() || allFilePaths.length === 0) {
+      setSearchResults([])
+      return
+    }
+    setIsSearching(true)
+    const needle = query.trim().toLowerCase()
+    const isTagSearch = needle.startsWith('#')
+    const tagNeedle = isTagSearch ? needle.slice(1) : needle
+    const results: Array<{ path: string; name: string; excerpt: string; matchType: 'content' | 'tag' }> = []
+
+    // Read files in parallel batches of 10
+    const BATCH = 10
+    for (let i = 0; i < allFilePaths.length; i += BATCH) {
+      const batch = allFilePaths.slice(i, i + BATCH)
+      await Promise.all(batch.map(async (filePath) => {
+        try {
+          const content: string = await holo.readFile(filePath)
+          const header = getEditableMarkdownHeader(content)
+          const name = getBaseName(filePath).replace(/\.md$/i, '')
+
+          // Tag match
+          const tagMatch = header.tags.some((t) => t.toLowerCase().includes(tagNeedle))
+          if (tagMatch) {
+            results.push({ path: filePath, name, excerpt: header.tags.map((t) => `#${t}`).join(' '), matchType: 'tag' })
+            return
+          }
+
+          // Content match (skip if tag-only search)
+          if (!isTagSearch) {
+            const body = splitMarkdownFrontMatter(content).body
+            const idx = body.toLowerCase().indexOf(needle)
+            if (idx >= 0) {
+              const start = Math.max(0, idx - 40)
+              const end = Math.min(body.length, idx + needle.length + 80)
+              const raw = body.slice(start, end).replace(/\n/g, ' ').replace(/#{1,6}\s/g, '')
+              const excerpt = (start > 0 ? '…' : '') + raw + (end < body.length ? '…' : '')
+              results.push({ path: filePath, name, excerpt, matchType: 'content' })
+            }
+          }
+        } catch { /* ignore unreadable files */ }
+      }))
+    }
+
+    setSearchResults(results)
+    setIsSearching(false)
+  }, [allFilePaths, getHoloApi])
+
   const updateActiveTabBody = useCallback(
     (nextBody: string) => {
       if (!activeTab) {
@@ -1227,6 +1411,81 @@ function App() {
       }
     })
 
+    doc.querySelectorAll('pre code').forEach((block) => {
+      hljs.highlightElement(block as HTMLElement)
+      // Wrap each line in a span for line numbers
+      const lines = block.innerHTML.split('\n')
+      if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+      block.innerHTML = lines.map((line) => `<span class="code-line">${line || '\u200B'}</span>`).join('\n')
+    })
+
+    // ── Table column type processing ──────────────────────────────────
+    doc.querySelectorAll('table').forEach((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th'))
+      const colTypes = headers.map((th) => {
+        const text = th.textContent ?? ''
+        if (text.startsWith('🔢') || text.startsWith('💰')) return 'number'
+        if (text.startsWith('📅')) return 'date'
+        if (text.startsWith('☑️')) return 'checkbox'
+        return 'text'
+      })
+
+      const tbody = table.querySelector('tbody')
+      if (!tbody) return
+
+      // Apply per-cell styles
+      Array.from(tbody.querySelectorAll('tr')).forEach((row) => {
+        Array.from(row.querySelectorAll('td')).forEach((td, i) => {
+          const type = colTypes[i]
+          if (type === 'number') {
+            td.classList.add('col-type-number')
+          } else if (type === 'checkbox') {
+            const raw = td.textContent?.trim().toLowerCase() ?? ''
+            const checked = ['x', 'true', 'yes', 'oui', '1', '✓', '✔'].includes(raw)
+            td.classList.add('col-checkbox-cell')
+            td.dataset.checked = String(checked)
+            td.innerHTML = `<input type="checkbox" class="task-checkbox col-checkbox" ${checked ? 'checked' : ''} />`
+          } else if (type === 'date') {
+            td.classList.add('col-type-date')
+          }
+        })
+      })
+
+      // Add summary tfoot
+      let tfoot = table.querySelector('tfoot')
+      if (!tfoot) {
+        tfoot = doc.createElement('tfoot')
+        table.appendChild(tfoot)
+      }
+      const summaryRow = doc.createElement('tr')
+      summaryRow.classList.add('table-summary-row')
+      colTypes.forEach((type, i) => {
+        const td = doc.createElement('td')
+        td.classList.add('table-summary-cell')
+        td.setAttribute('contenteditable', 'false')
+        td.setAttribute('tabindex', '-1')
+        if (type === 'number') {
+          const cells = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1})`))
+          let sum = 0
+          cells.forEach((cell) => {
+            const val = parseFloat((cell.textContent ?? '').replace(/[^\d.,-]/g, '').replace(',', '.'))
+            if (!isNaN(val)) sum += val
+          })
+          td.textContent = sum.toLocaleString('fr-FR')
+          td.classList.add('col-type-number')
+        } else if (type === 'checkbox') {
+          const checkboxes = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1}) input`)) as HTMLInputElement[]
+          const checkedCount = checkboxes.filter((cb) => cb.checked).length
+          td.textContent = `${checkedCount} / ${checkboxes.length}`
+        } else {
+          const rowCount = tbody.querySelectorAll('tr').length
+          td.textContent = i === 0 ? `${rowCount} ligne${rowCount > 1 ? 's' : ''}` : ''
+        }
+        summaryRow.appendChild(td)
+      })
+      tfoot.appendChild(summaryRow)
+    })
+
     return doc.body.innerHTML
   }, [])
 
@@ -1244,6 +1503,54 @@ function App() {
     },
     [markdownToHtml],
   )
+
+  // Refresh summary tfoot rows in-place without re-rendering the whole editor
+  const refreshTableSummaries = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+    if (!editor) return
+    editor.querySelectorAll('table').forEach((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th'))
+      const colTypes = headers.map((th) => {
+        const text = th.textContent ?? ''
+        if (text.startsWith('🔢') || text.startsWith('💰')) return 'number'
+        if (text.startsWith('📅')) return 'date'
+        if (text.startsWith('☑️')) return 'checkbox'
+        return 'text'
+      })
+      const tbody = table.querySelector('tbody')
+      if (!tbody) return
+      // Remove old tfoot
+      table.querySelector('tfoot')?.remove()
+      const tfoot = document.createElement('tfoot')
+      const summaryRow = document.createElement('tr')
+      summaryRow.classList.add('table-summary-row')
+      colTypes.forEach((type, i) => {
+        const td = document.createElement('td')
+        td.classList.add('table-summary-cell')
+        td.setAttribute('contenteditable', 'false')
+        td.setAttribute('tabindex', '-1')
+        if (type === 'number') {
+          let sum = 0
+          tbody.querySelectorAll(`tr td:nth-child(${i + 1})`).forEach((cell) => {
+            const val = parseFloat((cell.textContent ?? '').replace(/[^\d.,-]/g, '').replace(',', '.'))
+            if (!isNaN(val)) sum += val
+          })
+          td.textContent = sum.toLocaleString('fr-FR')
+          td.classList.add('col-type-number')
+        } else if (type === 'checkbox') {
+          const checkboxes = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1}) input`)) as HTMLInputElement[]
+          const checkedCount = checkboxes.filter((cb) => cb.checked).length
+          td.textContent = `${checkedCount} / ${checkboxes.length}`
+        } else {
+          const rowCount = tbody.querySelectorAll('tr').length
+          td.textContent = i === 0 ? `${rowCount} ligne${rowCount > 1 ? 's' : ''}` : ''
+        }
+        summaryRow.appendChild(td)
+      })
+      tfoot.appendChild(summaryRow)
+      table.appendChild(tfoot)
+    })
+  }, [])
 
   useEffect(() => {
     if (editorMode !== 'wysiwyg' || !activeTabPath) {
@@ -1359,9 +1666,69 @@ function App() {
     if (!node) return
     const range = document.createRange()
     range.setStart(node, 0)
-    range.setEnd(sel.anchorNode!, sel.anchorOffset)
+    // Only extend to cursor position if it's within this block (prevents cross-block deletion)
+    if (node.contains(sel.anchorNode)) {
+      range.setEnd(sel.anchorNode!, sel.anchorOffset)
+    } else {
+      range.selectNodeContents(node)
+    }
     range.deleteContents()
   }, [])
+
+  const askOpenAI = useCallback(async (userMessage: string): Promise<string> => {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: openaiPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: 2048,
+      }),
+    })
+    if (!response.ok) throw new Error(`OpenAI ${response.status}`)
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    return data.choices?.[0]?.message?.content ?? ''
+  }, [openaiApiKey, openaiPrompt])
+
+  const submitAiDialog = useCallback(async () => {
+    if (!aiDialog) return
+    setAiDialog((prev) => prev ? { ...prev, isLoading: true } : null)
+    const userMessage = aiDialog.mode === 'transform' && aiDialog.selectedText
+      ? `Texte sélectionné :\n${aiDialog.selectedText}\n\nInstruction : ${aiDialog.prompt}`
+      : aiDialog.prompt
+    try {
+      const result = await askOpenAI(userMessage)
+      const html = markdownToHtml(result)
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+      const savedRange = aiSavedRangeRef.current
+      if (savedRange) {
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(savedRange)
+        if (aiDialog.mode === 'transform') savedRange.deleteContents()
+      } else {
+        editor.focus()
+      }
+      document.execCommand('insertHTML', false, html)
+      const md = turndownService.turndown(editor.innerHTML)
+      updateActiveTabBody(md)
+      setAiDialog(null)
+      aiSavedRangeRef.current = null
+    } catch (err) {
+      console.error('AI error', err)
+      const status = err instanceof Error ? (err.message.match(/\d+/)?.[0] ?? '') : ''
+      const msg = status === '429'
+        ? 'Quota d\'API dépassé (429). Vérifie ta limite OpenAI.'
+        : status === '401'
+        ? 'Clé API invalide (401). Vérifie les Paramètres.'
+        : `Erreur OpenAI${status ? ` (${status})` : ''}`
+      setAiDialog((prev) => prev ? { ...prev, isLoading: false, error: msg } : null)
+    }
+  }, [aiDialog, askOpenAI, markdownToHtml, turndownService, updateActiveTabBody])
 
   const executeSlashCommand = useCallback((cmd: SlashCommand) => {
     const editor = wysiwygEditorRef.current
@@ -1373,8 +1740,12 @@ function App() {
     // Delete the slash + query text
     deleteCurrentBlockContents()
 
+    // Detect if we're on the first line (bare text node, no proper block element wrapper)
+    const isProperBlock = targetBlock instanceof Element &&
+      ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(targetBlock.tagName)
+
     // Re-place cursor explicitly into targetBlock to avoid browser moving it to the block above
-    if (targetBlock && editor.contains(targetBlock)) {
+    if (isProperBlock && editor.contains(targetBlock)) {
       const sel = window.getSelection()
       const r = document.createRange()
       r.selectNodeContents(targetBlock)
@@ -1382,24 +1753,122 @@ function App() {
       sel?.removeAllRanges()
       sel?.addRange(r)
     }
-    
+
+    // Helper: apply block format — uses formatBlock when in a proper block element,
+    // falls back to insertHTML for first-line bare text nodes (formatBlock is a no-op on empty text nodes)
+    const applyBlockFormat = (tag: string) => {
+      if (isProperBlock) {
+        document.execCommand('formatBlock', false, `<${tag}>`)
+      } else {
+        document.execCommand('insertHTML', false, `<${tag}><br></${tag}>`)
+      }
+    }
+
     switch (cmd.id) {
-      case 'h1': document.execCommand('formatBlock', false, '<h1>'); break
-      case 'h2': document.execCommand('formatBlock', false, '<h2>'); break
-      case 'h3': document.execCommand('formatBlock', false, '<h3>'); break
+      case 'h1': applyBlockFormat('h1'); break
+      case 'h2': applyBlockFormat('h2'); break
+      case 'h3': applyBlockFormat('h3'); break
+      case 'h4': applyBlockFormat('h4'); break
       case 'bullet': document.execCommand('insertUnorderedList'); break
       case 'ordered': document.execCommand('insertOrderedList'); break
-      case 'quote': document.execCommand('formatBlock', false, '<blockquote>'); break
-      case 'code': document.execCommand('insertHTML', false, '<pre><code>\u200B</code></pre><p><br></p>'); break
+      case 'quote': applyBlockFormat('blockquote'); break
+      case 'code': {
+        const pre = document.createElement('pre')
+        const code = document.createElement('code')
+        code.className = 'language-plaintext'
+        code.innerHTML = '\u200B'
+        pre.appendChild(code)
+        const pAfter = document.createElement('p')
+        pAfter.innerHTML = '<br>'
+        if (isProperBlock && editor.contains(targetBlock as Element)) {
+          ;(targetBlock as Element).replaceWith(pre, pAfter)
+        } else {
+          editor.appendChild(pre)
+          editor.appendChild(pAfter)
+        }
+        const sel2 = window.getSelection()
+        const r2 = document.createRange()
+        r2.selectNodeContents(code)
+        r2.collapse(true)
+        sel2?.removeAllRanges()
+        sel2?.addRange(r2)
+        const md = turndownService.turndown(editor.innerHTML)
+        updateActiveTabBody(md)
+        break
+      }
       case 'table': {
         const html = '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>\u200B</td><td></td></tr></tbody></table><p><br></p>'
         document.execCommand('insertHTML', false, html)
+        // Focus first body cell after insertion
+        setTimeout(() => {
+          const firstCell = editor.querySelector('tbody td') as HTMLTableCellElement | null
+          if (firstCell) {
+            const sel = window.getSelection()
+            const range = document.createRange()
+            range.selectNodeContents(firstCell)
+            range.collapse(true)
+            sel?.removeAllRanges()
+            sel?.addRange(range)
+          }
+        }, 0)
         break
       }
       case 'todo': {
         const html = '<ul class="task-list"><li class="task-item"><input class="task-checkbox" type="checkbox"><span class="task-label">Tâche</span></li></ul><p><br></p>'
         document.execCommand('insertHTML', false, html)
         break
+      }
+      case 'separator': {
+        document.execCommand('insertHTML', false, '<hr><p><br></p>')
+        break
+      }
+      case 'link': {
+        setSlashMenu(null)
+        setSlashMenuIndex(0)
+        setLinkDialog({ text: '', url: '' })
+        return
+      }
+      case 'image': {
+        setSlashMenu(null)
+        setSlashMenuIndex(0)
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = 'image/*'
+        input.onchange = async () => {
+          const file = input.files?.[0]
+          if (!file) return
+          const holo = getHoloApi()
+          if (!holo) return
+          const reader = new FileReader()
+          reader.onload = async (e) => {
+            const dataUrl = e.target?.result as string
+            if (!dataUrl) return
+            const base64 = dataUrl.split(',')[1]
+            if (!base64) return
+            try {
+              const result = await holo.saveImage(file.name, base64)
+              const ed = wysiwygEditorRef.current
+              if (!ed) return
+              ed.focus()
+              document.execCommand('insertHTML', false, `<img src="${dataUrl}" data-src="${result.relativePath}" alt="${file.name}"><p><br></p>`)
+              const md = turndownService.turndown(ed.innerHTML)
+              updateActiveTabBody(md)
+            } catch (err) {
+              console.error('saveImage error', err)
+            }
+          }
+          reader.readAsDataURL(file)
+        }
+        input.click()
+        return
+      }
+      case 'ai': {
+        setSlashMenu(null)
+        setSlashMenuIndex(0)
+        const sel = window.getSelection()
+        aiSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
+        setAiDialog({ mode: 'generate', prompt: '', isLoading: false, selectedText: '' })
+        return
       }
       default: break
     }
@@ -1547,7 +2016,8 @@ function App() {
 
     const markdown = turndownService.turndown(editor.innerHTML)
     updateActiveTabBody(markdown)
-  }, [getBlockTextBeforeCursor, slashMenu, turndownService, updateActiveTabBody])
+    refreshTableSummaries()
+  }, [getBlockTextBeforeCursor, refreshTableSummaries, slashMenu, turndownService, updateActiveTabBody])
   const onWysiwygKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const editor = wysiwygEditorRef.current
@@ -1559,11 +2029,25 @@ function App() {
         return
       }
 
+      // ── CTRL+A in code block → select only code content ───────────────
+      if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+        const sel = window.getSelection()
+        const anchorNode = sel?.anchorNode
+        const anchorElement = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement
+        const anchorEl = anchorElement?.closest('pre')
+        if (anchorEl && editor.contains(anchorEl)) {
+          event.preventDefault()
+          const range = document.createRange()
+          range.selectNodeContents(anchorEl)
+          sel?.removeAllRanges()
+          sel?.addRange(range)
+          return
+        }
+      }
+
       // ── Slash menu navigation ──────────────────────────────────────────
       if (slashMenu) {
-        const filtered = SLASH_COMMANDS.filter(
-          (c) => !slashMenu.query || c.label.toLowerCase().includes(slashMenu.query),
-        )
+        const filtered = SLASH_COMMANDS.filter((c) => matchesSlashQuery(c, slashMenu.query))
         if (event.key === 'ArrowDown') {
           event.preventDefault()
           setSlashMenuIndex((i) => Math.min(i + 1, filtered.length - 1))
@@ -1628,9 +2112,97 @@ function App() {
         return
       }
 
+      // ── Tab navigation in tables ──────────────────────────────────────
+      if (event.key === 'Tab') {
+        const sel = window.getSelection()
+        const anchor = sel?.anchorNode ?? null
+        const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement ?? null
+        const currentCell = anchorEl?.closest('td, th') as HTMLTableCellElement | null
+        const table = currentCell?.closest('table') as HTMLTableElement | null
+
+        if (currentCell && table) {
+          event.preventDefault()
+
+          const allCells = Array.from(table.querySelectorAll('td, th')) as HTMLTableCellElement[]
+          const currentIndex = allCells.indexOf(currentCell)
+
+          if (!event.shiftKey) {
+            // Tab → cellule suivante
+            const nextCell = allCells[currentIndex + 1]
+            if (nextCell) {
+              const range = document.createRange()
+              range.selectNodeContents(nextCell)
+              range.collapse(false)
+              sel?.removeAllRanges()
+              sel?.addRange(range)
+            } else {
+              // Dernière cellule → créer une nouvelle ligne
+              const lastRow = table.querySelector('tbody tr:last-child') as HTMLTableRowElement | null
+              if (lastRow) {
+                const colCount = Math.max(...Array.from(table.rows).map((r) => r.cells.length), 1)
+                const newRow = document.createElement('tr')
+                for (let i = 0; i < colCount; i++) {
+                  const td = document.createElement('td')
+                  td.innerHTML = i === 0 ? '\u200B' : ''
+                  newRow.appendChild(td)
+                }
+                lastRow.parentNode?.insertBefore(newRow, lastRow.nextSibling)
+                const firstCell = newRow.cells[0]
+                if (firstCell) {
+                  const range = document.createRange()
+                  range.selectNodeContents(firstCell)
+                  range.collapse(true)
+                  sel?.removeAllRanges()
+                  sel?.addRange(range)
+                }
+                const md = turndownService.turndown(editor.innerHTML)
+                updateActiveTabBody(md)
+              }
+            }
+          } else {
+            // Shift+Tab → cellule précédente
+            const prevCell = allCells[currentIndex - 1]
+            if (prevCell) {
+              const range = document.createRange()
+              range.selectNodeContents(prevCell)
+              range.collapse(false)
+              sel?.removeAllRanges()
+              sel?.addRange(range)
+            }
+          }
+          return
+        }
+      }
+
       if (event.key === 'Enter') {
         const sel = window.getSelection()
         const anchor = sel?.anchorNode ?? null
+
+        // ── Code block Enter/Shift+Enter ──────────────────────────────────
+        const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement
+        const pre = editor.contains(anchorEl ?? null)
+          ? anchorEl?.closest('pre') ?? null
+          : null
+        if (pre) {
+          event.preventDefault()
+          if (event.shiftKey) {
+            // Shift+Enter = newline inside code block
+            document.execCommand('insertText', false, '\n')
+          } else {
+            // Enter = exit code block, create paragraph after
+            const p = document.createElement('p')
+            p.innerHTML = '<br>'
+            pre.parentNode?.insertBefore(p, pre.nextSibling)
+            const r = document.createRange()
+            r.selectNodeContents(p)
+            r.collapse(true)
+            sel?.removeAllRanges()
+            sel?.addRange(r)
+            const md = turndownService.turndown(editor.innerHTML)
+            updateActiveTabBody(md)
+          }
+          return
+        }
 
         // ── Exit blockquote on Enter ──────────────────────────────────────
         const bq = anchor instanceof Element ? anchor.closest('blockquote') : anchor?.parentElement?.closest('blockquote')
@@ -1772,6 +2344,7 @@ function App() {
         if (!block) return
 
         const patterns: Array<[RegExp, () => void]> = [
+          [/^#{4}$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h4>') }],
           [/^#{3}$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h3>') }],
           [/^#{2}$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h2>') }],
           [/^#$/, () => { deleteCurrentBlockContents(); document.execCommand('formatBlock', false, '<h1>') }],
@@ -1804,6 +2377,7 @@ function App() {
       if (!sel || !editor.contains(sel.anchorNode)) {
         setSelectionPopup(null)
         setTablePopup(null)
+        setCodeBlockPopup(null)
         return
       }
 
@@ -1815,6 +2389,11 @@ function App() {
         setTablePopup({ x: rect.right - 8, y: rect.top - 10 })
       } else {
         setTablePopup(null)
+      }
+
+      const currentPre = anchorElement?.closest('pre')
+      if (!currentPre) {
+        // Don't clear hoveredCodeBlock here — handled by onMouseLeave
       }
 
       if (sel.isCollapsed) {
@@ -1830,6 +2409,42 @@ function App() {
     document.addEventListener('selectionchange', onSelectionChange)
     return () => document.removeEventListener('selectionchange', onSelectionChange)
   }, [])
+
+  // Focus aiDialog textarea when dialog opens
+  useEffect(() => {
+    if (aiDialog && !aiDialog.isLoading) {
+      requestAnimationFrame(() => aiTextareaRef.current?.focus())
+    }
+  }, [aiDialog])
+
+  // Hide code block popup when clicking outside editor and popup
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (
+        !target.closest('.wysiwyg-editor') &&
+        !target.closest('.code-block-popup')
+      ) {
+        setCodeBlockPopup(null)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
+  // Tab bar: redirect vertical wheel to horizontal scroll
+  useEffect(() => {
+    const el = tabBarScrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault()
+        el.scrollLeft += e.deltaY
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  })
 
   const formatReadonlyDate = useCallback((value?: string | null) => {
     if (!value) {
@@ -1909,8 +2524,10 @@ function App() {
       sel.addRange(range)
     }
 
-    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
-  }, [turndownService, updateActiveTabBody])
+    const md = turndownService.turndown(editor.innerHTML)
+    updateActiveTabBody(md)
+    syncWysiwygFromMarkdown(md)
+  }, [syncWysiwygFromMarkdown, turndownService, updateActiveTabBody])
 
   const insertTableColumn = useCallback(() => {
     const editor = wysiwygEditorRef.current
@@ -1949,6 +2566,66 @@ function App() {
       sel.addRange(range)
     }
 
+    const md = turndownService.turndown(editor.innerHTML)
+    updateActiveTabBody(md)
+    syncWysiwygFromMarkdown(md)
+  }, [syncWysiwygFromMarkdown, turndownService, updateActiveTabBody])
+
+  const deleteTableRow = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+    const sel = window.getSelection()
+    if (!editor || !sel?.anchorNode) return
+    const anchorEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
+    const currentRow = anchorEl?.closest('tr') as HTMLTableRowElement | null
+    const table = currentRow?.closest('table') as HTMLTableElement | null
+    if (!currentRow || !table) return
+    // Don't delete if it's the only data row (keep at least the header)
+    const tbody = table.querySelector('tbody')
+    if (tbody && tbody.rows.length <= 1 && currentRow.parentElement === tbody) return
+    // Move cursor to previous or next row
+    const prevRow = currentRow.previousElementSibling as HTMLTableRowElement | null
+    const nextRow = currentRow.nextElementSibling as HTMLTableRowElement | null
+    const focusRow = prevRow ?? nextRow
+    currentRow.remove()
+    if (focusRow) {
+      const cell = focusRow.cells[0]
+      if (cell) {
+        const range = document.createRange()
+        range.selectNodeContents(cell)
+        range.collapse(false)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    }
+    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
+  }, [turndownService, updateActiveTabBody])
+
+  const deleteTableColumn = useCallback(() => {
+    const editor = wysiwygEditorRef.current
+    const sel = window.getSelection()
+    if (!editor || !sel?.anchorNode) return
+    const anchorEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
+    const currentCell = anchorEl?.closest('td, th') as HTMLTableCellElement | null
+    const table = currentCell?.closest('table') as HTMLTableElement | null
+    if (!currentCell || !table) return
+    const colIndex = currentCell.cellIndex
+    // Don't delete if it's the only column
+    if (table.rows[0]?.cells.length <= 1) return
+    Array.from(table.rows).forEach((row) => {
+      const cell = row.cells[colIndex]
+      if (cell) cell.remove()
+    })
+    // Focus adjacent cell
+    Array.from(table.rows).forEach((row) => {
+      const focusCell = row.cells[Math.max(0, colIndex - 1)]
+      if (focusCell) {
+        const range = document.createRange()
+        range.selectNodeContents(focusCell)
+        range.collapse(false)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    })
     updateActiveTabBody(turndownService.turndown(editor.innerHTML))
   }, [turndownService, updateActiveTabBody])
 
@@ -2744,6 +3421,34 @@ function App() {
             </div>
           </div>
 
+          {/* Bouton Recherche */}
+          <div
+            className={`relative size-12 rounded-full flex items-center justify-center cursor-pointer ${
+              activeSidebar === 'search'
+                ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
+                : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
+            }`}
+            onClick={() => setActiveSidebar(activeSidebar === 'search' ? 'files' : 'search')}
+            title="Rechercher"
+          >
+            <i className="fa-solid fa-magnifying-glass text-xl" />
+          </div>
+
+          {/* Bouton Settings — en bas */}
+          <div className="mt-auto pb-4">
+            <div
+              className={`size-12 rounded-full flex items-center justify-center cursor-pointer ${
+                showSettings
+                  ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
+                  : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
+              }`}
+              onClick={() => setShowSettings((v) => !v)}
+              title="Paramètres"
+            >
+              <i className="fa-solid fa-gear text-xl" />
+            </div>
+          </div>
+
         </nav>
 
         {/* Panel Fichiers */}
@@ -2966,6 +3671,76 @@ function App() {
           </nav>
         )}
 
+        {/* Panel Recherche */}
+        {activeSidebar === 'search' && (
+          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-white/80">🔍 Recherche</h2>
+
+            {/* Input */}
+            <div className="relative">
+              <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-white/30 text-xs pointer-events-none" />
+              <input
+                autoFocus
+                className="w-full rounded-lg border border-white/10 bg-white/5 pl-8 pr-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/25"
+                placeholder="Rechercher… ou #tag"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  void runSearch(e.target.value)
+                }}
+              />
+              {searchQuery && (
+                <button
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white"
+                  onClick={() => { setSearchQuery(''); setSearchResults([]) }}
+                >
+                  <i className="fa-solid fa-xmark text-xs" />
+                </button>
+              )}
+            </div>
+
+            {/* Hint */}
+            {!searchQuery && (
+              <p className="text-xs text-white/25 leading-relaxed">
+                Tape du texte pour chercher dans le contenu, ou <span className="text-[#9d8bff]">#tag</span> pour filtrer par étiquette.
+              </p>
+            )}
+
+            {/* Loading */}
+            {isSearching && (
+              <p className="text-xs text-white/35 animate-pulse">Recherche en cours…</p>
+            )}
+
+            {/* No results */}
+            {!isSearching && searchQuery && searchResults.length === 0 && (
+              <p className="text-xs text-white/30">Aucun résultat pour « {searchQuery} »</p>
+            )}
+
+            {/* Results */}
+            {searchResults.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1">{searchResults.length} résultat{searchResults.length > 1 ? 's' : ''}</p>
+                {searchResults.map((result) => (
+                  <button
+                    key={result.path}
+                    className="flex flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-white/5 transition-colors border border-transparent hover:border-white/8"
+                    onClick={() => {
+                      const node: TreeNode = { name: getBaseName(result.path), path: result.path, type: 'file' }
+                      onSelectNode(node)
+                      setActiveSidebar('files')
+                    }}
+                  >
+                    <span className="text-sm font-medium text-white truncate">{result.name}</span>
+                    <span className={`text-xs truncate ${result.matchType === 'tag' ? 'text-[#9d8bff]' : 'text-white/40'}`}>
+                      {result.excerpt}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </nav>
+        )}
+
         {/* Panel Git */}
         {activeSidebar === 'git' && (
           <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
@@ -3142,24 +3917,29 @@ function App() {
       </aside>
 
       {/* Zone d'édition principale */}
-      <section className="flex flex-1 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
+      <section className="flex min-w-0 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
           {/* Tab bar */}
-          <div className="flex items-center border-b border-white/10 bg-[#242527]">
+          <div className="overflow-hidden border-b border-white/10 bg-[#242527]">
             {openTabs.length === 0 ? (
-              <div className="flex-1 px-4 py-2 text-xs text-white/40">
+              <div className="px-4 py-2 text-xs text-white/40">
                 Aucun fichier ouvert
               </div>
             ) : (
-              <>
+              <div ref={tabBarScrollRef} className="overflow-x-auto">
+              <div className="flex w-max">
                 {openTabs.map((tab) => (
                   <button
                     key={tab.path}
-                    className={`group flex items-center gap-2 border-r border-white/5 px-3 py-2 text-xs font-medium transition-colors ${
+                    className={`group flex shrink-0 items-center gap-2 border-r border-white/5 px-3 py-2 text-xs font-medium transition-colors ${
                       activeTabPath === tab.path
                         ? 'bg-[#1f2021] text-white'
                         : 'text-white/60 hover:text-white/80 hover:bg-white/5'
                     }`}
                     onClick={() => setActiveTabPath(tab.path)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setTabContextMenu({ x: e.clientX, y: e.clientY, tabPath: tab.path })
+                    }}
                   >
                     <span className="truncate max-w-[150px]">
                       {(() => { const ic = getEditableMarkdownHeader(tab.content).icon; return ic ? <span className="mr-1">{ic}</span> : null })()}
@@ -3178,12 +3958,14 @@ function App() {
                     </button>
                   </button>
                 ))}
-              </>
+              </div>
+              </div>
             )}
           </div>
 
           {/* Éditeur */}
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 flex flex-col">
             {activeTab ? (
               <>
                 {/* Barre de contrôles fine */}
@@ -3236,8 +4018,33 @@ function App() {
                 </div>
 
                 {/* Zone de page unifiée — tout scrolle ensemble */}
-                <div className="flex-1 min-h-0 overflow-auto">
-                  <div className="mx-auto max-w-[68rem] px-10 pt-12 pb-40 xl:px-14">
+                <div
+                  className="flex-1 min-h-0 overflow-auto"
+                  onMouseMove={(e) => {
+                    if (codeBlockLeaveTimerRef.current) {
+                      clearTimeout(codeBlockLeaveTimerRef.current)
+                      codeBlockLeaveTimerRef.current = null
+                    }
+                    const pre = (e.target as HTMLElement).closest?.('pre')
+                    if (pre) {
+                      const codeEl = pre.querySelector('code') as HTMLElement | null
+                      if (codeEl) {
+                        const rect = pre.getBoundingClientRect()
+                        setHoveredCodeBlock((prev) =>
+                          prev?.codeEl === codeEl ? prev : { x: rect.right, y: rect.top, codeEl }
+                        )
+                      }
+                    } else {
+                      setHoveredCodeBlock(null)
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    codeBlockLeaveTimerRef.current = setTimeout(() => setHoveredCodeBlock(null), 200)
+                  }}
+                >
+                  <div className="flex min-h-full">
+                    <div className="flex-1 min-w-0 px-10 pt-12 pb-40 xl:px-14">
+                    <div className="mx-auto max-w-272">
 
                     {/* Bouton icône au-dessus du titre */}
                     <div className="mb-3">
@@ -3333,6 +4140,65 @@ function App() {
                       </span>
                     </div>
 
+                    {/* Tags */}
+                    <div className="mb-8 flex flex-wrap items-center gap-1.5">
+                      {editableHeader.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="group flex items-center gap-1 rounded-full border border-[#7B61FF]/30 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff]"
+                        >
+                          {tag}
+                          <button
+                            className="ml-0.5 text-[#9d8bff]/50 hover:text-[#9d8bff] transition-colors"
+                            onClick={() => updateTags(editableHeader.tags.filter((t) => t !== tag))}
+                            title="Supprimer ce tag"
+                          >
+                            <i className="fa-solid fa-xmark text-[9px]" />
+                          </button>
+                        </span>
+                      ))}
+                      {showTagInput ? (
+                        <input
+                          autoFocus
+                          className="rounded-full border border-[#7B61FF]/40 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff] outline-none placeholder:text-[#9d8bff]/30 w-24"
+                          placeholder="Tag…"
+                          value={tagInput}
+                          onChange={(e) => setTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ',') {
+                              e.preventDefault()
+                              const val = tagInput.trim().replace(/,/g, '')
+                              if (val && !editableHeader.tags.includes(val)) {
+                                updateTags([...editableHeader.tags, val])
+                              }
+                              setTagInput('')
+                              setShowTagInput(false)
+                            }
+                            if (e.key === 'Escape') {
+                              setTagInput('')
+                              setShowTagInput(false)
+                            }
+                          }}
+                          onBlur={() => {
+                            const val = tagInput.trim()
+                            if (val && !editableHeader.tags.includes(val)) {
+                              updateTags([...editableHeader.tags, val])
+                            }
+                            setTagInput('')
+                            setShowTagInput(false)
+                          }}
+                        />
+                      ) : (
+                        <button
+                          className="flex items-center gap-1 rounded-full border border-dashed border-white/15 px-2.5 py-0.5 text-xs text-white/25 hover:border-[#7B61FF]/40 hover:text-[#9d8bff] transition-colors"
+                          onClick={() => setShowTagInput(true)}
+                        >
+                          <i className="fa-solid fa-plus text-[9px]" />
+                          Ajouter un tag
+                        </button>
+                      )}
+                    </div>
+
                     {/* Corps du document */}
                     <div className="relative">
                     {editorMode === 'raw' ? (
@@ -3350,15 +4216,43 @@ function App() {
                       <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-8 [&_h1]:mb-4 [&_h1]:text-white [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-7 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:text-white [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:bg-[#111213] [&_pre]:rounded [&_pre]:p-3 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable
                           suppressContentEditableWarning
+                          spellCheck
                           onInput={onWysiwygInput}
                           onKeyDown={onWysiwygKeyDown}
                           onPaste={(e) => {
                             e.preventDefault()
                             const text = e.clipboardData?.getData('text/plain') ?? ''
-                            document.execCommand('insertText', false, text)
+                            const sanitized = text.replace(/<[^>]*>/g, '')
+
+                            // If pasting inside a code block → insert plain text with newlines
+                            const anchorEl = window.getSelection()?.anchorNode
+                            const anchorElement = anchorEl instanceof Element ? anchorEl : anchorEl?.parentElement
+                            const pre = anchorElement?.closest('pre')
+                            const editorEl = wysiwygEditorRef.current
+                            if (pre && editorEl?.contains(pre)) {
+                              document.execCommand('insertText', false, sanitized)
+                              const md = turndownService.turndown(editorEl.innerHTML)
+                              updateActiveTabBody(md)
+                              setTimeout(() => syncWysiwygFromMarkdown(md), 0)
+                              return
+                            }
+
+                            // Strip HTML tags to prevent injection, then render as markdown
+                            const isMarkdown = /^#{1,6}\s|^\*\*|^__|\*[^*]|^[-*+]\s|\d+\.\s|^>\s|^```|\[.+\]\(.+\)/.test(sanitized)
+                            if (isMarkdown) {
+                              const html = markdownToHtml(sanitized)
+                              document.execCommand('insertHTML', false, html)
+                              const editor = wysiwygEditorRef.current
+                              if (editor) {
+                                const md = turndownService.turndown(editor.innerHTML)
+                                updateActiveTabBody(md)
+                              }
+                            } else {
+                              document.execCommand('insertText', false, sanitized)
+                            }
                           }}
                           onDrop={onWysiwygDrop}
                           onDragEnter={onEditorDragEnter}
@@ -3368,7 +4262,14 @@ function App() {
                             const target = e.target as HTMLInputElement
                             if (target.type === 'checkbox') {
                               const taskItem = target.closest('.task-item')
+                              if (taskItem) {
                               taskItem?.classList.toggle('task-item-checked', target.checked)
+                              // Sync the HTML attribute so innerHTML reflects the checked state
+                              if (target.checked) {
+                                target.setAttribute('checked', '')
+                              } else {
+                                target.removeAttribute('checked')
+                              }
                               // Sync after checkbox toggle
                               setTimeout(() => {
                                 const editor = wysiwygEditorRef.current
@@ -3377,7 +4278,31 @@ function App() {
                                   updateActiveTabBody(markdown)
                                 }
                               }, 0)
+                              }
+                              // Table column checkbox toggle
+                              const colCell = target.closest('.col-checkbox-cell') as HTMLElement | null
+                              if (colCell) {
+                                colCell.dataset.checked = String(target.checked)
+                                if (target.checked) target.setAttribute('checked', '')
+                                else target.removeAttribute('checked')
+                                setTimeout(() => {
+                                  const editor = wysiwygEditorRef.current
+                                  if (editor) {
+                                    const markdown = turndownService.turndown(editor.innerHTML)
+                                    updateActiveTabBody(markdown)
+                                  }
+                                }, 0)
+                              }
                             }
+                            // Column type popup on th header click
+                            const thEl = (e.target as HTMLElement).closest('th') as HTMLElement | null
+                            if (thEl) {
+                              const rect = thEl.getBoundingClientRect()
+                              setColumnTypePopup({ x: rect.left, y: rect.bottom + 4, thEl })
+                            } else {
+                              setColumnTypePopup(null)
+                            }
+                            // Code block language popup — handled via onMouseOver
                           }}
                         />
                         <div className="mt-5 text-right text-[9px] text-white/15 pointer-events-none select-none">
@@ -3392,30 +4317,12 @@ function App() {
                       )}
                     </div>
                   </div>
-                </div>
+                    </div>{/* end max-w-272 */}
+                    </div>{/* end flex-1 content col */}
 
-                {tocItems.length > 0 && (
-                  <aside className="fixed right-6 top-40 z-30 hidden max-h-[70vh] w-64 overflow-auto rounded-lg border border-white/10 bg-[#1a1b1c]/90 p-3 backdrop-blur-sm 2xl:block">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">
-                      Table des matières
-                    </p>
-                    <nav className="space-y-0.5">
-                      {tocItems.map((item) => (
-                        <button
-                          key={`${item.headingIndex}-${item.text}`}
-                          className="block w-full truncate rounded px-2 py-1 text-left text-xs text-white/65 hover:bg-white/8 hover:text-white"
-                          style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
-                          onClick={() => onTocItemClick(item.headingIndex)}
-                          title={item.text}
-                        >
-                          {item.text}
-                        </button>
-                      ))}
-                    </nav>
-                  </aside>
-                )}
-
-                {/* Floating selection popup */}
+                    {/* Table des matières supprimée de ici — rendue au niveau éditeur */}
+                  </div>{/* end flex min-h-full */}
+                
                 {selectionPopup && editorMode === 'wysiwyg' && (
                   <div
                     className="fixed z-50 flex items-center gap-0.5 rounded-lg border border-white/15 bg-[#18191a] shadow-2xl px-1 py-1"
@@ -3440,6 +4347,26 @@ function App() {
                     >
                       <i className="fa-solid fa-link text-[10px]" />
                     </button>
+                    {openaiApiKey.trim() && (
+                      <>
+                        <div className="w-px h-4 bg-white/15 mx-0.5" />
+                        <button
+                          className="rounded px-2 py-1 text-xs text-[#9d8bff] hover:bg-[#7B61FF]/20"
+                        onMouseDown={(e) => {e.preventDefault()}}
+                          onClick={() => {
+                            const sel = window.getSelection()
+                            const selectedText = sel?.toString() ?? ''
+                            aiSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
+                            setSelectionPopup(null)
+                            wysiwygEditorRef.current?.blur()
+                            setAiDialog({ mode: 'transform', prompt: '', isLoading: false, selectedText })
+                          }}
+                          title="Transformer avec l'IA"
+                        >
+                          <i className="fa-solid fa-wand-magic-sparkles text-[10px]" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -3465,14 +4392,120 @@ function App() {
                       <i className="fa-solid fa-table-columns mr-1 text-[10px]" />
                       Colonne
                     </button>
+                    <div className="mx-1 h-4 w-px bg-white/15" />
+                    <button
+                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-red-500/20 hover:text-red-400"
+                      onClick={deleteTableRow}
+                      title="Supprimer la ligne"
+                    >
+                      <i className="fa-solid fa-minus mr-1 text-[10px]" />
+                      Ligne
+                    </button>
+                    <button
+                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-red-500/20 hover:text-red-400"
+                      onClick={deleteTableColumn}
+                      title="Supprimer la colonne"
+                    >
+                      <i className="fa-solid fa-xmark mr-1 text-[10px]" />
+                      Colonne
+                    </button>
                   </div>
                 )}
 
+                {/* Code block language badge — shows when cursor is inside a pre */}
+                {hoveredCodeBlock && editorMode === 'wysiwyg' && !codeBlockPopup && (
+                  <div
+                    className="code-block-popup fixed z-50 flex items-center gap-1"
+                    style={{ left: hoveredCodeBlock.x, top: hoveredCodeBlock.y, transform: 'translate(-100%, 8px)' }}
+                    onMouseEnter={() => {
+                      if (codeBlockLeaveTimerRef.current) {
+                        clearTimeout(codeBlockLeaveTimerRef.current)
+                        codeBlockLeaveTimerRef.current = null
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      codeBlockLeaveTimerRef.current = setTimeout(() => setHoveredCodeBlock(null), 200)
+                    }}
+                  >
+                    {/* Copy button */}
+                    <button
+                      className="font-mono text-[10px] text-white/30 hover:text-white/70 transition-colors px-1"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        const text = (hoveredCodeBlock.codeEl.textContent ?? '').replace(/\u200B/g, '').trim()
+                        void navigator.clipboard.writeText(text)
+                      }}
+                      title="Copier"
+                    >
+                      <i className="fa-regular fa-copy text-[9px]" />
+                    </button>
+                    {/* Language selector */}
+                    <button
+                      className="font-mono text-[10px] text-[#7B61FF]/70 hover:text-[#9d8bff] transition-colors px-1"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        const rect = hoveredCodeBlock.codeEl.closest('pre')?.getBoundingClientRect()
+                        if (rect) {
+                          setCodeBlockPopup({ x: rect.left, y: rect.bottom, codeEl: hoveredCodeBlock.codeEl })
+                        }
+                      }}
+                    >
+                      {(() => {
+                        const lang = Array.from(hoveredCodeBlock.codeEl.classList)
+                          .find((c) => c.startsWith('language-'))
+                          ?.replace('language-', '') ?? 'plaintext'
+                        return lang === 'plaintext' ? 'texte ▾' : `${lang} ▾`
+                      })()}
+                    </button>
+                  </div>
+                )}
+
+                {/* Code block language picker */}
+                {codeBlockPopup && editorMode === 'wysiwyg' && (() => {
+                  const LANGUAGES = ['plaintext', 'javascript', 'typescript', 'python', 'sql', 'bash', 'html', 'css', 'json', 'markdown', 'rust', 'java', 'go', 'csharp', 'cpp']
+                  const activeLang = Array.from(codeBlockPopup.codeEl.classList)
+                    .find((c) => c.startsWith('language-'))
+                    ?.replace('language-', '') ?? 'plaintext'
+                  return (
+                    <div
+                      className="code-block-popup fixed z-[100] flex flex-wrap gap-1 rounded-lg border border-white/25 bg-[#111] px-2 py-2 shadow-2xl ring-1 ring-[#7B61FF]/20"
+                      style={{ left: codeBlockPopup.x, top: codeBlockPopup.y, transform: 'translate(0, 4px)', maxWidth: 320 }}
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      {LANGUAGES.map((lang) => (
+                        <button
+                          key={lang}
+                          className={`rounded px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                            activeLang === lang
+                              ? 'bg-[#7B61FF] text-white'
+                              : 'text-white/60 hover:bg-white/10 hover:text-white'
+                          }`}
+                          onClick={() => {
+                            const codeEl = codeBlockPopup.codeEl
+                            const toRemove = Array.from(codeEl.classList).filter((c) => c.startsWith('language-') || c === 'hljs')
+                            toRemove.forEach((c) => codeEl.classList.remove(c))
+                            codeEl.className = `language-${lang}`
+                            setCodeBlockPopup(null)
+                            setHoveredCodeBlock(null)
+                            const editor = wysiwygEditorRef.current
+                            if (editor) {
+                              const md = turndownService.turndown(editor.innerHTML)
+                              updateActiveTabBody(md)
+                              // Sync immediately so hljs re-highlights with the new language
+                              syncWysiwygFromMarkdown(md)
+                            }
+                          }}
+                        >
+                          {lang}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+
                 {/* Slash command menu */}
                 {slashMenu && editorMode === 'wysiwyg' && (() => {
-                  const filtered = SLASH_COMMANDS.filter(
-                    (c) => !slashMenu.query || c.label.toLowerCase().includes(slashMenu.query),
-                  )
+                  const filtered = SLASH_COMMANDS.filter((c) => (!c.requiresApiKey || openaiApiKey.trim()) && matchesSlashQuery(c, slashMenu.query))
                   return filtered.length > 0 ? (
                     <div
                       className="fixed z-50 min-w-[200px] rounded-lg border border-white/15 bg-[#18191a] shadow-2xl p-1"
@@ -3498,6 +4531,50 @@ function App() {
                     </div>
                   ) : null
                 })()}
+
+                {/* Column type popup */}
+                {columnTypePopup && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setColumnTypePopup(null)} />
+                    <div
+                      className="fixed z-50 flex gap-1 rounded-lg border border-white/15 bg-[#18191a] p-1.5 shadow-2xl"
+                      style={{ left: columnTypePopup.x, top: columnTypePopup.y }}
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      {COLUMN_TYPES.map(({ emoji, label }) => {
+                        const currentText = columnTypePopup.thEl.textContent ?? ''
+                        const isActive = emoji
+                          ? currentText.startsWith(emoji)
+                          : !TYPE_EMOJIS.some((em) => currentText.startsWith(em))
+                        return (
+                          <button
+                            key={label}
+                            className={`flex flex-col items-center gap-0.5 rounded px-2 py-1.5 text-[10px] transition-colors min-w-[44px] ${isActive ? 'bg-[#7B61FF]/25 text-white' : 'text-white/60 hover:bg-white/8 hover:text-white'}`}
+                            onClick={() => {
+                              const thEl = columnTypePopup.thEl
+                              let text = thEl.textContent ?? ''
+                              for (const em of TYPE_EMOJIS) {
+                                if (text.startsWith(`${em} `)) { text = text.slice(em.length + 1); break }
+                                if (text.startsWith(em)) { text = text.slice(em.length); break }
+                              }
+                              thEl.textContent = emoji ? `${emoji} ${text.trim()}` : text.trim()
+                              const editor = wysiwygEditorRef.current
+                              if (editor) {
+                                const md = turndownService.turndown(editor.innerHTML)
+                                updateActiveTabBody(md)
+                                syncWysiwygFromMarkdown(md)
+                              }
+                              setColumnTypePopup(null)
+                            }}
+                          >
+                            <span className="text-base leading-none">{emoji || 'T'}</span>
+                            <span>{label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center">
@@ -3506,8 +4583,98 @@ function App() {
                 </p>
               </div>
             )}
+            </div>{/* end flex-1 min-w-0 content area */}
+
+            {/* Table des matières — colonne droite séparée */}
+            {editorMode === 'wysiwyg' && tocItems.length > 0 && (
+              <aside className="hidden xl:flex xl:w-52 shrink-0 flex-col overflow-y-auto border-l border-white/5 pt-12 pr-4 pl-4">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/30">
+                  Table des matières
+                </p>
+                <nav className="space-y-0.5">
+                  {tocItems.map((item) => (
+                    <button
+                      key={`${item.headingIndex}-${item.text}`}
+                      className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-white/50 hover:bg-white/8 hover:text-white/90 transition-colors"
+                      style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
+                      onClick={() => onTocItemClick(item.headingIndex)}
+                      title={item.text}
+                    >
+                      {item.text}
+                    </button>
+                  ))}
+                </nav>
+              </aside>
+            )}
+          </div>{/* end flex-1 min-h-0 flex row */}
+      </section>
+
+      {/* IA Dialog */}
+      {aiDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <i className="fa-solid fa-wand-magic-sparkles text-[#9d8bff]" />
+                <span className="text-sm font-semibold text-white">
+                  {aiDialog.mode === 'transform' ? 'Transformer avec l\'IA' : 'Générer avec l\'IA'}
+                </span>
+              </div>
+              <button
+                className="rounded p-1 text-white/40 hover:text-white/80 hover:bg-white/8"
+                onClick={() => { setAiDialog(null); aiSavedRangeRef.current = null }}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-4">
+              {aiDialog.mode === 'transform' && aiDialog.selectedText && (
+                <div className="rounded-lg bg-white/5 border border-white/8 px-3 py-2 text-xs text-white/50 max-h-24 overflow-y-auto italic">
+                  «&nbsp;{aiDialog.selectedText.slice(0, 300)}{aiDialog.selectedText.length > 300 ? '…' : ''}&nbsp;»
+                </div>
+              )}
+              <textarea
+                ref={aiTextareaRef}
+                className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#7B61FF]/50"
+                rows={3}
+                placeholder={aiDialog.mode === 'transform' ? 'Ex : Résume ce texte en 3 points clés' : 'Ex : Explique les avantages de Docker'}
+                value={aiDialog.prompt}
+                onChange={(e) => setAiDialog((prev) => prev ? { ...prev, prompt: e.target.value, error: undefined } : null)}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submitAiDialog() }
+                  if (e.key === 'Escape') { setAiDialog(null); aiSavedRangeRef.current = null }
+                }}
+              />
+              {aiDialog.error && (
+                <p className="text-xs text-red-400 flex items-center gap-1.5">
+                  <i className="fa-solid fa-triangle-exclamation" />
+                  {aiDialog.error}
+                </p>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="rounded px-3 py-1.5 text-xs text-white/50 hover:text-white/80 hover:bg-white/8"
+                  onClick={() => { setAiDialog(null); aiSavedRangeRef.current = null }}
+                >
+                  Annuler
+                </button>
+                <button
+                  className="flex items-center gap-2 rounded-lg bg-[#7B61FF] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
+                  disabled={!aiDialog.prompt.trim() || aiDialog.isLoading}
+                  onClick={() => void submitAiDialog()}
+                >
+                  {aiDialog.isLoading ? (
+                    <><i className="fa-solid fa-spinner fa-spin" />Génération…</>
+                  ) : (
+                    <><i className="fa-solid fa-wand-magic-sparkles" />{aiDialog.mode === 'transform' ? 'Transformer' : 'Générer'}</>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
-        </section>
+        </div>
+      )}
 
       {contextMenu && (
         <div
@@ -3559,6 +4726,192 @@ function App() {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Context menu onglets */}
+      {tabContextMenu && (() => {
+        const { x, y, tabPath } = tabContextMenu
+        const idx = openTabs.findIndex((t) => t.path === tabPath)
+        const close = () => setTabContextMenu(null)
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={close} />
+            <div
+              className="fixed z-50 min-w-[180px] rounded-lg border border-white/10 bg-[#1b1c1d] p-1.5 shadow-2xl"
+              style={{ left: x, top: y }}
+            >
+              {[
+                { label: 'Fermer', action: () => closeTab(tabPath) },
+                { label: 'Fermer les autres', action: () => { openTabs.filter((t) => t.path !== tabPath).forEach((t) => closeTab(t.path)) } },
+                { label: 'Fermer à droite', action: () => { openTabs.slice(idx + 1).forEach((t) => closeTab(t.path)) } },
+                { label: 'Fermer à gauche', action: () => { openTabs.slice(0, idx).forEach((t) => closeTab(t.path)) } },
+                { label: 'Fermer tout', action: () => { [...openTabs].forEach((t) => closeTab(t.path)) } },
+              ].map(({ label, action }) => (
+                <button
+                  key={label}
+                  className="w-full rounded px-3 py-1.5 text-left text-xs text-white/80 hover:bg-white/8 hover:text-white transition-colors"
+                  onClick={() => { action(); close() }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )
+      })()}
+
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            {/* En-tête */}
+            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-gear text-[#7B61FF]" />
+                Paramètres
+              </h2>
+              <button
+                className="text-white/40 hover:text-white transition-colors"
+                onClick={() => setShowSettings(false)}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+            </div>
+
+            <div className="p-6 flex flex-col gap-6 overflow-y-auto max-h-[70vh]">
+
+              {/* Section Identité */}
+              <section>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Identité</h3>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Nom affiché</label>
+                    <input
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                      placeholder="Ton prénom ou pseudo"
+                      value={appAuthor}
+                      onChange={(e) => setAppAuthor(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Email Git</label>
+                    <input
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                      placeholder="toi@example.com"
+                      type="email"
+                      value={gitEmail}
+                      onChange={(e) => setGitEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* Section IA */}
+              <section>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Intelligence artificielle</h3>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Clé API OpenAI</label>
+                    <input
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                      placeholder="sk-…"
+                      type="password"
+                      value={openaiApiKey}
+                      onChange={(e) => setOpenaiApiKey(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Prompt système</label>
+                    <textarea
+                      rows={5}
+                      className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 leading-relaxed"
+                      value={openaiPrompt}
+                      onChange={(e) => setOpenaiPrompt(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+
+            </div>
+
+            {/* Pied */}
+            <div className="flex justify-end border-t border-white/8 px-6 py-4">
+              <button
+                className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
+                onClick={() => setShowSettings(false)}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {linkDialog && (
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
+            <h2 className="mb-4 text-base font-semibold text-white">Insérer un lien</h2>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Texte affiché</label>
+                <input
+                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
+                  placeholder="Mon lien"
+                  autoFocus
+                  value={linkDialog.text}
+                  onChange={(e) => setLinkDialog({ ...linkDialog, text: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setLinkDialog(null) }}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/50">URL</label>
+                <input
+                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
+                  placeholder="https://…"
+                  value={linkDialog.url}
+                  onChange={(e) => setLinkDialog({ ...linkDialog, url: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') { setLinkDialog(null); return }
+                    if (e.key === 'Enter') {
+                      const text = linkDialog.text.trim() || linkDialog.url.trim()
+                      const url = linkDialog.url.trim()
+                      if (!url) { setLinkDialog(null); return }
+                      const editor = wysiwygEditorRef.current
+                      if (editor) {
+                        editor.focus()
+                        document.execCommand('insertHTML', false, `<a href="${url}">${text}</a>`)
+                        const md = turndownService.turndown(editor.innerHTML)
+                        updateActiveTabBody(md)
+                      }
+                      setLinkDialog(null)
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
+                  onClick={() => setLinkDialog(null)}
+                >Annuler</button>
+                <button
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff]"
+                  onClick={() => {
+                    const text = linkDialog.text.trim() || linkDialog.url.trim()
+                    const url = linkDialog.url.trim()
+                    if (!url) { setLinkDialog(null); return }
+                    const editor = wysiwygEditorRef.current
+                    if (editor) {
+                      editor.focus()
+                      document.execCommand('insertHTML', false, `<a href="${url}">${text}</a>`)
+                      const md = turndownService.turndown(editor.innerHTML)
+                      updateActiveTabBody(md)
+                    }
+                    setLinkDialog(null)
+                  }}
+                >Insérer</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

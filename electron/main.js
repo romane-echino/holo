@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, dialog, ipcMain, shell } from 'electron'
 import updaterPkg from 'electron-updater'
 import { execFile } from 'node:child_process'
 
@@ -464,7 +464,8 @@ function createWindow() {
     minHeight: 640,
     frame: false,
     autoHideMenuBar: true,
-    transparent: true,
+    backgroundColor: '#242527',
+    hasShadow: true,
     show: false,
     icon: path.join(__dirname, '../public/app-icon.png'),
     webPreferences: {
@@ -472,11 +473,30 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      spellcheck: true,
     },
   })
 
   window.setMenuBarVisibility(false)
   window.removeMenu()
+
+  // Native spellcheck context menu
+  window.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable || params.dictionarySuggestions.length === 0) return
+    const menu = new Menu()
+    for (const suggestion of params.dictionarySuggestions.slice(0, 6)) {
+      menu.append(new MenuItem({
+        label: suggestion,
+        click: () => window.webContents.replaceMisspelling(suggestion),
+      }))
+    }
+    menu.append(new MenuItem({ type: 'separator' }))
+    menu.append(new MenuItem({
+      label: 'Ignorer',
+      click: () => window.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+    }))
+    menu.popup({ window })
+  })
 
   window.once('ready-to-show', () => {
     window.show()

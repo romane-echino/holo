@@ -280,30 +280,49 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 
 
 ### 09.04.26
-- Gérer un style pour titre 1 à 4
-- Quand je tape une commande "/" dans la première ligne la commande est pas appliquée
-- Quand je coche une tâche ça ne modifie pas le code à - [x], donc pas de sauvegarde
-- Assombrir la couleur de fond quand y'a pas le focus sur la fenêtre
-- Mettre une ombre a la fenêtre
-- Quand on est dans un tableau et qu'on presse tab va a la case suivante, si c'est la dernière case -> a la ligne suivante, si c'est la dernière case de la dernière ligne -> crée une nouvelle ligne
-- Pouvoir supprimer une ligne d'un tableau / Supprimer une colonne
-- Ajouter des Tag (etiquette) aux document
-- Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
-- Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
-- Panneau Settings
+- ✅ Quand on colle du markdown dans l'éditeur WYSYWYG ça échappe le mardown. Est-ce qu'on pourrait juste coller en raw le text? Peux-être échapper tout ce qui est HTML au cas ou?
+- ✅ Gérer un style pour titre 1 à 4
+- ✅ Quand je tape une commande "/" dans la première ligne la commande est pas appliquée
+- ✅ Quand je coche une tâche ça ne modifie pas le code à - [x], donc pas de sauvegarde
+- ✅ Assombrir la couleur de fond quand y'a pas le focus sur la fenêtre
+- ✅ Mettre une ombre a la fenêtre
+- ✅ Quand on est dans un tableau et qu'on presse tab va a la case suivante, si c'est la dernière case -> a la ligne suivante, si c'est la dernière case de la dernière ligne -> crée une nouvelle ligne
+- ✅ Pouvoir supprimer une ligne d'un tableau / Supprimer une colonne
+- ✅ Ajouter des Tag (etiquette) aux document
+- ✅Ajouter un panel "recherche" pour pouvoir chercher par contenu ou tag
+
+- ✅ Panneau Settings
   - paramêtre git (name, email)
   - apikey chatgpt
   - prompt IA (on trouve un prompt idéal par défaut pour le makdown)
-- Ajouter l'ia dans les page (commande + sélection)
-- Dans les tableau ajouter l'index de ligne 1,2,3,...
-- Dans les tableau : En tête colonne choix du type de colonne (Sauvegardé via un emoji?) (Nombre, Montétaire, Texte) Ligne de fin de tableau (nombre de ligne, nombre d'occurence)
-- La commande "Tâche" n'est que accessible quand ont tape le circonflexe
-- Commandes manquante 
+- ✅ Dans les tableau ajouter l'index de ligne 1,2,3,...
+- ✅ Commandes manquante 
   - Séparateur
   - Lien
   - Insérer une image -> Prompt natif
 
 
+#### Partie 2
+- ✅ Bloc de code choix du language et code couleur (SQL, Typescript, Powershell, Javascript, ...)
+- ✅ Scroll des tabulation horizontal (quand y'a trop de tab ça casse le layout)
+- ✅ Bouton droite sur les tabs -> popup -> Fermer tout, Fermer les autres, Fermer a droite, Fermer a gauche
+- ✅ La table des matière viens sur le texte du contenu (formaliser le layout)
+- ✅ On peut pas faire clique droite sur un texte selectionné pour les correction orthographiques (workaround?)
+- ✅ La fenetre electron ne réagit pas au layout windows. Je m'explique quand je fait Windows+Gauche elle ne s'adapte pas au comportement natif comme une autre fenêtre
+- ✅ Quand on fait la command slash tableau focus dans la première cellule
+- ✅ Dans les tableau : En tête colonne choix du type de colonne (Sauvegardé via un emoji?) (Nombre, Montétaire, Texte, Checkbox (Vrai/Faux), Date) Ligne de fin de tableau (nombre de ligne, nombre d'occurence)
+- ✅ La commande "Tâche" n'est que accessible quand ont tape le circonflexe
+- ✅ Ajouter l'ia dans les page (commande + sélection) (si l'api key a été configuré)
+
+
+#### Partie 4
+- ✅ Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
+- ✅ CTRL+A dans un bloc de code sélectionne juste le code + Ajouter un bouton copier dans le presse papier
+- ✅ Pouvoir coller un gros bout de code dans un bloc de code. Actuellement ça fait plusieurs bloc bizarre et en plus quand je change de language ça garde que la premier ligne
+- Tableau Kanban en markdown (différencié par un emoji?) faire une structure de ticket/bloc kanban
+- ✅ Quand on perd le focus la fenête deviens transparente et c'est pas hyper joli
+- ✅ Pas de correction orthographique dans les bloc de code
+- Possilbité de formater le code dans les bloc de code?
 
 
 ### 31.03.26 — Tâche feedback #1 (terminée : 30/03/2026)
