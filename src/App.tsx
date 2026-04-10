@@ -44,8 +44,6 @@ type GitDialog =
 
 type CloneDialog = {
   repoUrl: string
-  username: string
-  password: string
   destinationPath: string
   isSubmitting: boolean
 }
@@ -132,11 +130,11 @@ function getFriendlyGitErrorMessage(rawMessage: string): string {
       message,
     )
   ) {
-    return 'Échec de connexion GitHub. Vérifie ton compte (SSH/identifiants) puis réessaie Synchroniser.'
+    return 'Échec de connexion Git distante. Vérifie ta configuration Git (SSH/identifiants) puis réessaie Synchroniser.'
   }
 
   if (/could not resolve host|name or service not known|network is unreachable|timed out/.test(message)) {
-    return 'Impossible de joindre GitHub (réseau/DNS). Vérifie la connexion Internet puis réessaie.'
+    return 'Impossible de joindre le dépôt distant (réseau/DNS). Vérifie la connexion Internet puis réessaie.'
   }
 
   return rawMessage
@@ -1619,61 +1617,78 @@ function App() {
     loadImagesInEditor()
   }, [editorMode, activeTabPath, desktopApiAvailable, getHoloApi])
 
+  const findCurrentEditorBlockNode = useCallback((selection: Selection, editor: HTMLDivElement): Node | null => {
+    const BLOCK_TAGS = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE']
+
+    let node: Node | null = selection.anchorNode
+    if (!node) return null
+
+    // Caret can be anchored directly on the editor root. In that case, derive
+    // the active line/block from the anchor offset.
+    if (node === editor) {
+      const offset = Math.max(0, Math.min(selection.anchorOffset, editor.childNodes.length))
+      node = editor.childNodes[offset] ?? editor.childNodes[offset - 1] ?? null
+      if (!node) return null
+    }
+
+    while (node && node !== editor) {
+      if (node instanceof Element && BLOCK_TAGS.includes(node.tagName)) {
+        return node
+      }
+      if (node.parentNode === editor) {
+        return node
+      }
+      node = node.parentNode
+    }
+
+    return null
+  }, [])
+
   // Helpers for getting text context in the contentEditable editor
   const getBlockTextBeforeCursor = useCallback((): { text: string; block: Element | null } => {
     const sel = window.getSelection()
     if (!sel?.rangeCount) return { text: '', block: null }
     const editor = wysiwygEditorRef.current
     if (!editor) return { text: '', block: null }
-    let node: Node | null = sel.anchorNode
-    while (node && node !== editor) {
-      const tag = (node as Element).tagName
-      if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
-      node = node.parentNode
-    }
-    // If cursor is directly in editor (no block wrapper), use the direct child
-    if (node === editor) {
-      let child: Node | null = sel.anchorNode
-      while (child && child.parentNode !== editor) { child = child.parentNode }
-      if (child && child !== editor) node = child
-      else return { text: '', block: null }
-    }
+
+    const node = findCurrentEditorBlockNode(sel, editor)
     if (!node) return { text: '', block: null }
+
     const blockRange = document.createRange()
     blockRange.setStart(node, 0)
-    blockRange.setEnd(sel.anchorNode!, sel.anchorOffset)
-    return { text: blockRange.toString(), block: node as Element }
-  }, [])
+    if (node.contains(sel.anchorNode)) {
+      blockRange.setEnd(sel.anchorNode!, sel.anchorOffset)
+    } else if (sel.anchorNode === editor) {
+      blockRange.setEnd(editor, sel.anchorOffset)
+    } else {
+      blockRange.selectNodeContents(node)
+    }
+
+    return { text: blockRange.toString(), block: (node instanceof Element ? node : null) }
+  }, [findCurrentEditorBlockNode])
 
   const deleteCurrentBlockContents = useCallback(() => {
     const sel = window.getSelection()
     if (!sel?.rangeCount) return
     const editor = wysiwygEditorRef.current
     if (!editor) return
-    let node: Node | null = sel.anchorNode
-    while (node && node !== editor) {
-      const tag = (node as Element).tagName
-      if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE'].includes(tag ?? '')) break
-      node = node.parentNode
-    }
-    // If cursor is directly in editor (no block wrapper), use the direct child
-    if (node === editor) {
-      let child: Node | null = sel.anchorNode
-      while (child && child.parentNode !== editor) { child = child.parentNode }
-      if (child && child !== editor) node = child
-      else return
-    }
+
+    const node = findCurrentEditorBlockNode(sel, editor)
     if (!node) return
+
     const range = document.createRange()
     range.setStart(node, 0)
+
     // Only extend to cursor position if it's within this block (prevents cross-block deletion)
     if (node.contains(sel.anchorNode)) {
       range.setEnd(sel.anchorNode!, sel.anchorOffset)
+    } else if (sel.anchorNode === editor) {
+      range.setEnd(editor, sel.anchorOffset)
     } else {
       range.selectNodeContents(node)
     }
     range.deleteContents()
-  }, [])
+  }, [findCurrentEditorBlockNode])
 
   const askOpenAI = useCallback(async (userMessage: string): Promise<string> => {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -2101,10 +2116,24 @@ function App() {
             range.insertNode(tmpSpan)
             const rect = tmpSpan.getBoundingClientRect()
             tmpSpan.parentNode?.removeChild(tmpSpan)
-            // Position menu below the cursor, accounting for viewport
+            const editorRect = editor.getBoundingClientRect()
+            const isInBottomHalf = rect.top > editorRect.top + editorRect.height / 2
+            const menuHeightEstimate = 260
+            const menuWidthEstimate = 260
+
             let x = rect.left
-            let y = rect.top + rect.height + 6
-            // Ensure menu doesn't go off-screen horizontally
+            let y = isInBottomHalf
+              ? rect.top - menuHeightEstimate - 6
+              : rect.top + rect.height + 6
+
+            const minX = 8
+            const maxX = Math.max(minX, window.innerWidth - menuWidthEstimate - 8)
+            x = Math.max(minX, Math.min(x, maxX))
+
+            const minY = Math.max(8, editorRect.top + 8)
+            const maxY = Math.min(window.innerHeight - 8, editorRect.bottom - 8)
+            y = Math.max(minY, Math.min(y, maxY))
+
             setSlashMenu({ x, y, query: '' })
             setSlashMenuIndex(0)
           }
@@ -3211,8 +3240,6 @@ function App() {
   const openCloneDialog = useCallback(() => {
     setCloneDialog({
       repoUrl: '',
-      username: '',
-      password: '',
       destinationPath: '',
       isSubmitting: false,
     })
@@ -3277,8 +3304,6 @@ function App() {
     try {
       const result = await holo.gitCloneRepository({
         repoUrl,
-        username: cloneDialog.username.trim(),
-        password: cloneDialog.password,
         destinationPath,
       })
 
@@ -3401,7 +3426,7 @@ function App() {
               }`}
               onClick={() => setActiveSidebar('git')}
             >
-              <i className="fa-brands fa-github text-2xl" />
+              <i className="fa-brands fa-git-alt text-2xl" />
             </div>
 
             {/* Badges incoming / outgoing — visibles seulement si valeur > 0 */}
@@ -4996,42 +5021,8 @@ function App() {
                       : previous,
                   )
                 }
-                placeholder="https://github.com/owner/repo.git"
+                placeholder="https://git.example.com/group/project.git"
               />
-
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                  value={cloneDialog.username}
-                  onChange={(event) =>
-                    setCloneDialog((previous) =>
-                      previous
-                        ? {
-                          ...previous,
-                          username: event.target.value,
-                        }
-                        : previous,
-                    )
-                  }
-                  placeholder="Login Git (optionnel)"
-                />
-                <input
-                  type="password"
-                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                  value={cloneDialog.password}
-                  onChange={(event) =>
-                    setCloneDialog((previous) =>
-                      previous
-                        ? {
-                          ...previous,
-                          password: event.target.value,
-                        }
-                        : previous,
-                    )
-                  }
-                  placeholder="Mot de passe/token (optionnel)"
-                />
-              </div>
 
               <div className="flex items-center gap-2">
                 <input

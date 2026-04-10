@@ -274,7 +274,7 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - ✅ désactiver le user-select dans le reste de l'interface (pas dans l'éditeur)
 - ✅ Quand on colle du texte ne pas reprendre de mise en forme (j'ai copier qqch depuis un site internet et il a mis un fond blanc), on reprend que le texte brute (éventuellement le code markdown)
 - ✅ Espacer un bcp plus en hauteur les paragraphes et les titre, les liste, etc...
-- Quand je fais une commande "/" ça agit sur le bloc de text en dessus. Par exemple je fais un paragraphe je vais a la ligne je met la commande "titre 2" et mon paragraphe se transforme en titre deux. Cela ne dois affecter que la ligne courrante. EDIT: Toujours pas bon!
+- ✅ Quand je fais une commande "/" ça agit sur le bloc de text en dessus. Par exemple je fais un paragraphe je vais a la ligne je met la commande "titre 2" et mon paragraphe se transforme en titre deux. Cela ne dois affecter que la ligne courrante (corrigé: ciblage robuste du bloc courant, y compris curseur ancré sur la racine de l'éditeur)
 - ✅ faire des scroll bar qui s'affiche seulement au survol de la div scrollable et plus dans un style moderne (iOS)
 - ✅ Quand je fait un retour a la ligne dans une citation doit revenir a du texte normal
 
@@ -315,7 +315,7 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - ✅ Ajouter l'ia dans les page (commande + sélection) (si l'api key a été configuré)
 
 
-#### Partie 4
+#### Partie 3
 - ✅ Quand je fait une commande "/" ça affecte la ligne dessous bizarrement et pas juste la ligne courante
 - ✅ CTRL+A dans un bloc de code sélectionne juste le code + Ajouter un bouton copier dans le presse papier
 - ✅ Pouvoir coller un gros bout de code dans un bloc de code. Actuellement ça fait plusieurs bloc bizarre et en plus quand je change de language ça garde que la premier ligne
@@ -323,6 +323,25 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 - ✅ Quand on perd le focus la fenête deviens transparente et c'est pas hyper joli
 - ✅ Pas de correction orthographique dans les bloc de code
 - Possilbité de formater le code dans les bloc de code?
+
+
+#### Partie 4
+- ✅ Désactiver completement tout lien avec GITHUB (connexion, login). Le soft doit être purement git (UI rendue neutre Git: icône Git, clone sans login/password, messages d'erreur sans mention GitHub)
+- L'IA ne marche pas Erreur 429. C'est très bizarre parce que j'ai un compte PRO OpenAI et il me dit que la clef n'a jamais été utilisé a mon avis y'a un problème de config/dev
+- Enlever le système de tabulation complètement (n'apporte pas grand chose a part des bugs)
+- Bouton droite sur un fichier "Ouvrir dans une nouvelle fenêtre" Ouvre une nouvelle instance de holo (attention version windows, mac, linux) et ouvre le même dossier et ouvre le fichier
+- ✅ Le popup de commande slash doit s'adapter a la ligne de flotaison de l'app si il est plus bas que le moitié basse de l'app le popup doit s'afficher au dessus et inversément
+- Verifier les intéractions git
+  - On crée/renomme/supprime un fichier -> on le push direct
+  - On CTRL+S/ sauvegarde un fichier -> on commit, push direct
+  - On fait des beaux messages de commit genre USER::ADD::/DOSSIER/FICHIER
+  - Quand on ouvre un fichier on fait une petite boucle de fetch (je suis pas sur de moi la dessus) pour savoir si y'a une modif -> Si y'en a une on bloque l'édition et on demande au mec de pull
+  - Faut trouver un moyen pour fetch/pull le contenu a interval periodique pour que le contenu local soit a jour
+  - L'idée c'est que meme un teubé qui sait juste utiliser Word puisse éditer des fichier sur git
+- Changer le readme.md github en documentation utilisateur comme n'importe quel projet github open source. Avec des images (tu peux mettre des placeholder en attendant). Il faut que l'utilisateur comprenne ce que ça fait, les fonctionnalités, comment l'installer pas plus ... peut-être la tech stack
+
+
+
 
 
 ### 31.03.26 — Tâche feedback #1 (terminée : 30/03/2026)
