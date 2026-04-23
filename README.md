@@ -1,80 +1,70 @@
 # Holo
 
-Holo is a desktop Markdown editor inspired by Microsoft Loop, designed for fast writing and simple Git/GitHub synchronization.
+Holo is a desktop Markdown editor inspired by modern collaborative editors, built for teams that want a clean writing experience with file-based storage and simple Git sync.
 
-## What is Holo?
+## Why Holo
 
-Holo is built for teams who want a smooth writing experience without leaving a file-based workflow.
+Holo helps non-technical users edit documentation in Markdown without dealing with terminal commands.
 
-It combines:
+- Edit documents visually (WYSIWYG) or in raw Markdown
+- Keep files in your own folders and repositories
+- Save and sync with integrated Git actions
+- Work with a fast desktop interface (Windows, macOS, Linux)
 
-- a modern desktop UI,
-- RAW and WYSIWYG editing,
-- Markdown-first storage,
-- built-in Git operations for everyday sync.
+## Screenshots
 
-## Key Features
+Replace these placeholders with real screenshots when ready.
 
-- Open and browse local Markdown folders
-- Multi-tab editing with unsaved state indicators
-- RAW mode and WYSIWYG mode switch
-- Editable document header (title, description, author)
-- Loop-style interactions (`/` commands, inline selection toolbar, markdown shortcuts)
-- Save with button or `Ctrl+S` / `Cmd+S`
-- Built-in Git status, commit, pull, merge, and sync flow
+![Holo editor placeholder](docs/images/placeholder-editor.svg)
+![Holo slash commands placeholder](docs/images/placeholder-slash-menu.svg)
+![Holo git panel placeholder](docs/images/placeholder-git-panel.svg)
 
-## Releases
+## Main Features
 
-Holo publishes desktop builds through GitHub Releases for:
+- Markdown file explorer (folders + `.md` files)
+- Single-page editing flow focused on clarity
+- RAW / WYSIWYG switch
+- Slash commands (`/`) for quick blocks (titles, lists, tables, tasks, code, etc.)
+- Inline formatting toolbar on text selection
+- Editable metadata header (title, description, author, icon, tags)
+- Image drag & drop into documents
+- Integrated search by content and tags
+- Git integration: fetch, pull, commit, merge, sync
+- Auto-commit flows for save and file structure changes
+- Remote freshness guard (warns/blocks editing when remote is newer until pull)
 
-- Windows (`.exe`)
-- macOS (`.dmg`, `.zip`)
-- Linux Debian (`.deb`)
+## Installation
 
-Release workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
+Download the latest release for your OS:
 
-Trigger a release by pushing a version tag:
+- Windows: `.exe`
+- macOS: `.dmg` or `.zip`
+- Linux: `.deb`
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+Then install and launch Holo like any standard desktop app.
 
-## Signing / Notarization (optional)
+## Quick Start
 
-If you want signed builds in CI, configure these GitHub Action secrets:
+1. Open Holo
+2. Open a local folder containing Markdown docs
+3. Select a file in the explorer
+4. Edit in WYSIWYG or RAW mode
+5. Press `Ctrl+S` / `Cmd+S` to save (and auto-sync when configured in Git)
 
-- `CSC_LINK`
-- `CSC_KEY_PASSWORD`
-- `APPLE_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `APPLE_TEAM_ID`
+## Typical Workflow
 
-## Quick Start (local)
+- Create, rename, move, or delete files/folders from the explorer
+- Write content with slash commands and formatting shortcuts
+- Use the Git panel to fetch/pull/sync when needed
+- Resolve conflicts directly from the app when they appear
 
-Prerequisites:
+## Tech Stack
 
-- Node.js (LTS recommended)
-- npm
-
-Install:
-
-```bash
-npm install
-```
-
-Run in development:
-
-```bash
-npm run dev
-```
-
-Build renderer:
-
-```bash
-npm run build
-```
+- Electron
+- React + TypeScript
+- Vite
+- Tailwind CSS
 
 ## Project Status
 
-Roadmap and delivery tracking are maintained in [Process.md](Process.md).
+Roadmap and feedback tracking are available in [Process.md](Process.md).

@@ -12,6 +12,7 @@ type TreeNode = {
   name: string
   path: string
   type: NodeType
+  archivedOriginalPath?: string
   children?: TreeNode[]
 }
 
@@ -89,6 +90,22 @@ type EditableMarkdownHeader = {
 type FilePathStats = {
   modifiedAt: string
   createdAt: string
+}
+
+type ArchivedFileEntry = {
+  archivedPath: string
+  originalPath: string
+  name: string
+}
+
+type SearchResultItem = {
+  path: string
+  name: string
+  excerpt: string
+  matchType: 'content' | 'tag' | 'archive'
+  isArchived?: boolean
+  archivedPath?: string
+  originalPath?: string
 }
 
 type TocItem = {
@@ -186,6 +203,44 @@ function isSameOrChildPath(parentPath: string, candidatePath: string): boolean {
     normalizedCandidate === normalizedParent
     || normalizedCandidate.startsWith(`${normalizedParent}/`)
   )
+}
+
+function getCommitTargetPath(rootPath: string | null, targetPath: string): string {
+  const normalizedTarget = targetPath.replace(/\\/g, '/')
+
+  if (!rootPath) {
+    return normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`
+  }
+
+  const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/$/, '')
+
+  if (normalizedTarget === normalizedRoot) {
+    return '/'
+  }
+
+  if (normalizedTarget.startsWith(`${normalizedRoot}/`)) {
+    return normalizedTarget.slice(normalizedRoot.length)
+  }
+
+  return normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`
+}
+
+function buildAutoCommitMessage(
+  author: string,
+  action: string,
+  rootPath: string | null,
+  targetPath: string,
+  details?: string,
+): string {
+  const normalizedAuthor = (author.trim() || 'USER').replace(/\s+/g, '_').toUpperCase()
+  const normalizedAction = action.trim().toUpperCase()
+  const commitTargetPath = getCommitTargetPath(rootPath, targetPath)
+
+  if (details && details.trim()) {
+    return `${normalizedAuthor}::${normalizedAction}::${commitTargetPath} ${details.trim()}`
+  }
+
+  return `${normalizedAuthor}::${normalizedAction}::${commitTargetPath}`
 }
 
 function splitMarkdownFrontMatter(markdown: string) {
@@ -531,7 +586,7 @@ function App() {
   const [tree, setTree] = useState<TreeNode | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [selectedType, setSelectedType] = useState<NodeType | null>(null)
-  const [openTabs, setOpenTabs] = useState<OpenTab[]>([])
+  const [activeTab, setActiveTab] = useState<OpenTab | null>(null)
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   const [pathStatsByPath, setPathStatsByPath] = useState<Record<string, FilePathStats>>({})
   const [recentFolders, setRecentFolders] = useState<string[]>([])
@@ -546,21 +601,40 @@ function App() {
   const [linkDialog, setLinkDialog] = useState<{ text: string; url: string } | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [showTagInput, setShowTagInput] = useState(false)
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabPath: string } | null>(null)
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
+  const [remoteEditBlock, setRemoteEditBlock] = useState<{ isBlocked: boolean; message: string }>({
+    isBlocked: false,
+    message: '',
+  })
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
   const [gitEmail, setGitEmail] = useState('')
+  const [imageStorageMode, setImageStorageMode] = useState<'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'>('local')
+  const [azureBlobContainerUrl, setAzureBlobContainerUrl] = useState('')
+  const [azureBlobSasToken, setAzureBlobSasToken] = useState('')
+  const [s3Region, setS3Region] = useState('')
+  const [s3Bucket, setS3Bucket] = useState('')
+  const [s3AccessKeyId, setS3AccessKeyId] = useState('')
+  const [s3SecretAccessKey, setS3SecretAccessKey] = useState('')
+  const [s3Endpoint, setS3Endpoint] = useState('')
+  const [s3PublicBaseUrl, setS3PublicBaseUrl] = useState('')
+  const [dropboxAccessToken, setDropboxAccessToken] = useState('')
+  const [dropboxFolderPath, setDropboxFolderPath] = useState('/holo-images')
+  const [gdriveAccessToken, setGdriveAccessToken] = useState('')
+  const [gdriveFolderId, setGdriveFolderId] = useState('')
   const [openaiApiKey, setOpenaiApiKey] = useState('')
+  const [geminiApiKey, setGeminiApiKey] = useState('')
+  const [aiProvider, setAiProvider] = useState<'auto' | 'openai' | 'gemini'>('auto')
   const [openaiPrompt, setOpenaiPrompt] = useState('Tu es un assistant qui aide à rédiger de la documentation technique en Markdown. Réponds toujours en Markdown bien structuré, avec des titres, listes et code blocks si nécessaire.')
   const [showSettings, setShowSettings] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; excerpt: string; matchType: 'content' | 'tag' }>>([])  
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [archivedFiles, setArchivedFiles] = useState<ArchivedFileEntry[]>([])
   const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
   const [fileIconByPath, setFileIconByPath] = useState<Record<string, string>>({})
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
@@ -569,7 +643,6 @@ function App() {
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
-  const tabBarScrollRef = useRef<HTMLDivElement | null>(null)
   const codeBlockLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSyncingWysiwygRef = useRef(false)
   const lastWysiwygSyncedTabRef = useRef<string | null>(null)
@@ -580,6 +653,7 @@ function App() {
   const [codeBlockPopup, setCodeBlockPopup] = useState<{ x: number; y: number; codeEl: HTMLElement } | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
+  const slashMenuListRef = useRef<HTMLDivElement | null>(null)
   const [aiDialog, setAiDialog] = useState<{ mode: 'generate' | 'transform'; prompt: string; isLoading: boolean; selectedText: string; error?: string } | null>(null)
   const aiSavedRangeRef = useRef<Range | null>(null)
   const aiTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -587,6 +661,7 @@ function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
+  const startupNavigationDoneRef = useRef(false)
   const turndownService = useMemo(() => {
     const service = new TurndownService({
       headingStyle: 'atx',
@@ -608,6 +683,14 @@ function App() {
         // If data-src exists, use that for relative path
         if (dataSrc) {
           src = dataSrc
+
+          useEffect(() => {
+            if (!slashMenu) return
+            const listEl = slashMenuListRef.current
+            if (!listEl) return
+            const activeItem = listEl.querySelector<HTMLButtonElement>(`[data-slash-index="${slashMenuIndex}"]`)
+            activeItem?.scrollIntoView({ block: 'nearest' })
+          }, [slashMenu, slashMenuIndex])
         }
         // Otherwise keep the src as is (data URLs, external URLs)
         
@@ -668,12 +751,7 @@ function App() {
   }, [])
   const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
-
-  // Récupérer l'onglet actif
-  const activeTab = useMemo(
-    () => openTabs.find((tab) => tab.path === activeTabPath),
-    [activeTabPath, openTabs],
-  )
+  const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
 
   const editableHeader = useMemo(
     () => getEditableMarkdownHeader(activeTab?.content ?? ''),
@@ -770,7 +848,8 @@ function App() {
     setSelectedPath(result.rootPath)
     setSelectedType('directory')
     setExpandedDirectories(new Set([result.rootPath]))
-    setOpenTabs([])
+    setArchivedFiles([])
+    setActiveTab(null)
     setActiveTabPath(null)
     setGitState(DEFAULT_GIT_STATE)
   }, [])
@@ -783,6 +862,16 @@ function App() {
 
     const recent = await window.holo.getRecentFolders()
     setRecentFolders(Array.isArray(recent) ? recent : [])
+  }, [])
+
+  const refreshArchivedFiles = useCallback(async () => {
+    if (!window.holo) {
+      setArchivedFiles([])
+      return
+    }
+
+    const archived = await window.holo.listArchivedFiles().catch(() => [])
+    setArchivedFiles(Array.isArray(archived) ? archived : [])
   }, [])
 
   const openFolder = useCallback(async () => {
@@ -800,6 +889,7 @@ function App() {
 
     applyOpenedFolder(result)
     await refreshRecentFolders()
+    await refreshArchivedFiles()
 
     const nextGitState = await holo.gitGetState(true)
     setGitState(normalizeGitState(nextGitState))
@@ -811,7 +901,7 @@ function App() {
       const afterPull = await holo.gitGetState(false).catch(() => null)
       if (afterPull) setGitState(normalizeGitState(afterPull))
     }
-  }, [applyOpenedFolder, getHoloApi, refreshRecentFolders, refreshTree])
+  }, [applyOpenedFolder, getHoloApi, refreshArchivedFiles, refreshRecentFolders, refreshTree])
 
   const openRecentFolder = useCallback(
     async (folderPath: string) => {
@@ -830,6 +920,7 @@ function App() {
 
         applyOpenedFolder(result)
         await refreshRecentFolders()
+        await refreshArchivedFiles()
 
         const nextGitState = await holo.gitGetState(true)
         setGitState(normalizeGitState(nextGitState))
@@ -846,7 +937,7 @@ function App() {
         await refreshRecentFolders()
       }
     },
-    [applyOpenedFolder, getHoloApi, refreshRecentFolders, refreshTree],
+    [applyOpenedFolder, getHoloApi, refreshArchivedFiles, refreshRecentFolders, refreshTree],
   )
 
   const removeRecentFolder = useCallback(
@@ -886,6 +977,103 @@ function App() {
     [getHoloApi, rootPath],
   )
 
+  const applyRemoteEditBlockFromGitState = useCallback((nextGitState: GitState) => {
+    if (nextGitState.incoming > 0) {
+      setRemoteEditBlock({
+        isBlocked: true,
+        message: 'Une version plus récente existe sur le dépôt distant. Fais un pull pour reprendre l’édition.',
+      })
+      return
+    }
+
+    setRemoteEditBlock({ isBlocked: false, message: '' })
+  }, [])
+
+  const checkRemoteFreshnessAndGuardEditing = useCallback(
+    async (promptPull: boolean, autoPullIfSafe = false) => {
+      if (!rootPath || !gitState.isRepo) {
+        setRemoteEditBlock({ isBlocked: false, message: '' })
+        return true
+      }
+
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return true
+      }
+
+      const nextState = normalizeGitState(await holo.gitGetState(true))
+      setGitState(nextState)
+      applyRemoteEditBlockFromGitState(nextState)
+
+      if (nextState.incoming <= 0) {
+        return true
+      }
+
+      const canAutoPullSafely =
+        autoPullIfSafe
+        && !isGitBusy
+        && !(activeTab?.isDirty ?? false)
+        && nextState.localChanges === 0
+        && nextState.outgoing === 0
+
+      if (canAutoPullSafely) {
+        try {
+          await holo.gitPull()
+          await refreshTree()
+
+          if (activeTabPath) {
+            const refreshedContent = await holo.readFile(activeTabPath).catch(() => null)
+
+            if (typeof refreshedContent === 'string') {
+              setActiveTab((prev) =>
+                prev && prev.path === activeTabPath
+                  ? { ...prev, content: refreshedContent, isDirty: false }
+                  : prev,
+              )
+            }
+          }
+
+          const refreshedState = normalizeGitState(await holo.gitGetState(true))
+          setGitState(refreshedState)
+          applyRemoteEditBlockFromGitState(refreshedState)
+          return refreshedState.incoming <= 0
+        } catch {
+          return false
+        }
+      }
+
+      if (!promptPull) {
+        return false
+      }
+
+      const shouldPullNow = window.confirm(
+        'Une version plus récente de ce dépôt est disponible sur le remote.\n\nPull maintenant pour débloquer l’édition ?',
+      )
+
+      if (!shouldPullNow) {
+        return false
+      }
+
+      setIsGitBusy(true)
+
+      try {
+        await holo.gitPull()
+        await refreshTree()
+        const refreshedState = normalizeGitState(await holo.gitGetState(true))
+        setGitState(refreshedState)
+        applyRemoteEditBlockFromGitState(refreshedState)
+        return refreshedState.incoming <= 0
+      } catch (error) {
+        window.alert((error as Error).message)
+        return false
+      } finally {
+        setIsGitBusy(false)
+      }
+    },
+    [activeTab?.isDirty, activeTabPath, applyRemoteEditBlockFromGitState, getHoloApi, gitState.isRepo, isGitBusy, refreshTree, rootPath],
+  )
+
   useEffect(() => {
     if (!rootPath) {
       setGitState(DEFAULT_GIT_STATE)
@@ -920,15 +1108,64 @@ function App() {
 
   useEffect(() => {
     const email = window.localStorage.getItem('holo-git-email')
-    const key = window.localStorage.getItem('holo-openai-key')
+    const imageStorage = window.localStorage.getItem('holo-image-storage-mode')
+    const azureContainerUrl = window.localStorage.getItem('holo-azure-container-url')
+    const azureSasToken = window.localStorage.getItem('holo-azure-sas-token')
+    const s3RegionValue = window.localStorage.getItem('holo-s3-region')
+    const s3BucketValue = window.localStorage.getItem('holo-s3-bucket')
+    const s3AccessKeyIdValue = window.localStorage.getItem('holo-s3-access-key-id')
+    const s3SecretAccessKeyValue = window.localStorage.getItem('holo-s3-secret-access-key')
+    const s3EndpointValue = window.localStorage.getItem('holo-s3-endpoint')
+    const s3PublicBaseUrlValue = window.localStorage.getItem('holo-s3-public-base-url')
+    const dropboxAccessTokenValue = window.localStorage.getItem('holo-dropbox-access-token')
+    const dropboxFolderPathValue = window.localStorage.getItem('holo-dropbox-folder-path')
+    const gdriveAccessTokenValue = window.localStorage.getItem('holo-gdrive-access-token')
+    const gdriveFolderIdValue = window.localStorage.getItem('holo-gdrive-folder-id')
+    const openaiKey = window.localStorage.getItem('holo-openai-key')
+    const geminiKey = window.localStorage.getItem('holo-gemini-key')
+    const provider = window.localStorage.getItem('holo-ai-provider')
     const prompt = window.localStorage.getItem('holo-openai-prompt')
     if (email) setGitEmail(email)
-    if (key) setOpenaiApiKey(key)
+    if (imageStorage === 'local' || imageStorage === 'azure' || imageStorage === 's3' || imageStorage === 'dropbox' || imageStorage === 'gdrive') {
+      setImageStorageMode(imageStorage)
+    }
+    if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
+    if (azureSasToken) setAzureBlobSasToken(azureSasToken)
+    if (s3RegionValue) setS3Region(s3RegionValue)
+    if (s3BucketValue) setS3Bucket(s3BucketValue)
+    if (s3AccessKeyIdValue) setS3AccessKeyId(s3AccessKeyIdValue)
+    if (s3SecretAccessKeyValue) setS3SecretAccessKey(s3SecretAccessKeyValue)
+    if (s3EndpointValue) setS3Endpoint(s3EndpointValue)
+    if (s3PublicBaseUrlValue) setS3PublicBaseUrl(s3PublicBaseUrlValue)
+    if (dropboxAccessTokenValue) setDropboxAccessToken(dropboxAccessTokenValue)
+    if (dropboxFolderPathValue) setDropboxFolderPath(dropboxFolderPathValue)
+    if (gdriveAccessTokenValue) setGdriveAccessToken(gdriveAccessTokenValue)
+    if (gdriveFolderIdValue) setGdriveFolderId(gdriveFolderIdValue)
+    if (openaiKey) setOpenaiApiKey(openaiKey)
+    if (geminiKey) setGeminiApiKey(geminiKey)
+    if (provider === 'auto' || provider === 'openai' || provider === 'gemini') {
+      setAiProvider(provider)
+    }
     if (prompt) setOpenaiPrompt(prompt)
   }, [])
 
   useEffect(() => { window.localStorage.setItem('holo-git-email', gitEmail) }, [gitEmail])
+  useEffect(() => { window.localStorage.setItem('holo-image-storage-mode', imageStorageMode) }, [imageStorageMode])
+  useEffect(() => { window.localStorage.setItem('holo-azure-container-url', azureBlobContainerUrl) }, [azureBlobContainerUrl])
+  useEffect(() => { window.localStorage.setItem('holo-azure-sas-token', azureBlobSasToken) }, [azureBlobSasToken])
+  useEffect(() => { window.localStorage.setItem('holo-s3-region', s3Region) }, [s3Region])
+  useEffect(() => { window.localStorage.setItem('holo-s3-bucket', s3Bucket) }, [s3Bucket])
+  useEffect(() => { window.localStorage.setItem('holo-s3-access-key-id', s3AccessKeyId) }, [s3AccessKeyId])
+  useEffect(() => { window.localStorage.setItem('holo-s3-secret-access-key', s3SecretAccessKey) }, [s3SecretAccessKey])
+  useEffect(() => { window.localStorage.setItem('holo-s3-endpoint', s3Endpoint) }, [s3Endpoint])
+  useEffect(() => { window.localStorage.setItem('holo-s3-public-base-url', s3PublicBaseUrl) }, [s3PublicBaseUrl])
+  useEffect(() => { window.localStorage.setItem('holo-dropbox-access-token', dropboxAccessToken) }, [dropboxAccessToken])
+  useEffect(() => { window.localStorage.setItem('holo-dropbox-folder-path', dropboxFolderPath) }, [dropboxFolderPath])
+  useEffect(() => { window.localStorage.setItem('holo-gdrive-access-token', gdriveAccessToken) }, [gdriveAccessToken])
+  useEffect(() => { window.localStorage.setItem('holo-gdrive-folder-id', gdriveFolderId) }, [gdriveFolderId])
   useEffect(() => { window.localStorage.setItem('holo-openai-key', openaiApiKey) }, [openaiApiKey])
+  useEffect(() => { window.localStorage.setItem('holo-gemini-key', geminiApiKey) }, [geminiApiKey])
+  useEffect(() => { window.localStorage.setItem('holo-ai-provider', aiProvider) }, [aiProvider])
   useEffect(() => { window.localStorage.setItem('holo-openai-prompt', openaiPrompt) }, [openaiPrompt])
 
   useEffect(() => {
@@ -1075,11 +1312,11 @@ function App() {
     }
 
     const interval = window.setInterval(() => {
-      void refreshGitState(true)
+      void checkRemoteFreshnessAndGuardEditing(false, true)
     }, 60_000)
 
     return () => window.clearInterval(interval)
-  }, [gitState.isRepo, refreshGitState, rootPath])
+  }, [checkRemoteFreshnessAndGuardEditing, gitState.isRepo, rootPath])
 
   // Listen for update notifications from Electron
   useEffect(() => {
@@ -1144,24 +1381,17 @@ function App() {
       }
 
       try {
-        // Vérifier si le fichier est déjà ouvert dans les tabs actuels
-        const existingTab = openTabs.find((tab) => tab.path === filePath)
-        if (existingTab) {
-          setActiveTabPath(filePath)
-          setRecentFilePaths((prev) => [filePath, ...prev.filter((path) => path !== filePath)].slice(0, 20))
-          return
-        }
+        await checkRemoteFreshnessAndGuardEditing(true)
 
-        // Charger le fichier
         const nextContent = await holo.readFile(filePath)
         const stats = await holo.getPathStats(filePath).catch(() => null)
-        const newTab: OpenTab = {
+        const nextFile: OpenTab = {
           path: filePath,
           name: getBaseName(filePath),
           content: nextContent,
           isDirty: false,
         }
-        setOpenTabs((prev) => [...prev, newTab])
+        setActiveTab(nextFile)
 
         if (stats) {
           setPathStatsByPath((prev) => ({
@@ -1176,8 +1406,35 @@ function App() {
         window.alert((error as Error).message)
       }
     },
-    [getHoloApi, openTabs],
+    [checkRemoteFreshnessAndGuardEditing, getHoloApi],
   )
+
+  useEffect(() => {
+    if (startupNavigationDoneRef.current) {
+      return
+    }
+
+    const params = new URLSearchParams(window.location.search)
+    const rootPathParam = params.get('rootPath')?.trim()
+    const filePathParam = params.get('filePath')?.trim()
+
+    startupNavigationDoneRef.current = true
+
+    if (!rootPathParam) {
+      return
+    }
+
+    void (async () => {
+      try {
+        await openRecentFolder(rootPathParam)
+        if (filePathParam) {
+          await openFile(filePathParam)
+        }
+      } catch (error) {
+        console.error('Failed startup navigation:', error)
+      }
+    })()
+  }, [openFile, openRecentFolder])
 
   const onSelectNode = useCallback(
     async (node: TreeNode) => {
@@ -1215,11 +1472,7 @@ function App() {
 
     await holo.writeFile(activeTab.path, activeTab.content)
     const stats = await holo.getPathStats(activeTab.path).catch(() => null)
-    setOpenTabs((prev) =>
-      prev.map((tab) =>
-        tab.path === activeTab.path ? { ...tab, isDirty: false } : tab,
-      ),
-    )
+    setActiveTab((prev) => (prev ? { ...prev, isDirty: false } : prev))
 
     if (stats) {
       setPathStatsByPath((prev) => ({
@@ -1235,10 +1488,7 @@ function App() {
     if (gitState.isRepo) {
       setSaveStatus('saving')
       try {
-        const displayPath = activeTab.path
-          .replace(/^\//, '')
-          .replace(/\.md$/, '')
-        const commitMessage = `update/add ${displayPath}`
+        const commitMessage = buildAutoCommitMessage(appAuthor, 'UPDATE', rootPath, activeTab.path)
         const result = await holo.gitCommit(commitMessage)
         setSaveStatus(result.pushed ? 'synced' : 'local')
       } catch (error) {
@@ -1249,23 +1499,17 @@ function App() {
         setTimeout(() => setSaveStatus('idle'), 3000)
       }
     }
-  }, [activeTab, getHoloApi, refreshGitState, refreshTree, gitState.isRepo])
+  }, [activeTab, appAuthor, getHoloApi, refreshGitState, refreshTree, gitState.isRepo, rootPath])
 
   const updateActiveTabContent = useCallback(
     (nextContent: string) => {
-      if (!activeTabPath) {
+      if (remoteEditBlock.isBlocked) {
         return
       }
 
-      setOpenTabs((prev) =>
-        prev.map((tab) =>
-          tab.path === activeTabPath
-            ? { ...tab, content: nextContent, isDirty: true }
-            : tab,
-        ),
-      )
+      setActiveTab((prev) => (prev ? { ...prev, content: nextContent, isDirty: true } : prev))
     },
-    [activeTabPath],
+    [remoteEditBlock.isBlocked],
   )
 
   const updateEditableHeader = useCallback(
@@ -1291,15 +1535,21 @@ function App() {
 
   const runSearch = useCallback(async (query: string) => {
     const holo = getHoloApi()
-    if (!holo || !query.trim() || allFilePaths.length === 0) {
+    if (!holo || !query.trim()) {
       setSearchResults([])
       return
     }
+
+    if (allFilePaths.length === 0 && archivedFiles.length === 0) {
+      setSearchResults([])
+      return
+    }
+
     setIsSearching(true)
     const needle = query.trim().toLowerCase()
     const isTagSearch = needle.startsWith('#')
     const tagNeedle = isTagSearch ? needle.slice(1) : needle
-    const results: Array<{ path: string; name: string; excerpt: string; matchType: 'content' | 'tag' }> = []
+    const results: SearchResultItem[] = []
 
     // Read files in parallel batches of 10
     const BATCH = 10
@@ -1334,9 +1584,57 @@ function App() {
       }))
     }
 
+    for (const archivedFile of archivedFiles) {
+      try {
+        const content: string = await holo.readFile(archivedFile.archivedPath)
+        const header = getEditableMarkdownHeader(content)
+        const name = getBaseName(archivedFile.originalPath).replace(/\.md$/i, '')
+        const archiveLabel = `📦 Archivé (${getCommitTargetPath(rootPath, archivedFile.originalPath)})`
+
+        const tagMatch = header.tags.some((t) => t.toLowerCase().includes(tagNeedle))
+
+        if (tagMatch) {
+          results.push({
+            path: archivedFile.archivedPath,
+            name,
+            excerpt: `${archiveLabel} · ${header.tags.map((t) => `#${t}`).join(' ')}`,
+            matchType: 'archive',
+            isArchived: true,
+            archivedPath: archivedFile.archivedPath,
+            originalPath: archivedFile.originalPath,
+          })
+          continue
+        }
+
+        if (!isTagSearch) {
+          const body = splitMarkdownFrontMatter(content).body
+          const idx = body.toLowerCase().indexOf(needle)
+
+          if (idx >= 0) {
+            const start = Math.max(0, idx - 40)
+            const end = Math.min(body.length, idx + needle.length + 80)
+            const raw = body.slice(start, end).replace(/\n/g, ' ').replace(/#{1,6}\s/g, '')
+            const excerpt = `${archiveLabel} · ${(start > 0 ? '…' : '') + raw + (end < body.length ? '…' : '')}`
+
+            results.push({
+              path: archivedFile.archivedPath,
+              name,
+              excerpt,
+              matchType: 'archive',
+              isArchived: true,
+              archivedPath: archivedFile.archivedPath,
+              originalPath: archivedFile.originalPath,
+            })
+          }
+        }
+      } catch {
+        // ignore unreadable archived files
+      }
+    }
+
     setSearchResults(results)
     setIsSearching(false)
-  }, [allFilePaths, getHoloApi])
+  }, [allFilePaths, archivedFiles, getHoloApi, rootPath])
 
   const updateActiveTabBody = useCallback(
     (nextBody: string) => {
@@ -1551,22 +1849,16 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (editorMode !== 'wysiwyg' || !activeTabPath) {
+    if (editorMode !== 'wysiwyg' || !activeTabPath || !activeTab) {
       lastWysiwygSyncedTabRef.current = null
       return
     }
 
-    const tab = openTabs.find((item) => item.path === activeTabPath)
-
-    if (!tab) {
-      return
-    }
-
     if (lastWysiwygSyncedTabRef.current !== activeTabPath) {
-      syncWysiwygFromMarkdown(splitMarkdownFrontMatter(tab.content).body)
+      syncWysiwygFromMarkdown(splitMarkdownFrontMatter(activeTab.content).body)
       lastWysiwygSyncedTabRef.current = activeTabPath
     }
-  }, [activeTabPath, editorMode, openTabs, syncWysiwygFromMarkdown])
+  }, [activeTab, activeTabPath, editorMode, syncWysiwygFromMarkdown])
 
   useEffect(() => {
     if (!pendingTitleFocusPath || activeTabPath !== pendingTitleFocusPath) {
@@ -1708,6 +2000,63 @@ function App() {
     return data.choices?.[0]?.message?.content ?? ''
   }, [openaiApiKey, openaiPrompt])
 
+  const askGemini = useCallback(async (userMessage: string): Promise<string> => {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: openaiPrompt }],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: userMessage }],
+          },
+        ],
+      }),
+    })
+
+    if (!response.ok) throw new Error(`Gemini ${response.status}`)
+
+    const data = await response.json() as {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{ text?: string }>
+        }
+      }>
+    }
+
+    const firstCandidateParts = data.candidates?.[0]?.content?.parts ?? []
+    return firstCandidateParts.map((part) => part.text ?? '').join('').trim()
+  }, [geminiApiKey, openaiPrompt])
+
+  const askAi = useCallback(async (userMessage: string): Promise<string> => {
+    const hasOpenAi = openaiApiKey.trim().length > 0
+    const hasGemini = geminiApiKey.trim().length > 0
+
+    if (!hasOpenAi && !hasGemini) {
+      throw new Error('NO_PROVIDER')
+    }
+
+    if (aiProvider === 'openai') {
+      if (!hasOpenAi) throw new Error('OPENAI_KEY_MISSING')
+      return askOpenAI(userMessage)
+    }
+
+    if (aiProvider === 'gemini') {
+      if (!hasGemini) throw new Error('GEMINI_KEY_MISSING')
+      return askGemini(userMessage)
+    }
+
+    if (hasGemini) {
+      return askGemini(userMessage)
+    }
+
+    return askOpenAI(userMessage)
+  }, [aiProvider, askGemini, askOpenAI, geminiApiKey, openaiApiKey])
+
   const submitAiDialog = useCallback(async () => {
     if (!aiDialog) return
     setAiDialog((prev) => prev ? { ...prev, isLoading: true } : null)
@@ -1715,7 +2064,7 @@ function App() {
       ? `Texte sélectionné :\n${aiDialog.selectedText}\n\nInstruction : ${aiDialog.prompt}`
       : aiDialog.prompt
     try {
-      const result = await askOpenAI(userMessage)
+      const result = await askAi(userMessage)
       const html = markdownToHtml(result)
       const editor = wysiwygEditorRef.current
       if (!editor) return
@@ -1735,15 +2084,28 @@ function App() {
       aiSavedRangeRef.current = null
     } catch (err) {
       console.error('AI error', err)
+      const normalizedError = err instanceof Error ? err.message : String(err)
+      if (normalizedError === 'NO_PROVIDER') {
+        setAiDialog((prev) => prev ? { ...prev, isLoading: false, error: 'Ajoute une clé OpenAI ou Gemini dans les Paramètres.' } : null)
+        return
+      }
+      if (normalizedError === 'OPENAI_KEY_MISSING') {
+        setAiDialog((prev) => prev ? { ...prev, isLoading: false, error: 'Le provider sélectionné est OpenAI mais la clé est vide.' } : null)
+        return
+      }
+      if (normalizedError === 'GEMINI_KEY_MISSING') {
+        setAiDialog((prev) => prev ? { ...prev, isLoading: false, error: 'Le provider sélectionné est Gemini mais la clé est vide.' } : null)
+        return
+      }
       const status = err instanceof Error ? (err.message.match(/\d+/)?.[0] ?? '') : ''
       const msg = status === '429'
-        ? 'Quota d\'API dépassé (429). Vérifie ta limite OpenAI.'
+        ? 'Quota d\'API dépassé (429). Vérifie ta limite OpenAI/Gemini.'
         : status === '401'
-        ? 'Clé API invalide (401). Vérifie les Paramètres.'
-        : `Erreur OpenAI${status ? ` (${status})` : ''}`
+        ? 'Clé API invalide (401). Vérifie les Paramètres IA.'
+        : `Erreur IA${status ? ` (${status})` : ''}`
       setAiDialog((prev) => prev ? { ...prev, isLoading: false, error: msg } : null)
     }
-  }, [aiDialog, askOpenAI, markdownToHtml, turndownService, updateActiveTabBody])
+  }, [aiDialog, askAi, markdownToHtml, turndownService, updateActiveTabBody])
 
   const executeSlashCommand = useCallback((cmd: SlashCommand) => {
     const editor = wysiwygEditorRef.current
@@ -1965,7 +2327,37 @@ function App() {
           const base64 = dataUrl.split(',')[1]
           if (!base64) return
           try {
-            const result = await holo.saveImage(file.name, base64)
+            const result = await holo.saveImage(file.name, base64, {
+              mode: imageStorageMode,
+              azure: imageStorageMode === 'azure'
+                ? {
+                  containerUrl: azureBlobContainerUrl,
+                  sasToken: azureBlobSasToken,
+                }
+                : undefined,
+              s3: imageStorageMode === 's3'
+                ? {
+                  region: s3Region,
+                  bucket: s3Bucket,
+                  accessKeyId: s3AccessKeyId,
+                  secretAccessKey: s3SecretAccessKey,
+                  endpoint: s3Endpoint,
+                  publicBaseUrl: s3PublicBaseUrl,
+                }
+                : undefined,
+              dropbox: imageStorageMode === 'dropbox'
+                ? {
+                  accessToken: dropboxAccessToken,
+                  folderPath: dropboxFolderPath,
+                }
+                : undefined,
+              gdrive: imageStorageMode === 'gdrive'
+                ? {
+                  accessToken: gdriveAccessToken,
+                  folderId: gdriveFolderId,
+                }
+                : undefined,
+            })
             insertFn(`![${file.name}](${result.relativePath})`, result.relativePath, dataUrl)
           } catch (err) {
             console.error('saveImage error', err)
@@ -1974,7 +2366,22 @@ function App() {
         reader.readAsDataURL(file)
       }
     },
-    [getHoloApi],
+    [
+      azureBlobContainerUrl,
+      azureBlobSasToken,
+      getHoloApi,
+      imageStorageMode,
+      s3AccessKeyId,
+      s3Bucket,
+      s3Endpoint,
+      s3PublicBaseUrl,
+      s3Region,
+      s3SecretAccessKey,
+      dropboxAccessToken,
+      dropboxFolderPath,
+      gdriveAccessToken,
+      gdriveFolderId,
+    ],
   )
 
   const onWysiwygDrop = useCallback(
@@ -1988,8 +2395,11 @@ function App() {
       const editor = wysiwygEditorRef.current
       if (!editor) return
       void handleImageFiles(imageFiles, (_md, relativePath, previewDataUrl) => {
+        const isExternal = /^https?:\/\//i.test(relativePath)
         const safePath = relativePath.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-        const imgHtml = `<img data-src="${safePath}" src="${previewDataUrl}" alt="" style="max-width:100%;border-radius:4px">`
+        const imgHtml = isExternal
+          ? `<img src="${safePath}" alt="" style="max-width:100%;border-radius:4px">`
+          : `<img data-src="${safePath}" src="${previewDataUrl}" alt="" style="max-width:100%;border-radius:4px">`
         document.execCommand('insertHTML', false, imgHtml)
         const md = turndownService.turndown(editor.innerHTML)
         updateActiveTabBody(md)
@@ -2018,7 +2428,7 @@ function App() {
   const onWysiwygInput = useCallback(() => {
     const editor = wysiwygEditorRef.current
 
-    if (!editor || isSyncingWysiwygRef.current) {
+    if (!editor || isSyncingWysiwygRef.current || remoteEditBlock.isBlocked) {
       return
     }
 
@@ -2032,11 +2442,21 @@ function App() {
     const markdown = turndownService.turndown(editor.innerHTML)
     updateActiveTabBody(markdown)
     refreshTableSummaries()
-  }, [getBlockTextBeforeCursor, refreshTableSummaries, slashMenu, turndownService, updateActiveTabBody])
+  }, [getBlockTextBeforeCursor, refreshTableSummaries, remoteEditBlock.isBlocked, slashMenu, turndownService, updateActiveTabBody])
   const onWysiwygKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const editor = wysiwygEditorRef.current
       if (!editor) return
+
+      if (remoteEditBlock.isBlocked) {
+        const allowedShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c'
+
+        if (!allowedShortcut) {
+          event.preventDefault()
+        }
+
+        return
+      }
 
       // Ne traiter que les événements venant du contentEditable WYSIWYG lui-même
       // Ignorer ceux qui viennent des inputs ou autres éléments
@@ -2394,7 +2814,7 @@ function App() {
         }
       }
     },
-    [deleteCurrentBlockContents, executeSlashCommand, getBlockTextBeforeCursor, slashMenu, slashMenuIndex, turndownService, updateActiveTabBody],
+    [deleteCurrentBlockContents, executeSlashCommand, getBlockTextBeforeCursor, remoteEditBlock.isBlocked, slashMenu, slashMenuIndex, turndownService, updateActiveTabBody],
   )
 
   // Selection change → show/hide floating popup
@@ -2460,20 +2880,6 @@ function App() {
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [])
-
-  // Tab bar: redirect vertical wheel to horizontal scroll
-  useEffect(() => {
-    const el = tabBarScrollRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY !== 0) {
-        e.preventDefault()
-        el.scrollLeft += e.deltaY
-      }
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  })
 
   const formatReadonlyDate = useCallback((value?: string | null) => {
     if (!value) {
@@ -2658,49 +3064,6 @@ function App() {
     updateActiveTabBody(turndownService.turndown(editor.innerHTML))
   }, [turndownService, updateActiveTabBody])
 
-  const closeTab = useCallback(
-    (tabPath: string) => {
-      const tabIndex = openTabs.findIndex((tab) => tab.path === tabPath)
-
-      if (tabIndex < 0) {
-        return
-      }
-
-      const nextActiveTab =
-        openTabs[tabIndex + 1]
-        ?? openTabs[tabIndex - 1]
-        ?? null
-
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== tabPath))
-
-      if (activeTabPath === tabPath) {
-        setActiveTabPath(nextActiveTab?.path ?? null)
-      }
-    },
-    [activeTabPath, openTabs],
-  )
-
-  const closeTabsForPath = useCallback(
-    (targetPath: string) => {
-      const isActiveTabRemoved = activeTabPath ? isSameOrChildPath(targetPath, activeTabPath) : false
-
-      if (isActiveTabRemoved && activeTabPath) {
-        const activeIndex = openTabs.findIndex((tab) => tab.path === activeTabPath)
-        const nextActiveTab =
-          openTabs
-            .slice(activeIndex + 1)
-            .find((tab) => !isSameOrChildPath(targetPath, tab.path))
-          ?? [...openTabs.slice(0, activeIndex)].reverse().find((tab) => !isSameOrChildPath(targetPath, tab.path))
-          ?? null
-
-        setActiveTabPath(nextActiveTab?.path ?? null)
-      }
-
-      setOpenTabs((prev) => prev.filter((tab) => !isSameOrChildPath(targetPath, tab.path)))
-    },
-    [activeTabPath, openTabs],
-  )
-
   const autoCommitStructuralChange = useCallback(async (commitMessage: string) => {
     if (!gitState.isRepo || !window.holo) {
       return
@@ -2725,12 +3088,10 @@ function App() {
         const result = await holo.movePath(sourcePath, targetDirectoryPath)
         const nextPath = result.newPath
 
-        setOpenTabs((prev) =>
-          prev.map((tab) =>
-            isSameOrChildPath(sourcePath, tab.path)
-              ? { ...tab, path: tab.path.replace(sourcePath, nextPath) }
-              : tab,
-          ),
+        setActiveTab((prev) =>
+          prev && isSameOrChildPath(sourcePath, prev.path)
+            ? { ...prev, path: prev.path.replace(sourcePath, nextPath) }
+            : prev,
         )
 
         if (selectedPath && isSameOrChildPath(sourcePath, selectedPath)) {
@@ -2743,7 +3104,9 @@ function App() {
 
         await refreshTree()
         await refreshGitState(false)
-        await autoCommitStructuralChange(`move ${getBaseName(sourcePath)} -> ${getBaseName(targetDirectoryPath)}`)
+        await autoCommitStructuralChange(
+          buildAutoCommitMessage(appAuthor, 'MOVE', rootPath, nextPath, `FROM ${getCommitTargetPath(rootPath, sourcePath)}`),
+        )
       } catch (error) {
         window.alert((error as Error).message)
       } finally {
@@ -2751,7 +3114,7 @@ function App() {
         setDropTargetPath(null)
       }
     },
-    [activeTabPath, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, selectedPath],
+    [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath, selectedPath],
   )
 
   useEffect(() => {
@@ -2918,39 +3281,41 @@ function App() {
         const filename = value.endsWith('.md') ? value : `${value}.md`
         const newFilePath = `${nameDialog.targetDirectoryPath}/${filename}`
         await holo.createFile(nameDialog.targetDirectoryPath, filename)
-        commitMessage = `create ${filename}`
+        commitMessage = buildAutoCommitMessage(appAuthor, 'ADD', rootPath, newFilePath)
         
         // Auto-open the created file
         const content = await holo.readFile(newFilePath)
-        setOpenTabs((prev) => [
-          ...prev,
-          {
-            path: newFilePath,
-            name: filename.replace(/\.md$/, ''),
-            content,
-            isDirty: false,
-          },
-        ])
+        setActiveTab({
+          path: newFilePath,
+          name: filename.replace(/\.md$/, ''),
+          content,
+          isDirty: false,
+        })
         setActiveTabPath(newFilePath)
         setPendingTitleFocusPath(newFilePath)
       } else if (nameDialog.mode === 'create-directory') {
+        const newDirectoryPath = `${nameDialog.targetDirectoryPath}/${value}`
         await holo.createDirectory(nameDialog.targetDirectoryPath, value)
-        commitMessage = `create folder ${value}`
+        commitMessage = buildAutoCommitMessage(appAuthor, 'ADD_DIR', rootPath, newDirectoryPath)
       } else if (nameDialog.mode === 'rename') {
         const renameTargetPath = nameDialog.targetPath
         const result = await holo.renamePath(renameTargetPath, value)
-        commitMessage = `rename ${getBaseName(renameTargetPath)} -> ${getBaseName(result.newPath)}`
+        commitMessage = buildAutoCommitMessage(
+          appAuthor,
+          'RENAME',
+          rootPath,
+          result.newPath,
+          `FROM ${getCommitTargetPath(rootPath, renameTargetPath)}`,
+        )
 
-        setOpenTabs((prev) =>
-          prev.map((tab) =>
-            isSameOrChildPath(renameTargetPath, tab.path)
-              ? {
-                ...tab,
-                path: tab.path.replace(renameTargetPath, result.newPath),
-                name: getBaseName(tab.path.replace(renameTargetPath, result.newPath)),
-              }
-              : tab,
-          ),
+        setActiveTab((prev) =>
+          prev && isSameOrChildPath(renameTargetPath, prev.path)
+            ? {
+              ...prev,
+              path: prev.path.replace(renameTargetPath, result.newPath),
+              name: getBaseName(prev.path.replace(renameTargetPath, result.newPath)),
+            }
+            : prev,
         )
 
         if (selectedPath && isSameOrChildPath(renameTargetPath, selectedPath)) {
@@ -2971,7 +3336,85 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath, autoCommitStructuralChange])
+  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath, autoCommitStructuralChange, appAuthor])
+
+  const archivePathTarget = useCallback(async (targetPath: string) => {
+    if (!rootPath) {
+      return
+    }
+
+    const confirmed = window.confirm('Archiver ce fichier ?')
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      const result = await holo.archivePath(targetPath)
+
+      if (activeTabPath && isSameOrChildPath(targetPath, activeTabPath)) {
+        setActiveTab(null)
+        setActiveTabPath(null)
+      }
+
+      await refreshTree()
+      await refreshArchivedFiles()
+      await refreshGitState(false)
+      await autoCommitStructuralChange(
+        buildAutoCommitMessage(
+          appAuthor,
+          'ARCHIVE',
+          rootPath,
+          result.archivedPath,
+          `FROM ${getCommitTargetPath(rootPath, targetPath)}`,
+        ),
+      )
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
+
+  const restoreArchivedPathTarget = useCallback(async (archivedPath: string) => {
+    if (!rootPath) {
+      return
+    }
+
+    const confirmed = window.confirm('Récupérer ce fichier archivé ?')
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      const result = await holo.restoreArchivedPath(archivedPath)
+      await refreshTree()
+      await refreshArchivedFiles()
+      await refreshGitState(false)
+      await autoCommitStructuralChange(
+        buildAutoCommitMessage(
+          appAuthor,
+          'RESTORE',
+          rootPath,
+          result.restoredPath,
+          `FROM ${getCommitTargetPath(rootPath, archivedPath)}`,
+        ),
+      )
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
 
   const deletePathTarget = useCallback(async (targetPath: string) => {
     if (!rootPath || targetPath === rootPath) {
@@ -2992,17 +3435,20 @@ function App() {
       }
 
       await holo.deletePath(targetPath)
-      closeTabsForPath(targetPath)
+      if (activeTabPath && isSameOrChildPath(targetPath, activeTabPath)) {
+        setActiveTab(null)
+        setActiveTabPath(null)
+      }
 
       setSelectedPath(rootPath)
       setSelectedType('directory')
       await refreshTree()
       await refreshGitState(false)
-      await autoCommitStructuralChange(`delete ${getBaseName(targetPath)}`)
+      await autoCommitStructuralChange(buildAutoCommitMessage(appAuthor, 'DELETE', rootPath, targetPath))
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [autoCommitStructuralChange, closeTabsForPath, getHoloApi, refreshGitState, refreshTree, rootPath])
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath])
 
   const openTreeContextMenu = useCallback((node: TreeNode, position: { x: number; y: number }) => {
     setSelectedPath(node.path)
@@ -3090,13 +3536,14 @@ function App() {
     try {
       await holo.gitPull()
       await refreshGitState(true)
+      await checkRemoteFreshnessAndGuardEditing(false)
     } catch (error) {
       window.alert((error as Error).message)
       await refreshGitState(false)
     } finally {
       setIsGitBusy(false)
     }
-  }, [getHoloApi, refreshGitState])
+  }, [checkRemoteFreshnessAndGuardEditing, getHoloApi, refreshGitState])
 
   const fetchChanges = useCallback(async () => {
     const holo = getHoloApi()
@@ -3237,6 +3684,23 @@ function App() {
     await holo.closeWindow()
   }, [getHoloApi])
 
+  const openFileInNewWindow = useCallback(async (filePath: string) => {
+    if (!rootPath) {
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) {
+      return
+    }
+
+    try {
+      await holo.openFileInNewWindow({ rootPath, filePath })
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [getHoloApi, rootPath])
+
   const openCloneDialog = useCallback(() => {
     setCloneDialog({
       repoUrl: '',
@@ -3331,7 +3795,8 @@ function App() {
     setSelectedPath(null)
     setSelectedType(null)
     setExpandedDirectories(new Set())
-    setOpenTabs([])
+    setArchivedFiles([])
+    setActiveTab(null)
     setActiveTabPath(null)
     setGitState(DEFAULT_GIT_STATE)
     setSyncFeedback(DEFAULT_SYNC_FEEDBACK)
@@ -3351,7 +3816,7 @@ function App() {
           <div className="flex items-end gap-2">
             <img src="./logo.png" height={40} width={120} alt="logo" />
             {showTypeRBadge && <span className="text-sm font-bold text-red-500">TypeR</span>}
-            {appVersion && <span className="text-[10px] text-white/35">v{appVersion}</span>}
+            {appVersion && <span className="text-[10px] text-white/35 pb-3 -ml-4">v{appVersion}</span>}
           </div>
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
@@ -3409,9 +3874,9 @@ function App() {
             onClick={() => setActiveSidebar('files')}
           >
             <i className="fa-jelly-duo fa-regular fa-folder text-2xl" />
-            {openTabs.length > 0 && (
+            {activeTab && (
               <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-[#242527] border-2 border-[#7B61FF]/70 text-[10px] font-bold text-white flex items-center justify-center">
-                {openTabs.length}
+                1
               </div>
             )}
           </div>
@@ -3750,13 +4215,33 @@ function App() {
                     key={result.path}
                     className="flex flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-white/5 transition-colors border border-transparent hover:border-white/8"
                     onClick={() => {
+                      if (result.isArchived) {
+                        window.alert('Ce fichier est archivé. Fais un clic droit puis “Récupérer depuis archive”.')
+                        return
+                      }
+
                       const node: TreeNode = { name: getBaseName(result.path), path: result.path, type: 'file' }
                       onSelectNode(node)
                       setActiveSidebar('files')
                     }}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      openTreeContextMenu(
+                        {
+                          name: getBaseName(result.path),
+                          path: result.path,
+                          type: 'file',
+                          archivedOriginalPath: result.isArchived ? result.originalPath : undefined,
+                        },
+                        { x: event.clientX, y: event.clientY },
+                      )
+                    }}
                   >
-                    <span className="text-sm font-medium text-white truncate">{result.name}</span>
-                    <span className={`text-xs truncate ${result.matchType === 'tag' ? 'text-[#9d8bff]' : 'text-white/40'}`}>
+                    <span className="text-sm font-medium text-white truncate">
+                      {result.name}
+                      {result.isArchived && <span className="ml-2 text-[10px] text-amber-300">ARCHIVE</span>}
+                    </span>
+                    <span className={`text-xs truncate ${result.matchType === 'tag' ? 'text-[#9d8bff]' : result.matchType === 'archive' ? 'text-amber-200/80' : 'text-white/40'}`}>
                       {result.excerpt}
                     </span>
                   </button>
@@ -3943,51 +4428,6 @@ function App() {
 
       {/* Zone d'édition principale */}
       <section className="flex min-w-0 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
-          {/* Tab bar */}
-          <div className="overflow-hidden border-b border-white/10 bg-[#242527]">
-            {openTabs.length === 0 ? (
-              <div className="px-4 py-2 text-xs text-white/40">
-                Aucun fichier ouvert
-              </div>
-            ) : (
-              <div ref={tabBarScrollRef} className="overflow-x-auto">
-              <div className="flex w-max">
-                {openTabs.map((tab) => (
-                  <button
-                    key={tab.path}
-                    className={`group flex shrink-0 items-center gap-2 border-r border-white/5 px-3 py-2 text-xs font-medium transition-colors ${
-                      activeTabPath === tab.path
-                        ? 'bg-[#1f2021] text-white'
-                        : 'text-white/60 hover:text-white/80 hover:bg-white/5'
-                    }`}
-                    onClick={() => setActiveTabPath(tab.path)}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      setTabContextMenu({ x: e.clientX, y: e.clientY, tabPath: tab.path })
-                    }}
-                  >
-                    <span className="truncate max-w-[150px]">
-                      {(() => { const ic = getEditableMarkdownHeader(tab.content).icon; return ic ? <span className="mr-1">{ic}</span> : null })()}
-                      {tab.name}
-                    </span>
-                    {tab.isDirty && <span className="text-xs">•</span>}
-                    <button
-                      className="ml-1 rounded px-1 opacity-0 hover:bg-white/20 group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        closeTab(tab.path)
-                      }}
-                      title="Fermer"
-                    >
-                      <i className="fa-solid fa-xmark text-[9px]" />
-                    </button>
-                  </button>
-                ))}
-              </div>
-              </div>
-            )}
-          </div>
-
           {/* Éditeur */}
           <div className="flex-1 min-h-0 flex">
             <div className="flex-1 min-w-0 flex flex-col">
@@ -4129,6 +4569,7 @@ function App() {
                         ref={titleInputRef}
                         className="w-full bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
                         value={editableHeader.title}
+                        readOnly={remoteEditBlock.isBlocked}
                         onChange={(event) => updateEditableHeader('title', event.target.value)}
                         placeholder="Sans titre"
                       />
@@ -4139,6 +4580,7 @@ function App() {
                       className="mb-5 w-full resize-none bg-transparent text-sm leading-7 text-white/55 outline-none placeholder:text-white/20"
                       rows={2}
                       value={editableHeader.description}
+                      readOnly={remoteEditBlock.isBlocked}
                       onChange={(event) => updateEditableHeader('description', event.target.value)}
                       placeholder="Ajouter une description…"
                     />
@@ -4150,6 +4592,7 @@ function App() {
                         <input
                           className="bg-transparent outline-none placeholder:text-white/20 hover:text-white/60 focus:text-white/80"
                           value={editableHeader.author}
+                          readOnly={remoteEditBlock.isBlocked}
                           onChange={(event) => updateEditableHeader('author', event.target.value)}
                           placeholder="Auteur"
                           size={Math.max(editableHeader.author.length, 6)}
@@ -4175,6 +4618,7 @@ function App() {
                           {tag}
                           <button
                             className="ml-0.5 text-[#9d8bff]/50 hover:text-[#9d8bff] transition-colors"
+                            disabled={remoteEditBlock.isBlocked}
                             onClick={() => updateTags(editableHeader.tags.filter((t) => t !== tag))}
                             title="Supprimer ce tag"
                           >
@@ -4188,6 +4632,7 @@ function App() {
                           className="rounded-full border border-[#7B61FF]/40 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff] outline-none placeholder:text-[#9d8bff]/30 w-24"
                           placeholder="Tag…"
                           value={tagInput}
+                          readOnly={remoteEditBlock.isBlocked}
                           onChange={(e) => setTagInput(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ',') {
@@ -4216,6 +4661,7 @@ function App() {
                       ) : (
                         <button
                           className="flex items-center gap-1 rounded-full border border-dashed border-white/15 px-2.5 py-0.5 text-xs text-white/25 hover:border-[#7B61FF]/40 hover:text-[#9d8bff] transition-colors"
+                          disabled={remoteEditBlock.isBlocked}
                           onClick={() => setShowTagInput(true)}
                         >
                           <i className="fa-solid fa-plus text-[9px]" />
@@ -4230,6 +4676,7 @@ function App() {
                       <textarea
                         className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25 select-text"
                         value={activeTabBody}
+                        readOnly={remoteEditBlock.isBlocked}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
                         onDrop={onRawDrop}
                         onDragEnter={onEditorDragEnter}
@@ -4242,7 +4689,7 @@ function App() {
                         <div
                           ref={wysiwygEditorRef}
                           className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
-                          contentEditable
+                          contentEditable={!remoteEditBlock.isBlocked}
                           suppressContentEditableWarning
                           spellCheck
                           onInput={onWysiwygInput}
@@ -4333,6 +4780,21 @@ function App() {
                         <div className="mt-5 text-right text-[9px] text-white/15 pointer-events-none select-none">
                           <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste · glisse une image
                         </div>
+                        {remoteEditBlock.isBlocked && (
+                          <div className="absolute inset-0 z-20 flex items-center justify-center rounded-md border border-amber-400/40 bg-[#111213]/85 px-4">
+                            <div className="max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-4 text-center">
+                              <p className="text-sm text-amber-200">{remoteEditBlock.message}</p>
+                              <button
+                                className="mt-3 rounded-md bg-[#7B61FF] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#6950f0]"
+                                onClick={() => {
+                                  void pullChanges()
+                                }}
+                              >
+                                Pull maintenant
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                       {isImageDragOverEditor && (
@@ -4372,7 +4834,7 @@ function App() {
                     >
                       <i className="fa-solid fa-link text-[10px]" />
                     </button>
-                    {openaiApiKey.trim() && (
+                    {hasAiProviderConfigured && (
                       <>
                         <div className="w-px h-4 bg-white/15 mx-0.5" />
                         <button
@@ -4530,7 +4992,7 @@ function App() {
 
                 {/* Slash command menu */}
                 {slashMenu && editorMode === 'wysiwyg' && (() => {
-                  const filtered = SLASH_COMMANDS.filter((c) => (!c.requiresApiKey || openaiApiKey.trim()) && matchesSlashQuery(c, slashMenu.query))
+                  const filtered = SLASH_COMMANDS.filter((c) => (!c.requiresApiKey || hasAiProviderConfigured) && matchesSlashQuery(c, slashMenu.query))
                   return filtered.length > 0 ? (
                     <div
                       className="fixed z-50 min-w-[200px] rounded-lg border border-white/15 bg-[#18191a] shadow-2xl p-1"
@@ -4540,19 +5002,22 @@ function App() {
                       {slashMenu.query === '' && (
                         <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-white/35">Insérer un bloc</p>
                       )}
-                      {filtered.map((cmd, idx) => (
-                        <button
-                          key={cmd.id}
-                          className={`flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-xs ${idx === slashMenuIndex ? 'bg-[#7B61FF]/25 text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
-                          onClick={() => executeSlashCommand(cmd)}
-                        >
-                          <span className="w-5 text-center text-[11px] text-[#9d8bff]">
-                            <i className={cmd.icon} />
-                          </span>
-                          <span className="flex-1 font-medium">{cmd.label}</span>
-                          <span className="text-[10px] text-white/30">{cmd.hint}</span>
-                        </button>
-                      ))}
+                      <div ref={slashMenuListRef} className="max-h-[102px] overflow-y-auto pr-0.5">
+                        {filtered.map((cmd, idx) => (
+                          <button
+                            key={cmd.id}
+                            data-slash-index={idx}
+                            className={`flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-xs ${idx === slashMenuIndex ? 'bg-[#7B61FF]/25 text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
+                            onClick={() => executeSlashCommand(cmd)}
+                          >
+                            <span className="w-5 text-center text-[11px] text-[#9d8bff]">
+                              <i className={cmd.icon} />
+                            </span>
+                            <span className="flex-1 font-medium">{cmd.label}</span>
+                            <span className="text-[10px] text-white/30">{cmd.hint}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : null
                 })()}
@@ -4708,83 +5173,103 @@ function App() {
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
+          {(() => {
+            const isArchivedContext = Boolean(contextMenu.node.archivedOriginalPath)
+
+            return (
+              <>
           <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-white/35">
-            {contextMenu.node.type === 'directory' ? 'Dossier' : 'Fichier'} · {contextMenu.node.name}
+            {contextMenu.node.type === 'directory' ? 'Dossier' : isArchivedContext ? 'Fichier archivé' : 'Fichier'} · {contextMenu.node.name}
           </div>
 
-          <button
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
-            onClick={() => runContextAction(() => openCreateFileDialog(contextMenu.node.path, contextMenu.node.type))}
-          >
-            <i className="fa-solid fa-file-plus w-4 text-center" />
-            Nouveau fichier
-          </button>
+          {!isArchivedContext && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                onClick={() => runContextAction(() => openCreateFileDialog(contextMenu.node.path, contextMenu.node.type))}
+              >
+                <i className="fa-solid fa-file-plus w-4 text-center" />
+                Nouveau fichier
+              </button>
 
-          <button
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
-            onClick={() => runContextAction(() => openCreateDirectoryDialog(contextMenu.node.path, contextMenu.node.type))}
-          >
-            <i className="fa-solid fa-folder-plus w-4 text-center" />
-            Nouveau dossier
-          </button>
+              <button
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                onClick={() => runContextAction(() => openCreateDirectoryDialog(contextMenu.node.path, contextMenu.node.type))}
+              >
+                <i className="fa-solid fa-folder-plus w-4 text-center" />
+                Nouveau dossier
+              </button>
+            </>
+          )}
 
           {contextMenu.node.path !== rootPath && (
             <>
               <div className="my-1 h-px bg-white/8" />
 
-              <button
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
-                onClick={() => runContextAction(() => openRenameDialog(contextMenu.node.path))}
-              >
-                <i className="fa-solid fa-pen w-4 text-center" />
-                Renommer
-              </button>
+              {!isArchivedContext && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                  onClick={() => runContextAction(() => openRenameDialog(contextMenu.node.path))}
+                >
+                  <i className="fa-solid fa-pen w-4 text-center" />
+                  Renommer
+                </button>
+              )}
 
-              <button
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                onClick={() => runContextAction(() => {
-                  void deletePathTarget(contextMenu.node.path)
-                })}
-              >
-                <i className="fa-solid fa-trash w-4 text-center" />
-                Supprimer
-              </button>
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                  onClick={() => runContextAction(() => {
+                    void openFileInNewWindow(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-up-right-from-square w-4 text-center" />
+                  Ouvrir dans une nouvelle fenêtre
+                </button>
+              )}
+
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-amber-200 hover:bg-amber-500/10 hover:text-amber-100"
+                  onClick={() => runContextAction(() => {
+                    void archivePathTarget(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-box-archive w-4 text-center" />
+                  Archiver
+                </button>
+              )}
+
+              {isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-emerald-200 hover:bg-emerald-500/10 hover:text-emerald-100"
+                  onClick={() => runContextAction(() => {
+                    void restoreArchivedPathTarget(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-box-open w-4 text-center" />
+                  Récupérer depuis archive
+                </button>
+              )}
+
+              {!isArchivedContext && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                  onClick={() => runContextAction(() => {
+                    void deletePathTarget(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-trash w-4 text-center" />
+                  Supprimer
+                </button>
+              )}
             </>
           )}
+              </>
+            )
+          })()}
         </div>
       )}
-
-      {/* Context menu onglets */}
-      {tabContextMenu && (() => {
-        const { x, y, tabPath } = tabContextMenu
-        const idx = openTabs.findIndex((t) => t.path === tabPath)
-        const close = () => setTabContextMenu(null)
-        return (
-          <>
-            <div className="fixed inset-0 z-40" onClick={close} />
-            <div
-              className="fixed z-50 min-w-[180px] rounded-lg border border-white/10 bg-[#1b1c1d] p-1.5 shadow-2xl"
-              style={{ left: x, top: y }}
-            >
-              {[
-                { label: 'Fermer', action: () => closeTab(tabPath) },
-                { label: 'Fermer les autres', action: () => { openTabs.filter((t) => t.path !== tabPath).forEach((t) => closeTab(t.path)) } },
-                { label: 'Fermer à droite', action: () => { openTabs.slice(idx + 1).forEach((t) => closeTab(t.path)) } },
-                { label: 'Fermer à gauche', action: () => { openTabs.slice(0, idx).forEach((t) => closeTab(t.path)) } },
-                { label: 'Fermer tout', action: () => { [...openTabs].forEach((t) => closeTab(t.path)) } },
-              ].map(({ label, action }) => (
-                <button
-                  key={label}
-                  className="w-full rounded px-3 py-1.5 text-left text-xs text-white/80 hover:bg-white/8 hover:text-white transition-colors"
-                  onClick={() => { action(); close() }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </>
-        )
-      })()}
 
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
@@ -4831,10 +5316,184 @@ function App() {
                 </div>
               </section>
 
+              <section>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Images</h3>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Stockage des images</label>
+                    <select
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                      value={imageStorageMode}
+                      onChange={(e) => setImageStorageMode(e.target.value as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive')}
+                    >
+                      <option value="local">Intégrer au dépôt Git (local)</option>
+                      <option value="azure">Azure Blob Storage (SAS)</option>
+                      <option value="s3">Amazon S3</option>
+                      <option value="dropbox">Dropbox</option>
+                      <option value="gdrive">Google Drive</option>
+                    </select>
+                  </div>
+
+                  {imageStorageMode === 'azure' && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Azure container URL</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="https://account.blob.core.windows.net/container"
+                          value={azureBlobContainerUrl}
+                          onChange={(e) => setAzureBlobContainerUrl(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Azure SAS token</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                          placeholder="sv=...&se=...&sig=..."
+                          type="password"
+                          value={azureBlobSasToken}
+                          onChange={(e) => setAzureBlobSasToken(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {imageStorageMode === 's3' && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">S3 Region</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="eu-west-3"
+                          value={s3Region}
+                          onChange={(e) => setS3Region(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">S3 Bucket</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="my-doc-images"
+                          value={s3Bucket}
+                          onChange={(e) => setS3Bucket(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Access Key ID</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                          placeholder="AKIA..."
+                          value={s3AccessKeyId}
+                          onChange={(e) => setS3AccessKeyId(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Secret Access Key</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                          placeholder="..."
+                          type="password"
+                          value={s3SecretAccessKey}
+                          onChange={(e) => setS3SecretAccessKey(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Endpoint (optionnel)</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="https://s3.eu-west-3.amazonaws.com"
+                          value={s3Endpoint}
+                          onChange={(e) => setS3Endpoint(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Public base URL (optionnel)</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="https://cdn.example.com"
+                          value={s3PublicBaseUrl}
+                          onChange={(e) => setS3PublicBaseUrl(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {imageStorageMode === 'dropbox' && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Dropbox access token</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                          placeholder="sl.B..."
+                          type="password"
+                          value={dropboxAccessToken}
+                          onChange={(e) => setDropboxAccessToken(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Dropbox dossier (optionnel)</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="/holo-images"
+                          value={dropboxFolderPath}
+                          onChange={(e) => setDropboxFolderPath(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {imageStorageMode === 'gdrive' && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Google Drive access token</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                          placeholder="ya29...."
+                          type="password"
+                          value={gdriveAccessToken}
+                          onChange={(e) => setGdriveAccessToken(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-white/50">Google Drive folder ID (optionnel)</label>
+                        <input
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                          placeholder="1AbCdEf..."
+                          value={gdriveFolderId}
+                          onChange={(e) => setGdriveFolderId(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+
               {/* Section IA */}
               <section>
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Intelligence artificielle</h3>
                 <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Provider IA</label>
+                    <select
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                      value={aiProvider}
+                      onChange={(e) => setAiProvider(e.target.value as 'auto' | 'openai' | 'gemini')}
+                    >
+                      <option value="auto">Auto (Gemini puis OpenAI)</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="openai">OpenAI</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-white/50">Clé API Gemini</label>
+                    <input
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                      placeholder="AIza…"
+                      type="password"
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                    />
+                  </div>
                   <div>
                     <label className="mb-1 block text-xs text-white/50">Clé API OpenAI</label>
                     <input

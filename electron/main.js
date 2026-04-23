@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, MenuItem, dialog, ipcMain, shell } from 'electron'
 import updaterPkg from 'electron-updater'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 
 const { autoUpdater } = updaterPkg
 import { promises as fs } from 'node:fs'
@@ -8,6 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import crypto from 'node:crypto'
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -15,6 +16,7 @@ const isDev = !app.isPackaged
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
 const MAX_RECENT_FOLDERS = 10
+const ARCHIVE_DIR_NAME = '.archive'
 let updateState = { available: false, downloading: false, ready: false }
 
 function getRecentFoldersFilePath() {
@@ -133,6 +135,54 @@ function sanitizeName(name) {
   return trimmed
 }
 
+function getArchiveRootPath() {
+  const rootPath = ensureRootPath()
+  return path.join(rootPath, ARCHIVE_DIR_NAME)
+}
+
+function getArchiveRelativePathFromOriginal(targetPath) {
+  const rootPath = ensureRootPath()
+  const relative = path.relative(rootPath, targetPath)
+
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Chemin de fichier invalide pour archivage.')
+  }
+
+  return relative
+}
+
+function getOriginalPathFromArchivePath(archivePath) {
+  const rootPath = ensureRootPath()
+  const archiveRoot = getArchiveRootPath()
+  const relativeFromArchive = path.relative(archiveRoot, archivePath)
+
+  if (!relativeFromArchive || relativeFromArchive.startsWith('..') || path.isAbsolute(relativeFromArchive)) {
+    throw new Error('Chemin archivé invalide.')
+  }
+
+  return path.join(rootPath, relativeFromArchive)
+}
+
+async function collectMarkdownFilesRecursively(startDirectory) {
+  const entries = await fs.readdir(startDirectory, { withFileTypes: true })
+  const results = []
+
+  for (const entry of entries) {
+    const fullPath = path.join(startDirectory, entry.name)
+
+    if (entry.isDirectory()) {
+      results.push(...(await collectMarkdownFilesRecursively(fullPath)))
+      continue
+    }
+
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+      results.push(fullPath)
+    }
+  }
+
+  return results
+}
+
 function getRepoNameFromUrl(rawUrl) {
   const cleaned = String(rawUrl ?? '').trim().replace(/\/+$/, '')
 
@@ -145,6 +195,338 @@ function getRepoNameFromUrl(rawUrl) {
   const safeName = sanitizeName(withoutGit)
 
   return safeName
+}
+
+function getImageMimeTypeFromExtension(extension) {
+  const ext = extension.toLowerCase()
+
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.gif') return 'image/gif'
+  if (ext === '.webp') return 'image/webp'
+  if (ext === '.svg') return 'image/svg+xml'
+  if (ext === '.bmp') return 'image/bmp'
+  if (ext === '.ico') return 'image/x-icon'
+  if (ext === '.avif') return 'image/avif'
+  return 'image/png'
+}
+
+function normalizeAzureContainerUrl(rawUrl) {
+  let parsed
+
+  try {
+    parsed = new URL(String(rawUrl ?? '').trim())
+  } catch {
+    throw new Error('URL du container Azure invalide.')
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Le container Azure doit utiliser HTTPS.')
+  }
+
+  parsed.search = ''
+  parsed.hash = ''
+
+  if (!parsed.pathname || parsed.pathname === '/') {
+    throw new Error('Le chemin du container Azure est requis.')
+  }
+
+  return parsed.toString().replace(/\/+$/, '')
+}
+
+function normalizeAzureSasToken(rawToken) {
+  const token = String(rawToken ?? '').trim().replace(/^\?+/, '')
+
+  if (!token) {
+    throw new Error('Le SAS token Azure est requis.')
+  }
+
+  return token
+}
+
+async function uploadImageToAzureBlob({ containerUrl, sasToken, blobName, buffer, mimeType }) {
+  const normalizedContainerUrl = normalizeAzureContainerUrl(containerUrl)
+  const normalizedSasToken = normalizeAzureSasToken(sasToken)
+  const encodedBlobName = encodeURIComponent(blobName)
+  const uploadUrl = `${normalizedContainerUrl}/${encodedBlobName}?${normalizedSasToken}`
+
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'x-ms-blob-type': 'BlockBlob',
+      'x-ms-version': '2023-11-03',
+      'Content-Type': mimeType,
+      'Content-Length': String(buffer.length),
+    },
+    body: buffer,
+  })
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '')
+    throw new Error(`Upload Azure impossible (${response.status})${details ? `: ${details.slice(0, 180)}` : ''}`)
+  }
+
+  return uploadUrl
+}
+
+function normalizeS3Endpoint(rawEndpoint) {
+  const value = String(rawEndpoint ?? '').trim()
+
+  if (!value) {
+    return undefined
+  }
+
+  try {
+    const url = new URL(value)
+
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error('Endpoint S3 invalide.')
+    }
+
+    return url.toString().replace(/\/+$/, '')
+  } catch {
+    throw new Error('Endpoint S3 invalide.')
+  }
+}
+
+function buildS3PublicUrl({ bucket, region, endpoint, key, publicBaseUrl }) {
+  const customBase = String(publicBaseUrl ?? '').trim().replace(/\/+$/, '')
+
+  if (customBase) {
+    return `${customBase}/${encodeURIComponent(key)}`
+  }
+
+  if (endpoint) {
+    return `${endpoint.replace(/\/+$/, '')}/${bucket}/${encodeURIComponent(key)}`
+  }
+
+  return `https://${bucket}.s3.${region}.amazonaws.com/${encodeURIComponent(key)}`
+}
+
+async function uploadImageToS3({ region, bucket, accessKeyId, secretAccessKey, endpoint, key, buffer, mimeType, publicBaseUrl }) {
+  const normalizedRegion = String(region ?? '').trim()
+  const normalizedBucket = String(bucket ?? '').trim()
+  const normalizedAccessKeyId = String(accessKeyId ?? '').trim()
+  const normalizedSecretAccessKey = String(secretAccessKey ?? '').trim()
+
+  if (!normalizedRegion || !normalizedBucket || !normalizedAccessKeyId || !normalizedSecretAccessKey) {
+    throw new Error('Configuration S3 incomplète (region/bucket/access keys).')
+  }
+
+  const normalizedEndpoint = normalizeS3Endpoint(endpoint)
+
+  const s3Client = new S3Client({
+    region: normalizedRegion,
+    endpoint: normalizedEndpoint,
+    credentials: {
+      accessKeyId: normalizedAccessKeyId,
+      secretAccessKey: normalizedSecretAccessKey,
+    },
+    forcePathStyle: Boolean(normalizedEndpoint),
+  })
+
+  await s3Client.send(new PutObjectCommand({
+    Bucket: normalizedBucket,
+    Key: key,
+    Body: buffer,
+    ContentType: mimeType,
+  }))
+
+  return buildS3PublicUrl({
+    bucket: normalizedBucket,
+    region: normalizedRegion,
+    endpoint: normalizedEndpoint,
+    key,
+    publicBaseUrl,
+  })
+}
+
+function normalizeDropboxFolderPath(rawFolderPath) {
+  const trimmed = String(rawFolderPath ?? '').trim()
+
+  if (!trimmed) {
+    return '/holo-images'
+  }
+
+  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+  return withLeadingSlash.replace(/\/+$/, '') || '/holo-images'
+}
+
+function normalizeDropboxDirectLink(sharedUrl) {
+  try {
+    const parsed = new URL(sharedUrl)
+    parsed.searchParams.set('raw', '1')
+    parsed.searchParams.delete('dl')
+    return parsed.toString()
+  } catch {
+    return sharedUrl
+  }
+}
+
+async function callDropboxApi(endpoint, accessToken, payload) {
+  const response = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const bodyText = await response.text().catch(() => '')
+
+  if (!response.ok) {
+    throw new Error(`Dropbox API ${endpoint} (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ''}`)
+  }
+
+  if (!bodyText) {
+    return null
+  }
+
+  return JSON.parse(bodyText)
+}
+
+async function getOrCreateDropboxSharedLink(accessToken, dropboxPath) {
+  try {
+    const created = await callDropboxApi('sharing/create_shared_link_with_settings', accessToken, {
+      path: dropboxPath,
+      settings: { requested_visibility: 'public' },
+    })
+
+    if (created?.url) {
+      return normalizeDropboxDirectLink(created.url)
+    }
+  } catch {
+    // fallback: try reading existing shared links
+  }
+
+  const listed = await callDropboxApi('sharing/list_shared_links', accessToken, {
+    path: dropboxPath,
+    direct_only: true,
+  })
+
+  const existingUrl = listed?.links?.[0]?.url
+
+  if (!existingUrl) {
+    throw new Error('Impossible de générer un lien partageable Dropbox.')
+  }
+
+  return normalizeDropboxDirectLink(existingUrl)
+}
+
+async function uploadImageToDropbox({ accessToken, folderPath, fileName, buffer }) {
+  const normalizedToken = String(accessToken ?? '').trim()
+
+  if (!normalizedToken) {
+    throw new Error('Le token Dropbox est requis.')
+  }
+
+  const normalizedFolder = normalizeDropboxFolderPath(folderPath)
+  const targetPath = `${normalizedFolder}/${fileName}`
+
+  const uploadResponse = await fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${normalizedToken}`,
+      'Dropbox-API-Arg': JSON.stringify({
+        path: targetPath,
+        mode: 'add',
+        autorename: true,
+        mute: true,
+      }),
+      'Content-Type': 'application/octet-stream',
+    },
+    body: buffer,
+  })
+
+  const uploadText = await uploadResponse.text().catch(() => '')
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Upload Dropbox impossible (${uploadResponse.status})${uploadText ? `: ${uploadText.slice(0, 180)}` : ''}`)
+  }
+
+  let uploadData = null
+  try {
+    uploadData = uploadText ? JSON.parse(uploadText) : null
+  } catch {
+    uploadData = null
+  }
+
+  const uploadedPath = uploadData?.path_lower || uploadData?.path_display || targetPath
+  return getOrCreateDropboxSharedLink(normalizedToken, uploadedPath)
+}
+
+async function uploadImageToGoogleDrive({ accessToken, folderId, fileName, buffer, mimeType }) {
+  const normalizedToken = String(accessToken ?? '').trim()
+
+  if (!normalizedToken) {
+    throw new Error('Le token Google Drive est requis.')
+  }
+
+  const normalizedFolderId = String(folderId ?? '').trim()
+  const metadata = {
+    name: fileName,
+    ...(normalizedFolderId ? { parents: [normalizedFolderId] } : {}),
+  }
+
+  const boundary = `holo-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const metadataPart = Buffer.from(
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+    'utf8',
+  )
+  const mediaHeaderPart = Buffer.from(
+    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
+    'utf8',
+  )
+  const endingPart = Buffer.from(`\r\n--${boundary}--`, 'utf8')
+  const multipartBody = Buffer.concat([metadataPart, mediaHeaderPart, buffer, endingPart])
+
+  const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,webContentLink', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${normalizedToken}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+      'Content-Length': String(multipartBody.length),
+    },
+    body: multipartBody,
+  })
+
+  const uploadText = await uploadResponse.text().catch(() => '')
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Upload Google Drive impossible (${uploadResponse.status})${uploadText ? `: ${uploadText.slice(0, 180)}` : ''}`)
+  }
+
+  let uploadData = null
+  try {
+    uploadData = uploadText ? JSON.parse(uploadText) : null
+  } catch {
+    uploadData = null
+  }
+
+  const fileId = uploadData?.id
+
+  if (!fileId) {
+    throw new Error('Google Drive: identifiant de fichier introuvable après upload.')
+  }
+
+  const permissionResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${normalizedToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      role: 'reader',
+      type: 'anyone',
+    }),
+  })
+
+  if (!permissionResponse.ok) {
+    const details = await permissionResponse.text().catch(() => '')
+    throw new Error(`Google Drive: impossible de rendre l'image publique (${permissionResponse.status})${details ? `: ${details.slice(0, 180)}` : ''}`)
+  }
+
+  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`
 }
 
 function withOptionalCredentials(rawUrl, username, password) {
@@ -456,7 +838,41 @@ function assertExternalHttpUrl(rawUrl) {
   return parsedUrl.toString()
 }
 
-function createWindow() {
+function getLaunchPayloadFromArgv(argv) {
+  const rootArg = argv.find((arg) => arg.startsWith('--holo-root='))
+  const fileArg = argv.find((arg) => arg.startsWith('--holo-file='))
+
+  return {
+    rootPath: rootArg ? rootArg.slice('--holo-root='.length) : '',
+    filePath: fileArg ? fileArg.slice('--holo-file='.length) : '',
+  }
+}
+
+function spawnDetachedHoloInstance({ rootPath = '', filePath = '' } = {}) {
+  const args = []
+
+  if (!app.isPackaged) {
+    args.push(path.join(__dirname, 'main.js'))
+  }
+
+  if (rootPath) {
+    args.push(`--holo-root=${rootPath}`)
+  }
+
+  if (filePath) {
+    args.push(`--holo-file=${filePath}`)
+  }
+
+  const child = spawn(process.execPath, args, {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+  })
+
+  child.unref()
+}
+
+function createWindow(launchPayload = null) {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -502,14 +918,23 @@ function createWindow() {
     window.show()
   })
 
+  const query = {}
+  if (launchPayload?.rootPath) {
+    query.rootPath = launchPayload.rootPath
+  }
+  if (launchPayload?.filePath) {
+    query.filePath = launchPayload.filePath
+  }
+
   if (isDev) {
-    window.loadURL('http://localhost:5173')
+    const queryString = new URLSearchParams(query).toString()
+    window.loadURL(queryString ? `http://localhost:5173?${queryString}` : 'http://localhost:5173')
     return
   }
 
   // Use app.getAppPath() for better compatibility with packaged apps (.asar)
   const indexPath = path.join(app.getAppPath(), 'dist', 'index.html')
-  window.loadFile(indexPath)
+  window.loadFile(indexPath, { query })
 }
 
 ipcMain.handle('fs:open-folder', async () => {
@@ -657,6 +1082,29 @@ ipcMain.handle('app:install-update', async () => {
 
 ipcMain.handle('app:get-update-state', async () => updateState)
 ipcMain.handle('app:get-version', async () => app.getVersion())
+ipcMain.handle('app:open-file-in-new-window', async (_event, payload) => {
+  const rootPath = String(payload?.rootPath ?? '').trim()
+  const filePath = String(payload?.filePath ?? '').trim()
+
+  if (!rootPath) {
+    throw new Error('Le dossier racine est requis.')
+  }
+
+  const rootStats = await fs.stat(rootPath).catch(() => null)
+  if (!rootStats || !rootStats.isDirectory()) {
+    throw new Error('Le dossier racine est invalide.')
+  }
+
+  if (filePath) {
+    const fileStats = await fs.stat(filePath).catch(() => null)
+    if (!fileStats || !fileStats.isFile()) {
+      throw new Error('Le fichier demandé est introuvable.')
+    }
+  }
+
+  spawnDetachedHoloInstance({ rootPath, filePath })
+  return { ok: true }
+})
 
 ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
 
@@ -744,6 +1192,96 @@ ipcMain.handle('fs:move-path', async (_event, sourcePath, targetDirectoryPath) =
 
   await fs.rename(sourcePath, targetPath)
   return { ok: true, newPath: targetPath }
+})
+
+ipcMain.handle('fs:archive-path', async (_event, targetPath) => {
+  assertPathInsideRoot(targetPath)
+
+  if (targetPath === currentRootPath) {
+    throw new Error('Impossible d’archiver le dossier racine ouvert.')
+  }
+
+  const stats = await fs.stat(targetPath).catch(() => null)
+
+  if (!stats || !stats.isFile()) {
+    throw new Error('Seuls les fichiers peuvent être archivés.')
+  }
+
+  const archiveRoot = getArchiveRootPath()
+  const relativePath = getArchiveRelativePathFromOriginal(targetPath)
+  const destinationPath = path.join(archiveRoot, relativePath)
+  const destinationDirectory = path.dirname(destinationPath)
+
+  await fs.mkdir(destinationDirectory, { recursive: true })
+
+  const destinationExists = await fs.stat(destinationPath).catch(() => null)
+  let finalDestinationPath = destinationPath
+
+  if (destinationExists) {
+    const ext = path.extname(destinationPath)
+    const base = destinationPath.slice(0, Math.max(0, destinationPath.length - ext.length))
+    finalDestinationPath = `${base}-${Date.now()}${ext}`
+  }
+
+  await fs.rename(targetPath, finalDestinationPath)
+
+  return {
+    ok: true,
+    archivedPath: finalDestinationPath,
+    originalPath: targetPath,
+  }
+})
+
+ipcMain.handle('fs:list-archived-files', async () => {
+  const archiveRoot = getArchiveRootPath()
+  const archiveStats = await fs.stat(archiveRoot).catch(() => null)
+
+  if (!archiveStats || !archiveStats.isDirectory()) {
+    return []
+  }
+
+  const archivedMarkdownFiles = await collectMarkdownFilesRecursively(archiveRoot)
+
+  return archivedMarkdownFiles.map((archivedPath) => ({
+    archivedPath,
+    originalPath: getOriginalPathFromArchivePath(archivedPath),
+    name: path.basename(archivedPath),
+  }))
+})
+
+ipcMain.handle('fs:restore-archived-path', async (_event, archivedPath) => {
+  assertPathInsideRoot(archivedPath)
+
+  const archiveRoot = getArchiveRootPath()
+  const relativeFromArchive = path.relative(archiveRoot, archivedPath)
+
+  if (!relativeFromArchive || relativeFromArchive.startsWith('..') || path.isAbsolute(relativeFromArchive)) {
+    throw new Error('Le fichier sélectionné n’est pas dans l’archive.')
+  }
+
+  const originalPath = path.join(ensureRootPath(), relativeFromArchive)
+  assertPathInsideRoot(originalPath)
+
+  const archivedStats = await fs.stat(archivedPath).catch(() => null)
+
+  if (!archivedStats || !archivedStats.isFile()) {
+    throw new Error('Fichier archivé introuvable.')
+  }
+
+  const originalExists = await fs.stat(originalPath).catch(() => null)
+
+  if (originalExists) {
+    throw new Error('Un fichier existe déjà à l’emplacement de restauration.')
+  }
+
+  await fs.mkdir(path.dirname(originalPath), { recursive: true })
+  await fs.rename(archivedPath, originalPath)
+
+  return {
+    ok: true,
+    archivedPath,
+    restoredPath: originalPath,
+  }
 })
 
 ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
@@ -989,21 +1527,97 @@ ipcMain.handle('git:merge', async (_event, branch) => {
   }
 })
 
-ipcMain.handle('fs:save-image', async (_event, name, dataBase64) => {
+ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions) => {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
-
-  const imagesDir = path.join(currentRootPath, 'images')
-  await fs.mkdir(imagesDir, { recursive: true })
 
   const ext = path.extname(name) || '.png'
   const base = path.basename(name, ext).replace(/[^a-z0-9_-]/gi, '_')
-  
+
   // Generate hash from file content to avoid duplicates
   const hash = crypto.createHash('sha256').update(dataBase64).digest('hex').substring(0, 8)
   const uniqueName = `${base}-${hash}${ext}`
-  const destPath = path.join(imagesDir, uniqueName)
 
   const buffer = Buffer.from(dataBase64, 'base64')
+  const storageMode = storageOptions?.mode === 'azure'
+    ? 'azure'
+    : storageOptions?.mode === 's3'
+      ? 's3'
+      : storageOptions?.mode === 'dropbox'
+        ? 'dropbox'
+        : storageOptions?.mode === 'gdrive'
+          ? 'gdrive'
+      : 'local'
+
+  if (storageMode === 'azure') {
+    const uploadedUrl = await uploadImageToAzureBlob({
+      containerUrl: storageOptions?.azure?.containerUrl,
+      sasToken: storageOptions?.azure?.sasToken,
+      blobName: uniqueName,
+      buffer,
+      mimeType: getImageMimeTypeFromExtension(ext),
+    })
+
+    return {
+      ok: true,
+      relativePath: uploadedUrl,
+      absolutePath: uploadedUrl,
+    }
+  }
+
+  if (storageMode === 's3') {
+    const uploadedUrl = await uploadImageToS3({
+      region: storageOptions?.s3?.region,
+      bucket: storageOptions?.s3?.bucket,
+      accessKeyId: storageOptions?.s3?.accessKeyId,
+      secretAccessKey: storageOptions?.s3?.secretAccessKey,
+      endpoint: storageOptions?.s3?.endpoint,
+      key: uniqueName,
+      buffer,
+      mimeType: getImageMimeTypeFromExtension(ext),
+      publicBaseUrl: storageOptions?.s3?.publicBaseUrl,
+    })
+
+    return {
+      ok: true,
+      relativePath: uploadedUrl,
+      absolutePath: uploadedUrl,
+    }
+  }
+
+  if (storageMode === 'dropbox') {
+    const uploadedUrl = await uploadImageToDropbox({
+      accessToken: storageOptions?.dropbox?.accessToken,
+      folderPath: storageOptions?.dropbox?.folderPath,
+      fileName: uniqueName,
+      buffer,
+    })
+
+    return {
+      ok: true,
+      relativePath: uploadedUrl,
+      absolutePath: uploadedUrl,
+    }
+  }
+
+  if (storageMode === 'gdrive') {
+    const uploadedUrl = await uploadImageToGoogleDrive({
+      accessToken: storageOptions?.gdrive?.accessToken,
+      folderId: storageOptions?.gdrive?.folderId,
+      fileName: uniqueName,
+      buffer,
+      mimeType: getImageMimeTypeFromExtension(ext),
+    })
+
+    return {
+      ok: true,
+      relativePath: uploadedUrl,
+      absolutePath: uploadedUrl,
+    }
+  }
+
+  const imagesDir = path.join(currentRootPath, 'images')
+  await fs.mkdir(imagesDir, { recursive: true })
+  const destPath = path.join(imagesDir, uniqueName)
   await fs.writeFile(destPath, buffer)
 
   return { ok: true, relativePath: `images/${uniqueName}`, absolutePath: destPath }
@@ -1049,7 +1663,7 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
-  createWindow()
+  createWindow(getLaunchPayloadFromArgv(process.argv))
 
   // Configure auto-updater
   if (!isDev) {

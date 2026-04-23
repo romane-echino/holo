@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Holo editor placeholder">
+  <rect width="1280" height="720" fill="#1f2021"/>
+  <rect x="40" y="40" width="1200" height="640" rx="16" fill="#292929" stroke="#3a3b3d"/>
+  <rect x="70" y="80" width="240" height="560" rx="12" fill="#242527"/>
+  <rect x="330" y="80" width="880" height="560" rx="12" fill="#1a1b1c"/>
+  <text x="640" y="350" text-anchor="middle" fill="#9d8bff" font-family="Arial, sans-serif" font-size="36">Holo Editor Screenshot Placeholder</text>
+</svg>

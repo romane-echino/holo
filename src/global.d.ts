@@ -49,9 +49,45 @@ type HoloGitClonePayload = {
   destinationPath: string
 }
 
+type HoloOpenFileInNewWindowPayload = {
+  rootPath: string
+  filePath: string
+}
+
+type HoloImageStorageOptions = {
+  mode?: 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
+  azure?: {
+    containerUrl: string
+    sasToken: string
+  }
+  s3?: {
+    region: string
+    bucket: string
+    accessKeyId: string
+    secretAccessKey: string
+    endpoint?: string
+    publicBaseUrl?: string
+  }
+  dropbox?: {
+    accessToken: string
+    folderPath?: string
+  }
+  gdrive?: {
+    accessToken: string
+    folderId?: string
+  }
+}
+
+type HoloArchivedFileEntry = {
+  archivedPath: string
+  originalPath: string
+  name: string
+}
+
 interface HoloApi {
   appName: string
   getAppVersion: () => Promise<string>
+  openFileInNewWindow: (payload: HoloOpenFileInNewWindowPayload) => Promise<{ ok: true }>
   minimizeWindow: () => Promise<{ ok: true }>
   toggleMaximizeWindow: () => Promise<{ ok: true; isMaximized: boolean }>
   closeWindow: () => Promise<{ ok: true }>
@@ -67,6 +103,9 @@ interface HoloApi {
   writeFile: (filePath: string, content: string) => Promise<{ ok: true }>
   createFile: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
   createDirectory: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
+  archivePath: (targetPath: string) => Promise<{ ok: true; archivedPath: string; originalPath: string }>
+  listArchivedFiles: () => Promise<HoloArchivedFileEntry[]>
+  restoreArchivedPath: (archivedPath: string) => Promise<{ ok: true; archivedPath: string; restoredPath: string }>
   deletePath: (targetPath: string) => Promise<{ ok: true }>
   renamePath: (
     targetPath: string,
@@ -84,7 +123,7 @@ interface HoloApi {
   gitSync: () => Promise<HoloGitSyncResult>
   gitPull: () => Promise<{ ok: true; output: string }>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
-  saveImage: (name: string, dataBase64: string) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
+  saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
   loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
 }
 

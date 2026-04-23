@@ -327,19 +327,29 @@ Dans la hiérarchie de fichier, vu qu'on a que des fichier MD, on essai de récu
 
 #### Partie 4
 - ✅ Désactiver completement tout lien avec GITHUB (connexion, login). Le soft doit être purement git (UI rendue neutre Git: icône Git, clone sans login/password, messages d'erreur sans mention GitHub)
-- L'IA ne marche pas Erreur 429. C'est très bizarre parce que j'ai un compte PRO OpenAI et il me dit que la clef n'a jamais été utilisé a mon avis y'a un problème de config/dev
-- Enlever le système de tabulation complètement (n'apporte pas grand chose a part des bugs)
-- Bouton droite sur un fichier "Ouvrir dans une nouvelle fenêtre" Ouvre une nouvelle instance de holo (attention version windows, mac, linux) et ouvre le même dossier et ouvre le fichier
+- ✅ Enlever le système de tabulation complètement (n'apporte pas grand chose a part des bugs)
+- ✅ Bouton droite sur un fichier "Ouvrir dans une nouvelle fenêtre" Ouvre une nouvelle instance de holo (attention version windows, mac, linux) et ouvre le même dossier et ouvre le fichier (aussi dans la recherche de fichier)
 - ✅ Le popup de commande slash doit s'adapter a la ligne de flotaison de l'app si il est plus bas que le moitié basse de l'app le popup doit s'afficher au dessus et inversément
 - Verifier les intéractions git
-  - On crée/renomme/supprime un fichier -> on le push direct
-  - On CTRL+S/ sauvegarde un fichier -> on commit, push direct
-  - On fait des beaux messages de commit genre USER::ADD::/DOSSIER/FICHIER
-  - Quand on ouvre un fichier on fait une petite boucle de fetch (je suis pas sur de moi la dessus) pour savoir si y'a une modif -> Si y'en a une on bloque l'édition et on demande au mec de pull
-  - Faut trouver un moyen pour fetch/pull le contenu a interval periodique pour que le contenu local soit a jour
+  - ✅ On crée/renomme/supprime un fichier -> on le push direct
+  - ✅ On CTRL+S/ sauvegarde un fichier -> on commit, push direct
+  - ✅ On fait des beaux messages de commit genre USER::ADD::/DOSSIER/FICHIER
+  - ✅ Quand on ouvre un fichier on fait une petite boucle de fetch (je suis pas sur de moi la dessus) pour savoir si y'a une modif -> Si y'en a une on bloque l'édition et on demande au mec de pull
+  - ✅ Faut trouver un moyen pour fetch/pull le contenu a interval periodique pour que le contenu local soit a jour
   - L'idée c'est que meme un teubé qui sait juste utiliser Word puisse éditer des fichier sur git
-- Changer le readme.md github en documentation utilisateur comme n'importe quel projet github open source. Avec des images (tu peux mettre des placeholder en attendant). Il faut que l'utilisateur comprenne ce que ça fait, les fonctionnalités, comment l'installer pas plus ... peut-être la tech stack
-
+- ✅ Changer le readme.md github en documentation utilisateur comme n'importe quel projet github open source. Avec des images (tu peux mettre des placeholder en attendant). Il faut que l'utilisateur comprenne ce que ça fait, les fonctionnalités, comment l'installer pas plus ... peut-être la tech stack
+- ✅ Possibilité d'archiver un fichier
+  - ✅ bouton droite sur le fichier archiver (avec confirmation)
+  - ✅ disparait de l'arboresence de fichier (est-ce que c'est mieux le le déplacer physiquement dans un dossier caché .archive tout en concervant sa place ou il était dans l'arboresence au moment ou on veut le récupérer ou bettement on met un "." devant et on masque tout les fichier avec des "." devant)
+  - ✅ toujours visible dans la recherche de fichier avec une différenciation (genre une icone et catégorisation "archive") avec possibilité de faire bouton/droite récupérer
+- ✅ Intégrer Gemini comme on a fait pour openai
+- Intégrer la possibilité de stocker les images ailleurs (ça veut dire gérer les liens, l'upload, etc...)
+  - Intégrer au dépot git (non recommandé / par défaut) (fonctionne deja)
+  - ✅ Via Azure blob storage (on doit fournir un SAS token)
+  - ✅ Via dropbox (je sais pas si c'est possible mais ça serait cool)
+  - ✅ Amazon S3 (je sais pas si c'est possible mais ça serait cool)
+  - ✅ Google drive (je sais pas si c'est possible mais ça serait cool)
+- ✅ le popup slash affiche 3 commande en hauteur et est scrollable (il prend trop de place en hauteur)
 
 
 

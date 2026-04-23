@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('holo', {
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggle-devtools'),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  openFileInNewWindow: (payload) => ipcRenderer.invoke('app:open-file-in-new-window', payload),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
@@ -26,6 +27,9 @@ contextBridge.exposeInMainWorld('holo', {
     ipcRenderer.invoke('fs:create-file', parentDirectoryPath, name),
   createDirectory: (parentDirectoryPath, name) =>
     ipcRenderer.invoke('fs:create-directory', parentDirectoryPath, name),
+  archivePath: (targetPath) => ipcRenderer.invoke('fs:archive-path', targetPath),
+  listArchivedFiles: () => ipcRenderer.invoke('fs:list-archived-files'),
+  restoreArchivedPath: (archivedPath) => ipcRenderer.invoke('fs:restore-archived-path', archivedPath),
   deletePath: (targetPath) => ipcRenderer.invoke('fs:delete-path', targetPath),
   renamePath: (targetPath, newName) => ipcRenderer.invoke('fs:rename-path', targetPath, newName),
   movePath: (sourcePath, targetDirectoryPath) =>
@@ -38,7 +42,7 @@ contextBridge.exposeInMainWorld('holo', {
   gitSync: () => ipcRenderer.invoke('git:sync'),
   gitPull: () => ipcRenderer.invoke('git:pull'),
   gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
-  saveImage: (name, dataBase64) => ipcRenderer.invoke('fs:save-image', name, dataBase64),
+  saveImage: (name, dataBase64, options) => ipcRenderer.invoke('fs:save-image', name, dataBase64, options),
   loadImage: (relativePath) => ipcRenderer.invoke('fs:load-image', relativePath),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),

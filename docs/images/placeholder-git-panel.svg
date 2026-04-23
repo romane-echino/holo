@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Holo git panel placeholder">
+  <rect width="1280" height="720" fill="#1f2021"/>
+  <rect x="60" y="60" width="1160" height="600" rx="16" fill="#292929"/>
+  <rect x="90" y="100" width="320" height="520" rx="12" fill="#242527"/>
+  <rect x="430" y="100" width="760" height="520" rx="12" fill="#1a1b1c"/>
+  <text x="810" y="180" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="30">Git Panel Placeholder</text>
+  <text x="810" y="240" text-anchor="middle" fill="#9d8bff" font-family="Arial, sans-serif" font-size="20">Incoming · Outgoing · Sync · Pull</text>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Holo slash menu placeholder">
+  <rect width="1280" height="720" fill="#1f2021"/>
+  <rect x="80" y="70" width="1120" height="580" rx="16" fill="#292929"/>
+  <rect x="460" y="220" width="360" height="280" rx="14" fill="#1a1b1c" stroke="#7B61FF"/>
+  <text x="640" y="260" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="24">/ Slash Commands</text>
+  <text x="640" y="320" text-anchor="middle" fill="#9d8bff" font-family="Arial, sans-serif" font-size="18">Heading · Table · Task · Code</text>
+  <text x="640" y="370" text-anchor="middle" fill="#9d8bff" font-family="Arial, sans-serif" font-size="18">Link · Image · AI</text>
+</svg>

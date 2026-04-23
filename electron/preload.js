@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('holo', {
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  openFileInNewWindow: (payload) => ipcRenderer.invoke('app:open-file-in-new-window', payload),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
@@ -25,6 +26,9 @@ contextBridge.exposeInMainWorld('holo', {
     ipcRenderer.invoke('fs:create-file', parentDirectoryPath, name),
   createDirectory: (parentDirectoryPath, name) =>
     ipcRenderer.invoke('fs:create-directory', parentDirectoryPath, name),
+  archivePath: (targetPath) => ipcRenderer.invoke('fs:archive-path', targetPath),
+  listArchivedFiles: () => ipcRenderer.invoke('fs:list-archived-files'),
+  restoreArchivedPath: (archivedPath) => ipcRenderer.invoke('fs:restore-archived-path', archivedPath),
   deletePath: (targetPath) => ipcRenderer.invoke('fs:delete-path', targetPath),
   renamePath: (targetPath, newName) =>
     ipcRenderer.invoke('fs:rename-path', targetPath, newName),
