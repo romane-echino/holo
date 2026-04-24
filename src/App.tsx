@@ -5,6 +5,13 @@ import { gfm } from 'turndown-plugin-gfm'
 import EmojiPicker from 'emoji-picker-react'
 import { Theme } from 'emoji-picker-react'
 import hljs from 'highlight.js'
+import * as prettier from 'prettier/standalone'
+import * as prettierPluginBabel from 'prettier/plugins/babel'
+import * as prettierPluginEstree from 'prettier/plugins/estree'
+import * as prettierPluginTypescript from 'prettier/plugins/typescript'
+import * as prettierPluginPostcss from 'prettier/plugins/postcss'
+import * as prettierPluginHtml from 'prettier/plugins/html'
+import * as prettierPluginMarkdown from 'prettier/plugins/markdown'
 
 type NodeType = 'file' | 'directory'
 
@@ -114,6 +121,13 @@ type TocItem = {
   headingIndex: number
 }
 
+type FileMeta = {
+  title: string
+  description: string
+}
+
+type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
+
 const DEFAULT_GIT_STATE: GitState = {
   isRepo: false,
   branch: null,
@@ -147,7 +161,7 @@ function getFriendlyGitErrorMessage(rawMessage: string): string {
       message,
     )
   ) {
-    return 'Échec de connexion Git distante. Vérifie ta configuration Git (SSH/identifiants) puis réessaie Synchroniser.'
+    return 'Échec de connexion Git distante. Holo ne stocke pas tes identifiants : Git utilise ta configuration système (SSH ou gestionnaire d’identifiants). Vérifie cette configuration puis réessaie Synchroniser.'
   }
 
   if (/could not resolve host|name or service not known|network is unreachable|timed out/.test(message)) {
@@ -155,6 +169,12 @@ function getFriendlyGitErrorMessage(rawMessage: string): string {
   }
 
   return rawMessage
+}
+
+function isLikelyGitAuthError(rawMessage: string | null | undefined): boolean {
+  if (!rawMessage) return false
+  const message = rawMessage.toLowerCase()
+  return /authentication failed|could not read username|permission denied \(publickey\)|could not read from remote repository|repository not found|credentials|identifiants|ssh/.test(message)
 }
 
 function getParentPath(targetPath: string): string {
@@ -241,6 +261,40 @@ function buildAutoCommitMessage(
   }
 
   return `${normalizedAuthor}::${normalizedAction}::${commitTargetPath}`
+}
+
+function getRepoConfigPath(rootPath: string): string {
+  if (rootPath.endsWith('/') || rootPath.endsWith('\\')) {
+    return `${rootPath}.holo.json`
+  }
+
+  const separator = rootPath.includes('\\') ? '\\' : '/'
+  return `${rootPath}${separator}.holo.json`
+}
+
+function getRelativeLinkPath(fromFilePath: string | null, targetFilePath: string, rootPath: string | null): string {
+  if (!fromFilePath) {
+    const repoRelative = getCommitTargetPath(rootPath, targetFilePath).replace(/^\//, '')
+    return repoRelative || getBaseName(targetFilePath)
+  }
+
+  const fromDirParts = getParentPath(fromFilePath).replace(/\\/g, '/').split('/').filter(Boolean)
+  const targetParts = targetFilePath.replace(/\\/g, '/').split('/').filter(Boolean)
+
+  let commonIndex = 0
+  while (
+    commonIndex < fromDirParts.length
+    && commonIndex < targetParts.length
+    && fromDirParts[commonIndex] === targetParts[commonIndex]
+  ) {
+    commonIndex += 1
+  }
+
+  const upSegments = new Array(fromDirParts.length - commonIndex).fill('..')
+  const downSegments = targetParts.slice(commonIndex)
+  const relativePath = [...upSegments, ...downSegments].join('/')
+
+  return relativePath || getBaseName(targetFilePath)
 }
 
 function splitMarkdownFrontMatter(markdown: string) {
@@ -398,6 +452,7 @@ function TreeItem({
   node,
   selectedPath,
   fileIconByPath,
+  fileMetaByPath,
   onSelect,
   onContextMenu,
   expandedDirectories,
@@ -414,6 +469,7 @@ function TreeItem({
   node: TreeNode
   selectedPath: string | null
   fileIconByPath: Record<string, string>
+  fileMetaByPath: Record<string, FileMeta>
   onSelect: (node: TreeNode) => void
   onContextMenu: (node: TreeNode, position: { x: number; y: number }) => void
   expandedDirectories: Set<string>
@@ -432,6 +488,7 @@ function TreeItem({
   const isExpanded = isDirectory ? expandedDirectories.has(node.path) : false
   const isDragged = draggedPath === node.path
   const isDropTarget = dropTargetPath === node.path
+  const fileMeta = node.type === 'file' ? fileMetaByPath[node.path] : null
 
   return (
     <li>
@@ -491,7 +548,7 @@ function TreeItem({
           {isDirectory ? (
             <i className={`fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}`} />
           ) : (
-            <i className="fa-solid fa-circle text-[6px]" />
+            <span />
           )}
         </span>
         <span className="w-5 text-center text-sm text-white/70">
@@ -501,7 +558,16 @@ function TreeItem({
             fileIconByPath[node.path] ? <span>{fileIconByPath[node.path]}</span> : <i className="fa-regular fa-file-lines" />
           )}
         </span>
-        <span className="truncate text-xs">{node.type === 'file' ? node.name.replace(/\.md$/i, '') : node.name}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs">
+            {node.type === 'file'
+              ? (fileMeta?.title?.trim() || node.name.replace(/\.md$/i, ''))
+              : node.name}
+          </span>
+          {node.type === 'file' && fileMeta?.description?.trim() && (
+            <span className="block truncate text-[10px] text-white/35">{fileMeta.description.trim()}</span>
+          )}
+        </span>
       </button>
 
       {node.type === 'directory' && isExpanded && node.children && node.children.length > 0 && (
@@ -512,6 +578,7 @@ function TreeItem({
               node={childNode}
               selectedPath={selectedPath}
               fileIconByPath={fileIconByPath}
+              fileMetaByPath={fileMetaByPath}
               onSelect={onSelect}
               onContextMenu={onContextMenu}
               expandedDirectories={expandedDirectories}
@@ -564,6 +631,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'quote', icon: 'fa-solid fa-quote-left', label: 'Citation', hint: 'Bloc citation' },
   { id: 'code', icon: 'fa-solid fa-code', label: 'Bloc code', hint: 'Monospace' },
   { id: 'table', icon: 'fa-solid fa-table', label: 'Tableau', hint: 'Grille' },
+  { id: 'kanban', icon: 'fa-solid fa-table-columns', label: 'Kanban', hint: 'Tableau tickets', keywords: ['board', 'tickets', 'todo', 'workflow'] },
   { id: 'todo', icon: 'fa-solid fa-square-check', label: 'Tâches', hint: 'Checklist', keywords: ['tache', 'todo', 'task', 'checklist'] },
   { id: 'separator', icon: 'fa-solid fa-minus', label: 'Séparateur', hint: 'Ligne horizontale' },
   { id: 'link', icon: 'fa-solid fa-link', label: 'Lien', hint: 'Insérer un lien' },
@@ -598,11 +666,12 @@ function App() {
   const [gitState, setGitState] = useState<GitState>(DEFAULT_GIT_STATE)
   const [gitDialog, setGitDialog] = useState<GitDialog | null>(null)
   const [cloneDialog, setCloneDialog] = useState<CloneDialog | null>(null)
-  const [linkDialog, setLinkDialog] = useState<{ text: string; url: string } | null>(null)
+  const [linkDialog, setLinkDialog] = useState<{ text: string; url: string; pageQuery?: string } | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [showTagInput, setShowTagInput] = useState(false)
   const [isGitBusy, setIsGitBusy] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
+  const [showGitAuthHelp, setShowGitAuthHelp] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
   const [remoteEditBlock, setRemoteEditBlock] = useState<{ isBlocked: boolean; message: string }>({
     isBlocked: false,
@@ -612,8 +681,13 @@ function App() {
   const [appVersion, setAppVersion] = useState('')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
+  const [showAuthorModal, setShowAuthorModal] = useState(false)
+  const [authorModalMode, setAuthorModalMode] = useState<'startup' | 'edit'>('startup')
+  const [authorModalValue, setAuthorModalValue] = useState('')
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const [gitEmail, setGitEmail] = useState('')
-  const [imageStorageMode, setImageStorageMode] = useState<'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'>('local')
+  const [imageStorageMode, setImageStorageMode] = useState<ImageStorageMode>('local')
+  const [repoImageModeReady, setRepoImageModeReady] = useState(false)
   const [azureBlobContainerUrl, setAzureBlobContainerUrl] = useState('')
   const [azureBlobSasToken, setAzureBlobSasToken] = useState('')
   const [s3Region, setS3Region] = useState('')
@@ -637,6 +711,7 @@ function App() {
   const [archivedFiles, setArchivedFiles] = useState<ArchivedFileEntry[]>([])
   const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
   const [fileIconByPath, setFileIconByPath] = useState<Record<string, string>>({})
+  const [fileMetaByPath, setFileMetaByPath] = useState<Record<string, FileMeta>>({})
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
   const imageDragDepthRef = useRef(0)
@@ -683,14 +758,6 @@ function App() {
         // If data-src exists, use that for relative path
         if (dataSrc) {
           src = dataSrc
-
-          useEffect(() => {
-            if (!slashMenu) return
-            const listEl = slashMenuListRef.current
-            if (!listEl) return
-            const activeItem = listEl.querySelector<HTMLButtonElement>(`[data-slash-index="${slashMenuIndex}"]`)
-            activeItem?.scrollIntoView({ block: 'nearest' })
-          }, [slashMenu, slashMenuIndex])
         }
         // Otherwise keep the src as is (data URLs, external URLs)
         
@@ -741,7 +808,12 @@ function App() {
       if (typeof html === 'string') {
         const div = document.createElement('div')
         div.innerHTML = html
-        div.querySelectorAll('.table-summary-row, tfoot').forEach((el) => el.remove())
+        div.querySelectorAll('.table-summary-row, tfoot, .table-add-row-btn').forEach((el) => el.remove())
+        // Unwrap table-scroll-wrapper: replace div with its children
+        div.querySelectorAll('.table-scroll-wrapper').forEach((wrapper) => {
+          while (wrapper.firstChild) wrapper.parentNode?.insertBefore(wrapper.firstChild, wrapper)
+          wrapper.parentNode?.removeChild(wrapper)
+        })
         return origTurndown(div.innerHTML)
       }
       return origTurndown(html as HTMLElement)
@@ -749,6 +821,15 @@ function App() {
     
     return service
   }, [])
+
+  useEffect(() => {
+    if (!slashMenu) return
+    const listEl = slashMenuListRef.current
+    if (!listEl) return
+    const activeItem = listEl.querySelector<HTMLButtonElement>(`[data-slash-index="${slashMenuIndex}"]`)
+    activeItem?.scrollIntoView({ block: 'nearest' })
+  }, [slashMenu, slashMenuIndex])
+
   const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
   const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
@@ -978,6 +1059,19 @@ function App() {
   )
 
   const applyRemoteEditBlockFromGitState = useCallback((nextGitState: GitState) => {
+    if (nextGitState.error) {
+      setRemoteEditBlock({ isBlocked: false, message: '' })
+      return
+    }
+
+    if ((nextGitState.conflictedFiles?.length ?? 0) > 0) {
+      setRemoteEditBlock({
+        isBlocked: true,
+        message: 'Conflits Git détectés. Résous-les depuis le panneau Git (garder local / prendre serveur) pour reprendre l’édition.',
+      })
+      return
+    }
+
     if (nextGitState.incoming > 0) {
       setRemoteEditBlock({
         isBlocked: true,
@@ -1002,7 +1096,21 @@ function App() {
         return true
       }
 
-      const nextState = normalizeGitState(await holo.gitGetState(true))
+      let nextState: GitState
+      try {
+        nextState = normalizeGitState(await holo.gitGetState(true))
+      } catch (error) {
+        setRemoteEditBlock({ isBlocked: false, message: '' })
+        if (promptPull) {
+          setSyncFeedback({
+            status: 'warning',
+            message: getFriendlyGitErrorMessage((error as Error).message),
+            at: new Date().toISOString(),
+          })
+        }
+        return true
+      }
+
       setGitState(nextState)
       applyRemoteEditBlockFromGitState(nextState)
 
@@ -1095,7 +1203,12 @@ function App() {
     const storedAuthor = window.localStorage.getItem('holo-author')
     if (storedAuthor) {
       setAppAuthor(storedAuthor)
+      return
     }
+
+    setAuthorModalMode('startup')
+    setAuthorModalValue('')
+    setShowAuthorModal(true)
   }, [])
 
   useEffect(() => {
@@ -1169,10 +1282,98 @@ function App() {
   useEffect(() => { window.localStorage.setItem('holo-openai-prompt', openaiPrompt) }, [openaiPrompt])
 
   useEffect(() => {
+    if (!rootPath) {
+      setRepoImageModeReady(false)
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) {
+      setRepoImageModeReady(false)
+      return
+    }
+
+    let cancelled = false
+
+    const loadRepoImageStorageMode = async () => {
+      setRepoImageModeReady(false)
+      try {
+        const raw = await holo.readFile(getRepoConfigPath(rootPath))
+        const parsed = JSON.parse(raw) as { imageStorage?: { mode?: ImageStorageMode } }
+        const mode = parsed?.imageStorage?.mode
+
+        if (!cancelled && (mode === 'local' || mode === 'azure' || mode === 's3' || mode === 'dropbox' || mode === 'gdrive')) {
+          setImageStorageMode(mode)
+        }
+      } catch {
+        // no repo config yet
+      } finally {
+        if (!cancelled) {
+          setRepoImageModeReady(true)
+        }
+      }
+    }
+
+    void loadRepoImageStorageMode()
+
+    return () => {
+      cancelled = true
+    }
+  }, [getHoloApi, rootPath])
+
+  useEffect(() => {
+    if (!rootPath || !repoImageModeReady) {
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) {
+      return
+    }
+
+    const saveRepoImageStorageMode = async () => {
+      const configPath = getRepoConfigPath(rootPath)
+      let parsed: Record<string, unknown> = {}
+
+      try {
+        const existingRaw = await holo.readFile(configPath)
+        const existingParsed = JSON.parse(existingRaw)
+        if (existingParsed && typeof existingParsed === 'object' && !Array.isArray(existingParsed)) {
+          parsed = existingParsed as Record<string, unknown>
+        }
+      } catch {
+        parsed = {}
+      }
+
+      const currentImageStorage =
+        parsed.imageStorage && typeof parsed.imageStorage === 'object' && !Array.isArray(parsed.imageStorage)
+          ? (parsed.imageStorage as Record<string, unknown>)
+          : {}
+
+      const nextConfig = {
+        ...parsed,
+        imageStorage: {
+          ...currentImageStorage,
+          mode: imageStorageMode,
+        },
+      }
+
+      try {
+        await holo.writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`)
+      } catch {
+        // ignore repository config write failures
+      }
+    }
+
+    void saveRepoImageStorageMode()
+  }, [getHoloApi, imageStorageMode, repoImageModeReady, rootPath])
+
+  useEffect(() => {
     const filePaths = tree ? flatTreeFiles(tree) : []
 
     if (filePaths.length === 0) {
       setFileIconByPath({})
+      setFileMetaByPath({})
       return
     }
 
@@ -1187,10 +1388,20 @@ function App() {
         filePaths.map(async (filePath) => {
           try {
             const content = await window.holo!.readFile(filePath)
-            const icon = getEditableMarkdownHeader(content).icon.trim()
-            return [filePath, icon] as const
+            const header = getEditableMarkdownHeader(content)
+            return {
+              filePath,
+              icon: header.icon.trim(),
+              title: header.title.trim(),
+              description: header.description.trim(),
+            }
           } catch {
-            return [filePath, ''] as const
+            return {
+              filePath,
+              icon: '',
+              title: '',
+              description: '',
+            }
           }
         }),
       )
@@ -1200,13 +1411,22 @@ function App() {
       }
 
       const next: Record<string, string> = {}
-      for (const [filePath, icon] of pairs) {
-        if (icon) {
-          next[filePath] = icon
+      const nextMeta: Record<string, FileMeta> = {}
+      for (const entry of pairs) {
+        if (entry.icon) {
+          next[entry.filePath] = entry.icon
+        }
+
+        if (entry.title || entry.description) {
+          nextMeta[entry.filePath] = {
+            title: entry.title,
+            description: entry.description,
+          }
         }
       }
 
       setFileIconByPath(next)
+      setFileMetaByPath(nextMeta)
     }
 
     void loadIcons()
@@ -1306,6 +1526,20 @@ function App() {
     [allFilePaths, recentFilePaths],
   )
 
+  const linkPageSuggestions = useMemo(() => {
+    const pageFiles = allFilePaths.filter((filePath) => filePath.toLowerCase().endsWith('.md'))
+    const query = linkDialog?.pageQuery?.trim().toLowerCase() ?? ''
+
+    const candidates = pageFiles.filter((filePath) => filePath !== activeTabPath)
+    if (!query) {
+      return candidates.slice(0, 8)
+    }
+
+    return candidates
+      .filter((filePath) => filePath.toLowerCase().includes(query) || getBaseName(filePath).toLowerCase().includes(query))
+      .slice(0, 8)
+  }, [activeTabPath, allFilePaths, linkDialog?.pageQuery])
+
   useEffect(() => {
     if (!rootPath || !gitState.isRepo) {
       return
@@ -1317,6 +1551,12 @@ function App() {
 
     return () => window.clearInterval(interval)
   }, [checkRemoteFreshnessAndGuardEditing, gitState.isRepo, rootPath])
+
+  useEffect(() => {
+    if (!activeTabPath) {
+      setRemoteEditBlock({ isBlocked: false, message: '' })
+    }
+  }, [activeTabPath])
 
   // Listen for update notifications from Electron
   useEffect(() => {
@@ -1780,6 +2020,19 @@ function App() {
         summaryRow.appendChild(td)
       })
       tfoot.appendChild(summaryRow)
+
+      // Wrap table in a scroll container for horizontal overflow
+      const wrapper = doc.createElement('div')
+      wrapper.className = 'table-scroll-wrapper'
+      table.parentNode?.insertBefore(wrapper, table)
+      wrapper.appendChild(table)
+
+      // Add "+ Nouvelle ligne" button below the wrapper
+      const addRowBtn = doc.createElement('button')
+      addRowBtn.className = 'table-add-row-btn'
+      addRowBtn.setAttribute('contenteditable', 'false')
+      addRowBtn.textContent = '+ Nouvelle ligne'
+      wrapper.parentNode?.insertBefore(addRowBtn, wrapper.nextSibling)
     })
 
     return doc.body.innerHTML
@@ -2001,7 +2254,7 @@ function App() {
   }, [openaiApiKey, openaiPrompt])
 
   const askGemini = useCallback(async (userMessage: string): Promise<string> => {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2174,9 +2427,25 @@ function App() {
         break
       }
       case 'table': {
-        const html = '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>\u200B</td><td></td></tr></tbody></table><p><br></p>'
+        const html = '<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>\u200B</td><td></td></tr><tr><td></td><td></td></tr><tr><td></td><td></td></tr></tbody></table><p><br></p>'
         document.execCommand('insertHTML', false, html)
         // Focus first body cell after insertion
+        setTimeout(() => {
+          const firstCell = editor.querySelector('tbody td') as HTMLTableCellElement | null
+          if (firstCell) {
+            const sel = window.getSelection()
+            const range = document.createRange()
+            range.selectNodeContents(firstCell)
+            range.collapse(true)
+            sel?.removeAllRanges()
+            sel?.addRange(range)
+          }
+        }, 0)
+        break
+      }
+      case 'kanban': {
+        const html = '<table><thead><tr><th>📝 À faire</th><th>🚧 En cours</th><th>✅ Terminé</th></tr></thead><tbody><tr><td>Ticket 1</td><td></td><td></td></tr><tr><td>Ticket 2</td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></tbody></table><p><br></p>'
+        document.execCommand('insertHTML', false, html)
         setTimeout(() => {
           const firstCell = editor.querySelector('tbody td') as HTMLTableCellElement | null
           if (firstCell) {
@@ -2196,18 +2465,46 @@ function App() {
         break
       }
       case 'separator': {
-        document.execCommand('insertHTML', false, '<hr><p><br></p>')
+        document.execCommand('insertHTML', false, '<hr class="holo-hr"><p><br></p>')
         break
       }
       case 'link': {
         setSlashMenu(null)
         setSlashMenuIndex(0)
-        setLinkDialog({ text: '', url: '' })
+        setLinkDialog({ text: '', url: '', pageQuery: '' })
         return
       }
       case 'image': {
         setSlashMenu(null)
         setSlashMenuIndex(0)
+
+        if (imageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
+          window.alert('Configuration Azure incomplète (container URL + SAS token).')
+          setShowSettings(true)
+          return
+        }
+
+        if (
+          imageStorageMode === 's3'
+          && (!s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey.trim())
+        ) {
+          window.alert('Configuration S3 incomplète (region, bucket, access key, secret key).')
+          setShowSettings(true)
+          return
+        }
+
+        if (imageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
+          window.alert('Configuration Dropbox incomplète (access token).')
+          setShowSettings(true)
+          return
+        }
+
+        if (imageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
+          window.alert('Configuration Google Drive incomplète (access token).')
+          setShowSettings(true)
+          return
+        }
+
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = 'image/*'
@@ -2223,15 +2520,51 @@ function App() {
             const base64 = dataUrl.split(',')[1]
             if (!base64) return
             try {
-              const result = await holo.saveImage(file.name, base64)
+              const result = await holo.saveImage(file.name, base64, {
+                mode: imageStorageMode,
+                azure: imageStorageMode === 'azure'
+                  ? {
+                    containerUrl: azureBlobContainerUrl,
+                    sasToken: azureBlobSasToken,
+                  }
+                  : undefined,
+                s3: imageStorageMode === 's3'
+                  ? {
+                    region: s3Region,
+                    bucket: s3Bucket,
+                    accessKeyId: s3AccessKeyId,
+                    secretAccessKey: s3SecretAccessKey,
+                    endpoint: s3Endpoint,
+                    publicBaseUrl: s3PublicBaseUrl,
+                  }
+                  : undefined,
+                dropbox: imageStorageMode === 'dropbox'
+                  ? {
+                    accessToken: dropboxAccessToken,
+                    folderPath: dropboxFolderPath,
+                  }
+                  : undefined,
+                gdrive: imageStorageMode === 'gdrive'
+                  ? {
+                    accessToken: gdriveAccessToken,
+                    folderId: gdriveFolderId,
+                  }
+                  : undefined,
+              })
               const ed = wysiwygEditorRef.current
               if (!ed) return
               ed.focus()
-              document.execCommand('insertHTML', false, `<img src="${dataUrl}" data-src="${result.relativePath}" alt="${file.name}"><p><br></p>`)
+              const isExternal = /^https?:\/\//i.test(result.relativePath)
+              const safePath = result.relativePath.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+              const imageHtml = isExternal
+                ? `<img src="${safePath}" alt="${file.name}"><p><br></p>`
+                : `<img src="${dataUrl}" data-src="${safePath}" alt="${file.name}"><p><br></p>`
+              document.execCommand('insertHTML', false, imageHtml)
               const md = turndownService.turndown(ed.innerHTML)
               updateActiveTabBody(md)
             } catch (err) {
               console.error('saveImage error', err)
+              window.alert((err as Error).message)
             }
           }
           reader.readAsDataURL(file)
@@ -2311,6 +2644,107 @@ function App() {
     }
   }, [])
 
+  const formatCodeBlock = useCallback(
+    async (codeEl: HTMLElement) => {
+      const editor = wysiwygEditorRef.current
+      if (!editor) return
+
+      const currentLang = Array.from(codeEl.classList)
+        .find((c) => c.startsWith('language-'))
+        ?.replace('language-', '') ?? 'plaintext'
+
+      const parserByLang: Record<string, 'babel' | 'typescript' | 'json' | 'css' | 'html' | 'markdown'> = {
+        javascript: 'babel',
+        typescript: 'typescript',
+        json: 'json',
+        css: 'css',
+        html: 'html',
+        markdown: 'markdown',
+      }
+
+      const parser = parserByLang[currentLang]
+
+      if (!parser) {
+        window.alert(`Formatage non disponible pour le langage: ${currentLang}`)
+        return
+      }
+
+      const raw = (codeEl.textContent ?? '').replace(/\u200B/g, '')
+
+      try {
+        const formatted = await prettier.format(raw, {
+          parser,
+          plugins: [
+            prettierPluginBabel,
+            prettierPluginEstree,
+            prettierPluginTypescript,
+            prettierPluginPostcss,
+            prettierPluginHtml,
+            prettierPluginMarkdown,
+          ],
+          tabWidth: 2,
+          printWidth: 100,
+          semi: true,
+          singleQuote: false,
+        })
+
+        codeEl.textContent = formatted.replace(/\n$/, '')
+
+        const md = turndownService.turndown(editor.innerHTML)
+        updateActiveTabBody(md)
+        syncWysiwygFromMarkdown(md)
+      } catch (error) {
+        window.alert(`Échec du formatage: ${(error as Error).message}`)
+      }
+    },
+    [syncWysiwygFromMarkdown, turndownService, updateActiveTabBody],
+  )
+
+  const ensureImageProviderReady = useCallback(() => {
+    if (imageStorageMode === 'local') {
+      return true
+    }
+
+    if (imageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
+      window.alert('Configuration Azure incomplète (container URL + SAS token).')
+      setShowSettings(true)
+      return false
+    }
+
+    if (
+      imageStorageMode === 's3'
+      && (!s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey.trim())
+    ) {
+      window.alert('Configuration S3 incomplète (region, bucket, access key, secret key).')
+      setShowSettings(true)
+      return false
+    }
+
+    if (imageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
+      window.alert('Configuration Dropbox incomplète (access token).')
+      setShowSettings(true)
+      return false
+    }
+
+    if (imageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
+      window.alert('Configuration Google Drive incomplète (access token).')
+      setShowSettings(true)
+      return false
+    }
+
+    return true
+  }, [
+    azureBlobContainerUrl,
+    azureBlobSasToken,
+    dropboxAccessToken,
+    gdriveAccessToken,
+    imageStorageMode,
+    s3AccessKeyId,
+    s3Bucket,
+    s3Region,
+    s3SecretAccessKey,
+  ])
+
   const handleImageFiles = useCallback(
     async (
       files: File[],
@@ -2318,6 +2752,10 @@ function App() {
     ) => {
       const holo = getHoloApi()
       if (!holo) return
+
+      if (!ensureImageProviderReady()) {
+        return
+      }
 
       for (const file of files) {
         const reader = new FileReader()
@@ -2369,6 +2807,7 @@ function App() {
     [
       azureBlobContainerUrl,
       azureBlobSasToken,
+      ensureImageProviderReady,
       getHoloApi,
       imageStorageMode,
       s3AccessKeyId,
@@ -3630,6 +4069,9 @@ function App() {
   }, [getHoloApi, refreshGitState])
 
   const conflictedFiles = normalizeGitState(gitState).conflictedFiles
+  const gitAuthErrorActive = isLikelyGitAuthError(gitState.error)
+    || (syncFeedback.status === 'error' && isLikelyGitAuthError(syncFeedback.message))
+    || (syncFeedback.status === 'warning' && isLikelyGitAuthError(syncFeedback.message))
 
   const openConflictedFile = useCallback(
     async (filePath: string) => {
@@ -3642,6 +4084,36 @@ function App() {
       }
     },
     [openFile],
+  )
+
+  const resolveConflictChoice = useCallback(
+    async (filePath: string, strategy: 'ours' | 'theirs') => {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      setIsGitBusy(true)
+
+      try {
+        await holo.gitResolveConflict(filePath, strategy)
+        await refreshGitState(false)
+        await checkRemoteFreshnessAndGuardEditing(false)
+        setSyncFeedback({
+          status: 'success',
+          message: strategy === 'ours'
+            ? `Conflit résolu avec la version locale: ${getBaseName(filePath)}`
+            : `Conflit résolu avec la version serveur: ${getBaseName(filePath)}`,
+          at: new Date().toISOString(),
+        })
+      } catch (error) {
+        window.alert((error as Error).message)
+      } finally {
+        setIsGitBusy(false)
+      }
+    },
+    [checkRemoteFreshnessAndGuardEditing, getHoloApi, refreshGitState],
   )
 
   const minimizeWindow = useCallback(async () => {
@@ -3803,6 +4275,29 @@ function App() {
     setContextMenu(null)
   }, [])
 
+  const submitAuthorProfile = useCallback(() => {
+    const nextAuthor = authorModalValue.trim()
+    if (!nextAuthor) {
+      return
+    }
+
+    setAppAuthor(nextAuthor)
+    setShowAuthorModal(false)
+    setShowUserMenu(false)
+  }, [authorModalValue])
+
+  const logoutAuthorProfile = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('holo-author')
+    }
+
+    setAppAuthor('')
+    setShowUserMenu(false)
+    setAuthorModalMode('startup')
+    setAuthorModalValue('')
+    setShowAuthorModal(true)
+  }, [])
+
 
   return (
     <main
@@ -3820,6 +4315,43 @@ function App() {
           </div>
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
+          <div className="relative">
+            <button
+              className="size-8 rounded-full border border-white/20 bg-white/5 text-[10px] font-bold text-white/80 hover:border-[#7B61FF]/60 hover:text-white"
+              onClick={() => setShowUserMenu((previous) => !previous)}
+              title={appAuthor ? `Utilisateur: ${appAuthor}` : 'Configurer utilisateur'}
+            >
+              {appAuthor.trim() ? appAuthor.trim().charAt(0).toUpperCase() : <i className="fa-regular fa-user" />}
+            </button>
+
+            {showUserMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="absolute right-0 z-50 mt-1 w-52 rounded-lg border border-white/10 bg-[#1a1b1c] p-1 shadow-2xl">
+                  <div className="px-2 py-1 text-[10px] text-white/50 truncate">{appAuthor.trim() || 'Aucun profil'}</div>
+                  <button
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/80 hover:bg-white/8 hover:text-white"
+                    onClick={() => {
+                      setAuthorModalMode('edit')
+                      setAuthorModalValue(appAuthor)
+                      setShowAuthorModal(true)
+                      setShowUserMenu(false)
+                    }}
+                  >
+                    <i className="fa-regular fa-pen-to-square" />
+                    Changer le nom
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/15"
+                    onClick={logoutAuthorProfile}
+                  >
+                    <i className="fa-solid fa-right-from-bracket" />
+                    Déconnexion
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
             onClick={() => {
@@ -4069,6 +4601,7 @@ function App() {
                   node={tree!}
                   selectedPath={selectedPath}
                   fileIconByPath={fileIconByPath}
+                  fileMetaByPath={fileMetaByPath}
                   onSelect={onSelectNode}
                   onContextMenu={openTreeContextMenu}
                   expandedDirectories={expandedDirectories}
@@ -4391,6 +4924,31 @@ function App() {
                   </div>
                 )}
 
+                {gitAuthErrorActive && (
+                  <div className="rounded px-3 py-2 text-xs border border-amber-700/50 bg-amber-900/20 text-amber-100">
+                    <p className="font-medium text-[10px]">
+                      Problème d’authentification détecté.
+                    </p>
+                    <p className="mt-1 text-[10px] text-amber-200/85">
+                      Les identifiants Git ne sont pas saisis dans Holo : ils sont gérés par Git (SSH / Credential Manager du système).
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="rounded border border-amber-400/40 px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-400/15"
+                        onClick={() => setShowGitAuthHelp(true)}
+                      >
+                        Aide connexion
+                      </button>
+                      <button
+                        className="rounded border border-white/20 px-2 py-1 text-[10px] text-white/85 hover:bg-white/10"
+                        onClick={() => setShowSettings(true)}
+                      >
+                        Ouvrir paramètres
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Last fetch */}
                 {gitState.lastFetchAt && (
                   <p className="text-[10px] text-white/40 text-center">
@@ -4407,13 +4965,33 @@ function App() {
                     <ul className="space-y-1">
                       {conflictedFiles.map((filePath) => (
                         <li key={filePath}>
-                          <button
-                            className="w-full truncate rounded border border-amber-700/30 bg-white/5 px-2 py-1 text-left text-[9px] text-amber-100 hover:bg-amber-900/20 hover:border-amber-700/50"
-                            onClick={() => void openConflictedFile(filePath)}
-                            title={filePath}
-                          >
-                            {getBaseName(filePath)}
-                          </button>
+                          <div className="rounded border border-amber-700/30 bg-white/5 p-1.5">
+                            <button
+                              className="mb-1 w-full truncate rounded px-1.5 py-1 text-left text-[9px] text-amber-100 hover:bg-amber-900/20"
+                              onClick={() => void openConflictedFile(filePath)}
+                              title={filePath}
+                            >
+                              {getBaseName(filePath)}
+                            </button>
+                            <div className="grid grid-cols-2 gap-1">
+                              <button
+                                className="rounded border border-emerald-600/40 bg-emerald-900/20 px-1.5 py-1 text-[9px] text-emerald-100 hover:bg-emerald-800/30 disabled:opacity-50"
+                                onClick={() => void resolveConflictChoice(filePath, 'ours')}
+                                disabled={isGitBusy}
+                                title="Garder ta version locale"
+                              >
+                                Garder local
+                              </button>
+                              <button
+                                className="rounded border border-sky-600/40 bg-sky-900/20 px-1.5 py-1 text-[9px] text-sky-100 hover:bg-sky-800/30 disabled:opacity-50"
+                                onClick={() => void resolveConflictChoice(filePath, 'theirs')}
+                                disabled={isGitBusy}
+                                title="Prendre la version du serveur"
+                              >
+                                Prendre serveur
+                              </button>
+                            </div>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -4688,7 +5266,7 @@ function App() {
                       <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:table-fixed [&_table]:text-sm [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-normal [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_.table-scroll-wrapper]:overflow-x-auto [&_.table-scroll-wrapper]:rounded-lg [&_.table-scroll-wrapper]:border [&_.table-scroll-wrapper]:border-white/10 [&_.table-add-row-btn]:block [&_.table-add-row-btn]:w-full [&_.table-add-row-btn]:cursor-pointer [&_.table-add-row-btn]:rounded-b-lg [&_.table-add-row-btn]:border [&_.table-add-row-btn]:border-t-0 [&_.table-add-row-btn]:border-white/10 [&_.table-add-row-btn]:py-1.5 [&_.table-add-row-btn]:text-center [&_.table-add-row-btn]:text-[11px] [&_.table-add-row-btn]:text-white/35 [&_.table-add-row-btn:hover]:bg-white/5 [&_.table-add-row-btn:hover]:text-white/60 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-10 [&_hr]:border-none [&_hr]:h-px [&_hr]:bg-white/30 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable={!remoteEditBlock.isBlocked}
                           suppressContentEditableWarning
                           spellCheck
@@ -4731,6 +5309,43 @@ function App() {
                           onDragOver={onEditorDragOver}
                           onDragLeave={onEditorDragLeave}
                           onClick={(e) => {
+                            // + Nouvelle ligne button below tables
+                            if ((e.target as HTMLElement).classList.contains('table-add-row-btn')) {
+                              e.preventDefault()
+                              const btn = e.target as HTMLElement
+                              const wrapper = btn.previousElementSibling as HTMLElement | null
+                              const table = wrapper?.querySelector('table') as HTMLTableElement | null
+                              if (table) {
+                                const tbody = table.querySelector('tbody')
+                                if (tbody) {
+                                  const lastRow = tbody.lastElementChild as HTMLTableRowElement | null
+                                  const columnCount = lastRow ? lastRow.cells.length : 1
+                                  const newRow = document.createElement('tr')
+                                  for (let i = 0; i < columnCount; i++) {
+                                    const td = document.createElement('td')
+                                    td.innerHTML = i === 0 ? '\u200B' : ''
+                                    newRow.appendChild(td)
+                                  }
+                                  tbody.appendChild(newRow)
+                                  const firstCell = newRow.cells[0]
+                                  if (firstCell) {
+                                    const range = document.createRange()
+                                    range.selectNodeContents(firstCell)
+                                    range.collapse(true)
+                                    window.getSelection()?.removeAllRanges()
+                                    window.getSelection()?.addRange(range)
+                                    firstCell.focus()
+                                  }
+                                  const editor = wysiwygEditorRef.current
+                                  if (editor) {
+                                    refreshTableSummaries()
+                                    const md = turndownService.turndown(editor.innerHTML)
+                                    updateActiveTabBody(md)
+                                  }
+                                }
+                              }
+                              return
+                            }
                             const target = e.target as HTMLInputElement
                             if (target.type === 'checkbox') {
                               const taskItem = target.closest('.task-item')
@@ -4925,6 +5540,16 @@ function App() {
                       title="Copier"
                     >
                       <i className="fa-regular fa-copy text-[9px]" />
+                    </button>
+                    <button
+                      className="font-mono text-[10px] text-white/30 hover:text-white/70 transition-colors px-1"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        void formatCodeBlock(hoveredCodeBlock.codeEl)
+                      }}
+                      title="Formater le code"
+                    >
+                      <i className="fa-solid fa-wand-magic-sparkles text-[9px]" />
                     </button>
                     {/* Language selector */}
                     <button
@@ -5531,6 +6156,69 @@ function App() {
         </div>
       )}
 
+      {showAuthorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-regular fa-user text-[#7B61FF]" />
+                {authorModalMode === 'startup' ? 'Ton profil' : 'Modifier le profil'}
+              </h2>
+              {authorModalMode !== 'startup' && (
+                <button
+                  className="text-white/40 hover:text-white transition-colors"
+                  onClick={() => setShowAuthorModal(false)}
+                >
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              )}
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-white/70">
+                {authorModalMode === 'startup'
+                  ? 'Choisis ton nom pour identifier tes contributions dans l’app.'
+                  : 'Mets à jour ton nom affiché.'}
+              </p>
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Nom affiché</label>
+                <input
+                  autoFocus
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                  placeholder="Ex: Romane"
+                  value={authorModalValue}
+                  onChange={(e) => setAuthorModalValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      submitAuthorProfile()
+                    }
+                    if (e.key === 'Escape' && authorModalMode !== 'startup') {
+                      setShowAuthorModal(false)
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                {authorModalMode !== 'startup' && (
+                  <button
+                    className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
+                    onClick={() => setShowAuthorModal(false)}
+                  >
+                    Annuler
+                  </button>
+                )}
+                <button
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff] disabled:opacity-50"
+                  disabled={!authorModalValue.trim()}
+                  onClick={submitAuthorProfile}
+                >
+                  Valider
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {linkDialog && (
         <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
@@ -5572,6 +6260,42 @@ function App() {
                   }}
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Page du projet (lien relatif)</label>
+                <input
+                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
+                  placeholder="Rechercher un fichier .md"
+                  value={linkDialog.pageQuery ?? ''}
+                  onChange={(e) => setLinkDialog({ ...linkDialog, pageQuery: e.target.value })}
+                />
+                {linkPageSuggestions.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded border border-white/10 bg-white/5 p-1">
+                    {linkPageSuggestions.map((filePath) => {
+                      const relativePath = getRelativeLinkPath(activeTabPath, filePath, rootPath)
+                      const label = getBaseName(filePath).replace(/\.md$/i, '')
+
+                      return (
+                        <button
+                          key={filePath}
+                          type="button"
+                          className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs text-white/80 hover:bg-white/10"
+                          onClick={() => {
+                            setLinkDialog({
+                              ...linkDialog,
+                              url: relativePath,
+                              text: linkDialog.text.trim() ? linkDialog.text : label,
+                              pageQuery: getBaseName(filePath),
+                            })
+                          }}
+                        >
+                          <span className="truncate pr-2">{label}</span>
+                          <span className="truncate text-[10px] text-white/45">{relativePath}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
@@ -5593,6 +6317,61 @@ function App() {
                     setLinkDialog(null)
                   }}
                 >Insérer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGitAuthHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-key text-amber-300" />
+                Connexion Git
+              </h2>
+              <button
+                className="text-white/40 hover:text-white transition-colors"
+                onClick={() => setShowGitAuthHelp(false)}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-sm text-white/80">
+              <p>
+                Holo n’enregistre pas de login/mot de passe Git. Les accès distants sont gérés par Git lui-même.
+              </p>
+              <div className="rounded border border-white/10 bg-white/5 p-3 text-xs text-white/75 space-y-1">
+                <p className="font-semibold text-white/85">Où sont stockés les identifiants ?</p>
+                <p>- SSH: dans ta clé privée locale (`~/.ssh`) + clé publique enregistrée côté forge.</p>
+                <p>- HTTPS: dans le credential manager du système (ou helper Git configuré).</p>
+              </div>
+              <div className="rounded border border-white/10 bg-white/5 p-3 text-xs text-white/75 space-y-1">
+                <p className="font-semibold text-white/85">Quand les saisir ?</p>
+                <p>- Au premier `fetch/pull/push` en HTTPS (invite système Git), puis mémorisation par le helper.</p>
+                <p>- En SSH, aucune saisie récurrente si la clé est déjà configurée.</p>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
+                  onClick={() => {
+                    setShowGitAuthHelp(false)
+                    setShowSettings(true)
+                  }}
+                >
+                  Paramètres
+                </button>
+                <button
+                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff]"
+                  onClick={() => {
+                    setShowGitAuthHelp(false)
+                    void fetchChanges()
+                  }}
+                >
+                  Retenter Fetch
+                </button>
               </div>
             </div>
           </div>

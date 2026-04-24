@@ -1527,6 +1527,42 @@ ipcMain.handle('git:merge', async (_event, branch) => {
   }
 })
 
+ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
+  const cwd = ensureRootPath()
+  await ensureGitRepository(cwd)
+
+  const absoluteFilePath = String(filePath ?? '')
+  assertPathInsideRoot(absoluteFilePath)
+
+  const normalizedStrategy = strategy === 'theirs' ? 'theirs' : 'ours'
+  const relativePath = path.relative(cwd, absoluteFilePath)
+
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error('Fichier de conflit invalide.')
+  }
+
+  const checkoutResult = await runGit(
+    ['checkout', normalizedStrategy === 'ours' ? '--ours' : '--theirs', '--', relativePath],
+    cwd,
+  )
+
+  if (!checkoutResult.ok) {
+    throw new Error(getGitErrorMessage(checkoutResult, 'Impossible de choisir cette version du fichier.'))
+  }
+
+  const addResult = await runGit(['add', '--', relativePath], cwd)
+
+  if (!addResult.ok) {
+    throw new Error(getGitErrorMessage(addResult, 'Impossible de marquer le conflit comme résolu.'))
+  }
+
+  return {
+    ok: true,
+    filePath: absoluteFilePath,
+    strategy: normalizedStrategy,
+  }
+})
+
 ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions) => {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
 

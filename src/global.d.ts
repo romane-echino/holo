@@ -123,6 +123,7 @@ interface HoloApi {
   gitSync: () => Promise<HoloGitSyncResult>
   gitPull: () => Promise<{ ok: true; output: string }>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
+  gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs' }>
   saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
   loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
 }
