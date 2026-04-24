@@ -1113,6 +1113,18 @@ ipcMain.handle('fs:read-file', async (_event, filePath) => {
   return fs.readFile(filePath, 'utf8')
 })
 
+ipcMain.handle('fs:read-file-optional', async (_event, filePath) => {
+  assertPathInsideRoot(filePath)
+  try {
+    return await fs.readFile(filePath, 'utf8')
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
+})
+
 ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
   assertPathInsideRoot(targetPath)
   const stats = await fs.stat(targetPath)

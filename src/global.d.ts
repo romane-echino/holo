@@ -99,6 +99,7 @@ interface HoloApi {
   openRecentFolder: (folderPath: string) => Promise<OpenFolderResult>
   refreshTree: () => Promise<OpenFolderResult>
   readFile: (filePath: string) => Promise<string>
+  readFileOptional: (filePath: string) => Promise<string | null>
   getPathStats: (targetPath: string) => Promise<{ modifiedAt: string; createdAt: string }>
   writeFile: (filePath: string, content: string) => Promise<{ ok: true }>
   createFile: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>

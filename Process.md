@@ -367,7 +367,7 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 #### Partie 2
-- Erreur dans la console
+- ✅ Erreur dans la console
 
 [dev:electron] [nodemon] starting `electron electron/main.js`
 [dev:electron] Error occurred in handler for 'fs:read-file': Error: ENOENT: no such file or directory, open '/home/romane/Bureau/Dev/documentation/.holo.json'
@@ -381,15 +381,15 @@ Recherche dans la doc (directement sur qdrant?)
 [dev:electron] }
 
 
-- L'ui des tableau est a revoir, je pense qu'il faudrai faire un composant séparé puis vraiment se baser sur la structure des tableaux de loop
-  - Avoir un composant react qui gère son exportation en temps réel en markdown
-  - Possiblité de trier les colonnes A-z Z-a
-  - Numero de ligne automatiques
-  - pouvoir drag n drop des ligne et des colonnes
-  - un bouton " + nouveau" Pour ajouter des lignes
-  - choix du type de colonne (feinte avec les emoji pour le stockage en markdown)
-  - Un truc propre moderne fluide et fonctionnel
-  - Pas de resize de colonnes
+- ✅ L'ui des tableau est a revoir, je pense qu'il faudrai faire un composant séparé puis vraiment se baser sur la structure des tableaux de loop
+  - ✅ Avoir un composant react qui gère son exportation en temps réel en markdown
+  - ✅ Possiblité de trier les colonnes A-z Z-a
+  - ✅ Numero de ligne automatiques
+  - ✅ pouvoir drag n drop des ligne et des colonnes
+  - ✅ un bouton " + nouveau" Pour ajouter des lignes
+  - ✅ choix du type de colonne (feinte avec les emoji pour le stockage en markdown)
+  - ✅ Un truc propre moderne fluide et fonctionnel
+  - ✅ Pas de resize de colonnes
 
 
   Code source de loop

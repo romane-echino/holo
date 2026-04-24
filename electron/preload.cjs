@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('holo', {
   openRecentFolder: (folderPath) => ipcRenderer.invoke('fs:open-recent-folder', folderPath),
   refreshTree: () => ipcRenderer.invoke('fs:refresh-tree'),
   readFile: (filePath) => ipcRenderer.invoke('fs:read-file', filePath),
+  readFileOptional: (filePath) => ipcRenderer.invoke('fs:read-file-optional', filePath),
   getPathStats: (targetPath) => ipcRenderer.invoke('fs:get-path-stats', targetPath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:write-file', filePath, content),
   createFile: (parentDirectoryPath, name) =>

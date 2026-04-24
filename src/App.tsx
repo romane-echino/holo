@@ -12,6 +12,13 @@ import * as prettierPluginTypescript from 'prettier/plugins/typescript'
 import * as prettierPluginPostcss from 'prettier/plugins/postcss'
 import * as prettierPluginHtml from 'prettier/plugins/html'
 import * as prettierPluginMarkdown from 'prettier/plugins/markdown'
+import { TableControlsOverlay } from './components/table/TableControlsOverlay'
+import {
+  COLUMN_TYPES,
+  TYPE_EMOJIS,
+  enhanceTablesInDocument,
+} from './components/table/tableEngine'
+import { useTableInteractions } from './components/table/useTableInteractions'
 
 type NodeType = 'file' | 'directory'
 
@@ -639,16 +646,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'ai', icon: 'fa-solid fa-wand-magic-sparkles', label: 'Demander à l\'IA', hint: 'Générer du contenu', keywords: ['ia', 'ai', 'gpt', 'chatgpt', 'intelligence', 'artificielle'], requiresApiKey: true },
 ]
 
-const COLUMN_TYPES = [
-  { emoji: '', label: 'Texte' },
-  { emoji: '🔢', label: 'Nombre' },
-  { emoji: '💰', label: 'Monétaire' },
-  { emoji: '📅', label: 'Date' },
-  { emoji: '☑️', label: 'Checkbox' },
-]
-
-const TYPE_EMOJIS = COLUMN_TYPES.filter((t) => t.emoji).map((t) => t.emoji)
-
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null)
   const [tree, setTree] = useState<TreeNode | null>(null)
@@ -715,6 +712,7 @@ function App() {
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
   const imageDragDepthRef = useRef(0)
+  const tableDndCounterRef = useRef(1)
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
@@ -737,6 +735,7 @@ function App() {
   const [updateReady, setUpdateReady] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
   const startupNavigationDoneRef = useRef(false)
+
   const turndownService = useMemo(() => {
     const service = new TurndownService({
       headingStyle: 'atx',
@@ -808,7 +807,7 @@ function App() {
       if (typeof html === 'string') {
         const div = document.createElement('div')
         div.innerHTML = html
-        div.querySelectorAll('.table-summary-row, tfoot, .table-add-row-btn').forEach((el) => el.remove())
+        div.querySelectorAll('.table-summary-row, tfoot, .table-add-row-btn, .table-row-index-badge').forEach((el) => el.remove())
         // Unwrap table-scroll-wrapper: replace div with its children
         div.querySelectorAll('.table-scroll-wrapper').forEach((wrapper) => {
           while (wrapper.firstChild) wrapper.parentNode?.insertBefore(wrapper.firstChild, wrapper)
@@ -1298,7 +1297,10 @@ function App() {
     const loadRepoImageStorageMode = async () => {
       setRepoImageModeReady(false)
       try {
-        const raw = await holo.readFile(getRepoConfigPath(rootPath))
+        const raw = await holo.readFileOptional(getRepoConfigPath(rootPath))
+        if (!raw) {
+          return
+        }
         const parsed = JSON.parse(raw) as { imageStorage?: { mode?: ImageStorageMode } }
         const mode = parsed?.imageStorage?.mode
 
@@ -1336,10 +1338,14 @@ function App() {
       let parsed: Record<string, unknown> = {}
 
       try {
-        const existingRaw = await holo.readFile(configPath)
-        const existingParsed = JSON.parse(existingRaw)
-        if (existingParsed && typeof existingParsed === 'object' && !Array.isArray(existingParsed)) {
-          parsed = existingParsed as Record<string, unknown>
+        const existingRaw = await holo.readFileOptional(configPath)
+        if (!existingRaw) {
+          parsed = {}
+        } else {
+          const existingParsed = JSON.parse(existingRaw)
+          if (existingParsed && typeof existingParsed === 'object' && !Array.isArray(existingParsed)) {
+            parsed = existingParsed as Record<string, unknown>
+          }
         }
       } catch {
         parsed = {}
@@ -1888,6 +1894,12 @@ function App() {
     [activeTab, updateActiveTabContent],
   )
 
+  const getNextTableDndId = useCallback(() => {
+    const next = tableDndCounterRef.current
+    tableDndCounterRef.current += 1
+    return `table-dnd-${next}`
+  }, [])
+
   const markdownToHtml = useCallback((markdown: string) => {
     const parsed = marked.parse(markdown)
     const html = typeof parsed === 'string' ? parsed : ''
@@ -1955,88 +1967,10 @@ function App() {
       block.innerHTML = lines.map((line) => `<span class="code-line">${line || '\u200B'}</span>`).join('\n')
     })
 
-    // ── Table column type processing ──────────────────────────────────
-    doc.querySelectorAll('table').forEach((table) => {
-      const headers = Array.from(table.querySelectorAll('thead th'))
-      const colTypes = headers.map((th) => {
-        const text = th.textContent ?? ''
-        if (text.startsWith('🔢') || text.startsWith('💰')) return 'number'
-        if (text.startsWith('📅')) return 'date'
-        if (text.startsWith('☑️')) return 'checkbox'
-        return 'text'
-      })
-
-      const tbody = table.querySelector('tbody')
-      if (!tbody) return
-
-      // Apply per-cell styles
-      Array.from(tbody.querySelectorAll('tr')).forEach((row) => {
-        Array.from(row.querySelectorAll('td')).forEach((td, i) => {
-          const type = colTypes[i]
-          if (type === 'number') {
-            td.classList.add('col-type-number')
-          } else if (type === 'checkbox') {
-            const raw = td.textContent?.trim().toLowerCase() ?? ''
-            const checked = ['x', 'true', 'yes', 'oui', '1', '✓', '✔'].includes(raw)
-            td.classList.add('col-checkbox-cell')
-            td.dataset.checked = String(checked)
-            td.innerHTML = `<input type="checkbox" class="task-checkbox col-checkbox" ${checked ? 'checked' : ''} />`
-          } else if (type === 'date') {
-            td.classList.add('col-type-date')
-          }
-        })
-      })
-
-      // Add summary tfoot
-      let tfoot = table.querySelector('tfoot')
-      if (!tfoot) {
-        tfoot = doc.createElement('tfoot')
-        table.appendChild(tfoot)
-      }
-      const summaryRow = doc.createElement('tr')
-      summaryRow.classList.add('table-summary-row')
-      colTypes.forEach((type, i) => {
-        const td = doc.createElement('td')
-        td.classList.add('table-summary-cell')
-        td.setAttribute('contenteditable', 'false')
-        td.setAttribute('tabindex', '-1')
-        if (type === 'number') {
-          const cells = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1})`))
-          let sum = 0
-          cells.forEach((cell) => {
-            const val = parseFloat((cell.textContent ?? '').replace(/[^\d.,-]/g, '').replace(',', '.'))
-            if (!isNaN(val)) sum += val
-          })
-          td.textContent = sum.toLocaleString('fr-FR')
-          td.classList.add('col-type-number')
-        } else if (type === 'checkbox') {
-          const checkboxes = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1}) input`)) as HTMLInputElement[]
-          const checkedCount = checkboxes.filter((cb) => cb.checked).length
-          td.textContent = `${checkedCount} / ${checkboxes.length}`
-        } else {
-          const rowCount = tbody.querySelectorAll('tr').length
-          td.textContent = i === 0 ? `${rowCount} ligne${rowCount > 1 ? 's' : ''}` : ''
-        }
-        summaryRow.appendChild(td)
-      })
-      tfoot.appendChild(summaryRow)
-
-      // Wrap table in a scroll container for horizontal overflow
-      const wrapper = doc.createElement('div')
-      wrapper.className = 'table-scroll-wrapper'
-      table.parentNode?.insertBefore(wrapper, table)
-      wrapper.appendChild(table)
-
-      // Add "+ Nouvelle ligne" button below the wrapper
-      const addRowBtn = doc.createElement('button')
-      addRowBtn.className = 'table-add-row-btn'
-      addRowBtn.setAttribute('contenteditable', 'false')
-      addRowBtn.textContent = '+ Nouvelle ligne'
-      wrapper.parentNode?.insertBefore(addRowBtn, wrapper.nextSibling)
-    })
+    enhanceTablesInDocument(doc, getNextTableDndId)
 
     return doc.body.innerHTML
-  }, [])
+  }, [getNextTableDndId])
 
   const syncWysiwygFromMarkdown = useCallback(
     (markdown: string) => {
@@ -2052,54 +1986,6 @@ function App() {
     },
     [markdownToHtml],
   )
-
-  // Refresh summary tfoot rows in-place without re-rendering the whole editor
-  const refreshTableSummaries = useCallback(() => {
-    const editor = wysiwygEditorRef.current
-    if (!editor) return
-    editor.querySelectorAll('table').forEach((table) => {
-      const headers = Array.from(table.querySelectorAll('thead th'))
-      const colTypes = headers.map((th) => {
-        const text = th.textContent ?? ''
-        if (text.startsWith('🔢') || text.startsWith('💰')) return 'number'
-        if (text.startsWith('📅')) return 'date'
-        if (text.startsWith('☑️')) return 'checkbox'
-        return 'text'
-      })
-      const tbody = table.querySelector('tbody')
-      if (!tbody) return
-      // Remove old tfoot
-      table.querySelector('tfoot')?.remove()
-      const tfoot = document.createElement('tfoot')
-      const summaryRow = document.createElement('tr')
-      summaryRow.classList.add('table-summary-row')
-      colTypes.forEach((type, i) => {
-        const td = document.createElement('td')
-        td.classList.add('table-summary-cell')
-        td.setAttribute('contenteditable', 'false')
-        td.setAttribute('tabindex', '-1')
-        if (type === 'number') {
-          let sum = 0
-          tbody.querySelectorAll(`tr td:nth-child(${i + 1})`).forEach((cell) => {
-            const val = parseFloat((cell.textContent ?? '').replace(/[^\d.,-]/g, '').replace(',', '.'))
-            if (!isNaN(val)) sum += val
-          })
-          td.textContent = sum.toLocaleString('fr-FR')
-          td.classList.add('col-type-number')
-        } else if (type === 'checkbox') {
-          const checkboxes = Array.from(tbody.querySelectorAll(`tr td:nth-child(${i + 1}) input`)) as HTMLInputElement[]
-          const checkedCount = checkboxes.filter((cb) => cb.checked).length
-          td.textContent = `${checkedCount} / ${checkboxes.length}`
-        } else {
-          const rowCount = tbody.querySelectorAll('tr').length
-          td.textContent = i === 0 ? `${rowCount} ligne${rowCount > 1 ? 's' : ''}` : ''
-        }
-        summaryRow.appendChild(td)
-      })
-      tfoot.appendChild(summaryRow)
-      table.appendChild(tfoot)
-    })
-  }, [])
 
   useEffect(() => {
     if (editorMode !== 'wysiwyg' || !activeTabPath || !activeTab) {
@@ -2823,29 +2709,32 @@ function App() {
     ],
   )
 
-  const onWysiwygDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      imageDragDepthRef.current = 0
-      setIsImageDragOverEditor(false)
-      const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile)
-      if (imageFiles.length === 0) return
-      event.preventDefault()
-      event.stopPropagation()
-      const editor = wysiwygEditorRef.current
-      if (!editor) return
-      void handleImageFiles(imageFiles, (_md, relativePath, previewDataUrl) => {
-        const isExternal = /^https?:\/\//i.test(relativePath)
-        const safePath = relativePath.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-        const imgHtml = isExternal
-          ? `<img src="${safePath}" alt="" style="max-width:100%;border-radius:4px">`
-          : `<img data-src="${safePath}" src="${previewDataUrl}" alt="" style="max-width:100%;border-radius:4px">`
-        document.execCommand('insertHTML', false, imgHtml)
-        const md = turndownService.turndown(editor.innerHTML)
-        updateActiveTabBody(md)
-      })
-    },
-    [handleImageFiles, isImageFile, turndownService, updateActiveTabBody],
-  )
+  const {
+    refreshTableSummaries,
+    onWysiwygDragStart,
+    onWysiwygDragOver,
+    onWysiwygDrop,
+    onWysiwygDragEnd,
+    insertTableRow,
+    insertTableColumn,
+    deleteTableRow,
+    deleteTableColumn,
+    sortTableByCurrentColumn,
+    setCurrentColumnType,
+    openCurrentColumnTypePicker,
+  } = useTableInteractions({
+    wysiwygEditorRef,
+    getNextTableDndId,
+    imageDragDepthRef,
+    setIsImageDragOverEditor,
+    onEditorDragOver,
+    handleImageFiles,
+    isImageFile,
+    turndownService,
+    updateActiveTabBody,
+    syncWysiwygFromMarkdown,
+    setColumnTypePopup,
+  })
 
   const onRawDrop = useCallback(
     (event: React.DragEvent<HTMLTextAreaElement>) => {
@@ -3360,148 +3249,6 @@ function App() {
     },
     [onWysiwygInput],
   )
-
-  const insertTableRow = useCallback(() => {
-    const editor = wysiwygEditorRef.current
-    const sel = window.getSelection()
-
-    if (!editor || !sel?.anchorNode) {
-      return
-    }
-
-    const anchorElement = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
-    const currentCell = anchorElement?.closest('td, th') as HTMLTableCellElement | null
-    const currentRow = currentCell?.closest('tr') as HTMLTableRowElement | null
-    const table = currentRow?.closest('table') as HTMLTableElement | null
-
-    if (!currentRow || !table) {
-      return
-    }
-
-    const columnCount = Math.max(...Array.from(table.rows).map((row) => row.cells.length), 1)
-    const newRow = document.createElement('tr')
-
-    for (let index = 0; index < columnCount; index += 1) {
-      const cell = document.createElement('td')
-      cell.innerHTML = index === 0 ? '\u200B' : ''
-      newRow.appendChild(cell)
-    }
-
-    currentRow.parentNode?.insertBefore(newRow, currentRow.nextSibling)
-
-    const firstCell = newRow.cells[0]
-    if (firstCell) {
-      const range = document.createRange()
-      range.selectNodeContents(firstCell)
-      range.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(range)
-    }
-
-    const md = turndownService.turndown(editor.innerHTML)
-    updateActiveTabBody(md)
-    syncWysiwygFromMarkdown(md)
-  }, [syncWysiwygFromMarkdown, turndownService, updateActiveTabBody])
-
-  const insertTableColumn = useCallback(() => {
-    const editor = wysiwygEditorRef.current
-    const sel = window.getSelection()
-
-    if (!editor || !sel?.anchorNode) {
-      return
-    }
-
-    const anchorElement = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
-    const currentCell = anchorElement?.closest('td, th') as HTMLTableCellElement | null
-    const table = currentCell?.closest('table') as HTMLTableElement | null
-
-    if (!currentCell || !table) {
-      return
-    }
-
-    const columnIndex = currentCell.cellIndex
-
-    Array.from(table.rows).forEach((row, rowIndex) => {
-      const referenceCell = row.cells[columnIndex]
-      const isHeaderRow = row.parentElement?.tagName === 'THEAD' || rowIndex === 0
-      const nextCell = document.createElement(isHeaderRow ? 'th' : 'td')
-      nextCell.innerHTML = rowIndex === 0 ? 'Nouvelle col.' : rowIndex === 1 ? '\u200B' : ''
-      row.insertBefore(nextCell, referenceCell?.nextSibling ?? null)
-    })
-
-    const currentRow = currentCell.closest('tr') as HTMLTableRowElement | null
-    const targetRow = table.rows[currentRow?.rowIndex ?? 0]
-    const targetCell = targetRow?.cells[columnIndex + 1]
-    if (targetCell) {
-      const range = document.createRange()
-      range.selectNodeContents(targetCell)
-      range.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(range)
-    }
-
-    const md = turndownService.turndown(editor.innerHTML)
-    updateActiveTabBody(md)
-    syncWysiwygFromMarkdown(md)
-  }, [syncWysiwygFromMarkdown, turndownService, updateActiveTabBody])
-
-  const deleteTableRow = useCallback(() => {
-    const editor = wysiwygEditorRef.current
-    const sel = window.getSelection()
-    if (!editor || !sel?.anchorNode) return
-    const anchorEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
-    const currentRow = anchorEl?.closest('tr') as HTMLTableRowElement | null
-    const table = currentRow?.closest('table') as HTMLTableElement | null
-    if (!currentRow || !table) return
-    // Don't delete if it's the only data row (keep at least the header)
-    const tbody = table.querySelector('tbody')
-    if (tbody && tbody.rows.length <= 1 && currentRow.parentElement === tbody) return
-    // Move cursor to previous or next row
-    const prevRow = currentRow.previousElementSibling as HTMLTableRowElement | null
-    const nextRow = currentRow.nextElementSibling as HTMLTableRowElement | null
-    const focusRow = prevRow ?? nextRow
-    currentRow.remove()
-    if (focusRow) {
-      const cell = focusRow.cells[0]
-      if (cell) {
-        const range = document.createRange()
-        range.selectNodeContents(cell)
-        range.collapse(false)
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    }
-    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
-  }, [turndownService, updateActiveTabBody])
-
-  const deleteTableColumn = useCallback(() => {
-    const editor = wysiwygEditorRef.current
-    const sel = window.getSelection()
-    if (!editor || !sel?.anchorNode) return
-    const anchorEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement
-    const currentCell = anchorEl?.closest('td, th') as HTMLTableCellElement | null
-    const table = currentCell?.closest('table') as HTMLTableElement | null
-    if (!currentCell || !table) return
-    const colIndex = currentCell.cellIndex
-    // Don't delete if it's the only column
-    if (table.rows[0]?.cells.length <= 1) return
-    Array.from(table.rows).forEach((row) => {
-      const cell = row.cells[colIndex]
-      if (cell) cell.remove()
-    })
-    // Focus adjacent cell
-    Array.from(table.rows).forEach((row) => {
-      const focusCell = row.cells[Math.max(0, colIndex - 1)]
-      if (focusCell) {
-        const range = document.createRange()
-        range.selectNodeContents(focusCell)
-        range.collapse(false)
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    })
-    updateActiveTabBody(turndownService.turndown(editor.innerHTML))
-  }, [turndownService, updateActiveTabBody])
 
   const autoCommitStructuralChange = useCallback(async (commitMessage: string) => {
     if (!gitState.isRepo || !window.holo) {
@@ -5266,7 +5013,7 @@ function App() {
                       <>
                         <div
                           ref={wysiwygEditorRef}
-                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-normal [&_th]:break-words [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_.table-scroll-wrapper]:overflow-x-auto [&_.table-scroll-wrapper]:rounded-lg [&_.table-scroll-wrapper]:border [&_.table-scroll-wrapper]:border-white/10 [&_.table-add-row-btn]:block [&_.table-add-row-btn]:w-full [&_.table-add-row-btn]:cursor-pointer [&_.table-add-row-btn]:rounded-b-lg [&_.table-add-row-btn]:border [&_.table-add-row-btn]:border-t-0 [&_.table-add-row-btn]:border-white/10 [&_.table-add-row-btn]:py-1.5 [&_.table-add-row-btn]:text-center [&_.table-add-row-btn]:text-[11px] [&_.table-add-row-btn]:text-white/35 [&_.table-add-row-btn:hover]:bg-white/5 [&_.table-add-row-btn:hover]:text-white/60 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-10 [&_hr]:border-none [&_hr]:h-px [&_hr]:bg-white/30 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
+                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-normal [&_th]:break-words [&_th[data-table-drag-type='column']]:cursor-grab [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_.table-drag-source]:bg-[#7B61FF]/18 [&_.table-drag-source]:ring-1 [&_.table-drag-source]:ring-[#9d8bff]/40 [&_.table-drag-target]:bg-[#7B61FF]/12 [&_.table-drag-target]:ring-1 [&_.table-drag-target]:ring-[#9d8bff]/30 [&_.table-row-index-badge]:mr-2 [&_.table-row-index-badge]:inline-flex [&_.table-row-index-badge]:h-4 [&_.table-row-index-badge]:min-w-4 [&_.table-row-index-badge]:items-center [&_.table-row-index-badge]:justify-center [&_.table-row-index-badge]:rounded [&_.table-row-index-badge]:bg-white/10 [&_.table-row-index-badge]:px-1 [&_.table-row-index-badge]:text-[10px] [&_.table-row-index-badge]:text-white/45 [&_.table-row-index-badge]:font-medium [&_.table-row-index-badge]:cursor-grab [&_.table-scroll-wrapper]:overflow-x-auto [&_.table-scroll-wrapper]:rounded-lg [&_.table-scroll-wrapper]:border [&_.table-scroll-wrapper]:border-white/10 [&_.table-add-row-btn]:block [&_.table-add-row-btn]:w-full [&_.table-add-row-btn]:cursor-pointer [&_.table-add-row-btn]:rounded-b-lg [&_.table-add-row-btn]:border [&_.table-add-row-btn]:border-t-0 [&_.table-add-row-btn]:border-white/10 [&_.table-add-row-btn]:py-1.5 [&_.table-add-row-btn]:text-center [&_.table-add-row-btn]:text-[11px] [&_.table-add-row-btn]:text-white/35 [&_.table-add-row-btn:hover]:bg-white/5 [&_.table-add-row-btn:hover]:text-white/60 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-10 [&_hr]:border-none [&_hr]:h-px [&_hr]:bg-white/30 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
                           contentEditable={!remoteEditBlock.isBlocked}
                           suppressContentEditableWarning
                           spellCheck
@@ -5305,11 +5052,13 @@ function App() {
                             }
                           }}
                           onDrop={onWysiwygDrop}
+                          onDragStart={onWysiwygDragStart}
+                          onDragEnd={onWysiwygDragEnd}
                           onDragEnter={onEditorDragEnter}
-                          onDragOver={onEditorDragOver}
+                          onDragOver={onWysiwygDragOver}
                           onDragLeave={onEditorDragLeave}
                           onClick={(e) => {
-                            // + Nouvelle ligne button below tables
+                            // + Nouveau button below tables
                             if ((e.target as HTMLElement).classList.contains('table-add-row-btn')) {
                               e.preventDefault()
                               const btn = e.target as HTMLElement
@@ -5472,47 +5221,22 @@ function App() {
                   </div>
                 )}
 
-                {tablePopup && editorMode === 'wysiwyg' && (
-                  <div
-                    className="fixed z-50 flex items-center gap-1 rounded-lg border border-white/15 bg-[#18191a] px-1 py-1 shadow-2xl"
-                    style={{ left: tablePopup.x, top: tablePopup.y, transform: 'translate(-100%, -100%)' }}
-                    onMouseDown={(e) => e.preventDefault()}
-                  >
-                    <button
-                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-white/10 hover:text-white"
-                      onClick={insertTableRow}
-                      title="Ajouter une ligne"
-                    >
-                      <i className="fa-solid fa-grip-lines mr-1 text-[10px]" />
-                      Ligne
-                    </button>
-                    <button
-                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-white/10 hover:text-white"
-                      onClick={insertTableColumn}
-                      title="Ajouter une colonne"
-                    >
-                      <i className="fa-solid fa-table-columns mr-1 text-[10px]" />
-                      Colonne
-                    </button>
-                    <div className="mx-1 h-4 w-px bg-white/15" />
-                    <button
-                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-red-500/20 hover:text-red-400"
-                      onClick={deleteTableRow}
-                      title="Supprimer la ligne"
-                    >
-                      <i className="fa-solid fa-minus mr-1 text-[10px]" />
-                      Ligne
-                    </button>
-                    <button
-                      className="rounded px-2 py-1 text-[11px] text-white/80 hover:bg-red-500/20 hover:text-red-400"
-                      onClick={deleteTableColumn}
-                      title="Supprimer la colonne"
-                    >
-                      <i className="fa-solid fa-xmark mr-1 text-[10px]" />
-                      Colonne
-                    </button>
-                  </div>
-                )}
+                <TableControlsOverlay
+                  editorMode={editorMode}
+                  tablePopup={tablePopup}
+                  columnTypePopup={columnTypePopup}
+                  columnTypes={COLUMN_TYPES}
+                  typeEmojis={TYPE_EMOJIS}
+                  onInsertTableRow={insertTableRow}
+                  onInsertTableColumn={insertTableColumn}
+                  onSortAsc={() => sortTableByCurrentColumn('asc')}
+                  onSortDesc={() => sortTableByCurrentColumn('desc')}
+                  onOpenCurrentColumnTypePicker={openCurrentColumnTypePicker}
+                  onDeleteTableRow={deleteTableRow}
+                  onDeleteTableColumn={deleteTableColumn}
+                  onSetCurrentColumnType={setCurrentColumnType}
+                  onCloseColumnTypePopup={() => setColumnTypePopup(null)}
+                />
 
                 {/* Code block language badge — shows when cursor is inside a pre */}
                 {hoveredCodeBlock && editorMode === 'wysiwyg' && !codeBlockPopup && (
@@ -5647,49 +5371,6 @@ function App() {
                   ) : null
                 })()}
 
-                {/* Column type popup */}
-                {columnTypePopup && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setColumnTypePopup(null)} />
-                    <div
-                      className="fixed z-50 flex gap-1 rounded-lg border border-white/15 bg-[#18191a] p-1.5 shadow-2xl"
-                      style={{ left: columnTypePopup.x, top: columnTypePopup.y }}
-                      onMouseDown={(e) => e.preventDefault()}
-                    >
-                      {COLUMN_TYPES.map(({ emoji, label }) => {
-                        const currentText = columnTypePopup.thEl.textContent ?? ''
-                        const isActive = emoji
-                          ? currentText.startsWith(emoji)
-                          : !TYPE_EMOJIS.some((em) => currentText.startsWith(em))
-                        return (
-                          <button
-                            key={label}
-                            className={`flex flex-col items-center gap-0.5 rounded px-2 py-1.5 text-[10px] transition-colors min-w-[44px] ${isActive ? 'bg-[#7B61FF]/25 text-white' : 'text-white/60 hover:bg-white/8 hover:text-white'}`}
-                            onClick={() => {
-                              const thEl = columnTypePopup.thEl
-                              let text = thEl.textContent ?? ''
-                              for (const em of TYPE_EMOJIS) {
-                                if (text.startsWith(`${em} `)) { text = text.slice(em.length + 1); break }
-                                if (text.startsWith(em)) { text = text.slice(em.length); break }
-                              }
-                              thEl.textContent = emoji ? `${emoji} ${text.trim()}` : text.trim()
-                              const editor = wysiwygEditorRef.current
-                              if (editor) {
-                                const md = turndownService.turndown(editor.innerHTML)
-                                updateActiveTabBody(md)
-                                syncWysiwygFromMarkdown(md)
-                              }
-                              setColumnTypePopup(null)
-                            }}
-                          >
-                            <span className="text-base leading-none">{emoji || 'T'}</span>
-                            <span>{label}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center">
