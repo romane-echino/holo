@@ -1206,6 +1206,36 @@ ipcMain.handle('fs:move-path', async (_event, sourcePath, targetDirectoryPath) =
   return { ok: true, newPath: targetPath }
 })
 
+ipcMain.handle('fs:copy-file', async (_event, sourcePath, targetDirectoryPath) => {
+  assertPathInsideRoot(sourcePath)
+  assertPathInsideRoot(targetDirectoryPath)
+
+  // Vérifier que la source existe et est un fichier
+  const stats = await fs.stat(sourcePath).catch(() => null)
+  if (!stats || !stats.isFile()) {
+    throw new Error('Seuls les fichiers peuvent être dupliqués.')
+  }
+
+  // Générer un nom unique pour la copie
+  const basename = path.basename(sourcePath)
+  const ext = path.extname(basename)
+  const nameWithoutExt = basename.slice(0, -ext.length)
+  
+  let copyPath = path.join(targetDirectoryPath, `${nameWithoutExt} (copie)${ext}`)
+  let counter = 1
+  
+  while (await fs.stat(copyPath).catch(() => null)) {
+    copyPath = path.join(targetDirectoryPath, `${nameWithoutExt} (copie ${counter})${ext}`)
+    counter++
+  }
+  
+  assertPathInsideRoot(copyPath)
+
+  // Copier le fichier
+  await fs.copyFile(sourcePath, copyPath)
+  return { ok: true, newPath: copyPath }
+})
+
 ipcMain.handle('fs:archive-path', async (_event, targetPath) => {
   assertPathInsideRoot(targetPath)
 
@@ -1299,6 +1329,36 @@ ipcMain.handle('fs:restore-archived-path', async (_event, archivedPath) => {
 ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
   getGitState({ fetchRemote: Boolean(fetchRemote) }),
 )
+
+ipcMain.handle('holo:read-repo-config', async () => {
+  if (!currentRootPath) {
+    return null
+  }
+
+  const configPath = path.join(currentRootPath, '.holo.json')
+  const configStats = await fs.stat(configPath).catch(() => null)
+
+  if (!configStats || !configStats.isFile()) {
+    return null
+  }
+
+  try {
+    const content = await fs.readFile(configPath, 'utf8')
+    return JSON.parse(content)
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('holo:write-repo-config', async (_event, config) => {
+  if (!currentRootPath) {
+    throw new Error('Aucun dépôt ouvert.')
+  }
+
+  const configPath = path.join(currentRootPath, '.holo.json')
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
+  return { ok: true }
+})
 
 ipcMain.handle('git:fetch', async () => {
   const cwd = ensureRootPath()

@@ -60,6 +60,8 @@ type GitDialog =
 type CloneDialog = {
   repoUrl: string
   destinationPath: string
+  username: string
+  password: string
   isSubmitting: boolean
 }
 
@@ -685,6 +687,7 @@ function App() {
   const [gitEmail, setGitEmail] = useState('')
   const [imageStorageMode, setImageStorageMode] = useState<ImageStorageMode>('local')
   const [repoImageModeReady, setRepoImageModeReady] = useState(false)
+  const [repoImageStorageMode, setRepoImageStorageMode] = useState<ImageStorageMode>('local')
   const [azureBlobContainerUrl, setAzureBlobContainerUrl] = useState('')
   const [azureBlobSasToken, setAzureBlobSasToken] = useState('')
   const [s3Region, setS3Region] = useState('')
@@ -918,7 +921,7 @@ function App() {
     setTree(result.tree)
   }, [getHoloApi])
 
-  const applyOpenedFolder = useCallback((result: OpenFolderResult) => {
+  const applyOpenedFolder = useCallback(async (result: OpenFolderResult) => {
     if (!result) {
       return
     }
@@ -932,6 +935,24 @@ function App() {
     setActiveTab(null)
     setActiveTabPath(null)
     setGitState(DEFAULT_GIT_STATE)
+    
+    // Charger la config du repo (.holo.json) pour les paramètres par repo
+    const holo = window.holo
+    if (holo) {
+      try {
+        const repoConfig = await holo.readRepoConfig()
+        if (repoConfig?.imageStorageMode) {
+          setRepoImageStorageMode(repoConfig.imageStorageMode)
+          setRepoImageModeReady(true)
+        } else {
+          setRepoImageStorageMode('local')
+          setRepoImageModeReady(false)
+        }
+      } catch {
+        setRepoImageStorageMode('local')
+        setRepoImageModeReady(false)
+      }
+    }
   }, [])
 
   const refreshRecentFolders = useCallback(async () => {
@@ -3636,6 +3657,32 @@ function App() {
     }
   }, [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath])
 
+  const copyPathTarget = useCallback(async (targetPath: string) => {
+    if (!rootPath) {
+      return
+    }
+
+    try {
+      const holo = getHoloApi()
+
+      if (!holo) {
+        return
+      }
+
+      // Extraire le répertoire parent du chemin
+      const parentPath = targetPath.substring(0, targetPath.lastIndexOf('/')) || rootPath
+      const result = await holo.copyFile(targetPath, parentPath)
+      
+      setSelectedPath(result.newPath)
+      setSelectedType('file')
+      await refreshTree()
+      await refreshGitState(false)
+      await autoCommitStructuralChange(buildAutoCommitMessage(appAuthor, 'CREATE', rootPath, result.newPath))
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath])
+
   const openTreeContextMenu = useCallback((node: TreeNode, position: { x: number; y: number }) => {
     setSelectedPath(node.path)
     setSelectedType(node.type)
@@ -3924,6 +3971,8 @@ function App() {
     setCloneDialog({
       repoUrl: '',
       destinationPath: '',
+      username: '',
+      password: '',
       isSubmitting: false,
     })
   }, [])
@@ -3964,6 +4013,8 @@ function App() {
 
     const repoUrl = cloneDialog.repoUrl.trim()
     const destinationPath = cloneDialog.destinationPath.trim()
+    const username = cloneDialog.username.trim()
+    const password = cloneDialog.password.trim()
 
     if (!repoUrl) {
       window.alert('Le lien du dépôt est requis.')
@@ -3988,6 +4039,8 @@ function App() {
       const result = await holo.gitCloneRepository({
         repoUrl,
         destinationPath,
+        username: username || undefined,
+        password: password || undefined,
       })
 
       applyOpenedFolder(result)
@@ -5526,6 +5579,18 @@ function App() {
                 <button
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
                   onClick={() => runContextAction(() => {
+                    void copyPathTarget(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-copy w-4 text-center" />
+                  Dupliquer
+                </button>
+              )}
+
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                  onClick={() => runContextAction(() => {
                     void openFileInNewWindow(contextMenu.node.path)
                   })}
                 >
@@ -5773,6 +5838,50 @@ function App() {
                   )}
                 </div>
               </section>
+
+              {rootPath && (
+                <section>
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Stockage d'images (par dépôt)</h3>
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-white/50">Stockage des images pour ce dépôt</label>
+                      <select
+                        className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                        value={repoImageStorageMode}
+                        onChange={(e) => setRepoImageStorageMode(e.target.value as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive')}
+                      >
+                        <option value="local">Intégrer au dépôt Git (local)</option>
+                        <option value="azure">Azure Blob Storage (SAS)</option>
+                        <option value="s3">Amazon S3</option>
+                        <option value="dropbox">Dropbox</option>
+                        <option value="gdrive">Google Drive</option>
+                      </select>
+                    </div>
+                    <button
+                      className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
+                      onClick={async () => {
+                        const holo = window.holo
+                        if (holo) {
+                          try {
+                            await holo.writeRepoConfig({
+                              imageStorageMode: repoImageStorageMode,
+                            })
+                            setRepoImageModeReady(true)
+                            window.alert('Configuration du stockage d\'images sauvegardée.')
+                          } catch (error) {
+                            window.alert('Erreur: ' + (error as Error).message)
+                          }
+                        }
+                      }}
+                    >
+                      Enregistrer configuration
+                    </button>
+                    {repoImageModeReady && (
+                      <p className="text-xs text-emerald-400">✓ Configuration sauvegardée dans .holo.json</p>
+                    )}
+                  </div>
+                </section>
+              )}
 
               {/* Section IA */}
               <section>
@@ -6169,6 +6278,39 @@ function App() {
                   Choisir
                 </button>
               </div>
+
+              <input
+                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
+                value={cloneDialog.username}
+                onChange={(event) =>
+                  setCloneDialog((previous) =>
+                    previous
+                      ? {
+                        ...previous,
+                        username: event.target.value,
+                      }
+                      : previous,
+                  )
+                }
+                placeholder="Nom d'utilisateur (optionnel)"
+              />
+
+              <input
+                type="password"
+                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
+                value={cloneDialog.password}
+                onChange={(event) =>
+                  setCloneDialog((previous) =>
+                    previous
+                      ? {
+                        ...previous,
+                        password: event.target.value,
+                      }
+                      : previous,
+                  )
+                }
+                placeholder="Mot de passe (optionnel)"
+              />
 
               <div className="mt-5 flex items-center justify-end gap-2">
                 <button

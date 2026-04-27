@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('holo', {
     ipcRenderer.invoke('fs:rename-path', targetPath, newName),
   movePath: (sourcePath, targetDirectoryPath) =>
     ipcRenderer.invoke('fs:move-path', sourcePath, targetDirectoryPath),
+  copyFile: (sourcePath, targetDirectoryPath) =>
+    ipcRenderer.invoke('fs:copy-file', sourcePath, targetDirectoryPath),
+  readRepoConfig: () => ipcRenderer.invoke('holo:read-repo-config'),
+  writeRepoConfig: (config) => ipcRenderer.invoke('holo:write-repo-config', config),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),

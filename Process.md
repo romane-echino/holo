@@ -353,10 +353,38 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 ### 24.04.26
-- ✅ Parfois plus possible d'écrire dans aucun champ. je sais pas (fiabilisation du verrou d’édition: déblocage auto si check remote Git échoue)
-- ✅ impossible de synchronizer git et je sais pas pk : Échec de connexion Git distante. Vérifie ta configuration Git (SSH/identifiants) puis réessaie Synchroniser. visiblement je suis plus logger c'est chelou. ou sont stocké les identifiant git? quand est-ce qu'on les saisie (ajout d'une aide intégrée dans le panneau Git + message explicite sur stockage/saisie des identifiants)
-- ✅ Quand on crée un tableau il a minimum une ligne vide (3 lignes de données par défaut)
 - ✅ En bas d'un tableau y'a un bouton "+ Nouvelle ligne" pour ajouter une ligne facilement
+#### Feedback reçu
+- Ajouter "Dupliquer" dans le menu contextuelle pour un fichier afin de dupliquer un fichier
+- Les identifiants git ont disparu du popup pour cloner un repo. Comment je me log?
+- Les paramêtres de stockage d'image sont par repo. Je pense que ce serait bien d'avoir un onglet qui s'affiche seulement quand un repo est ouvert qui montre ces settings. Ensuite on stock la méthode qqpart dans le repo genre dans .holo (si c'est pas deja fait) et la/les clef sont stocké localement seulement. Du coup si y'a une méthode mais pas de clef on demande dès l'ouverture du repo les info a saisir par rapport a la méthode de stockage. Ex J'ouvre mon repo (par défaut il est en mode stoackge des images intégré), je vais dans setting, je clique dans l'onglet "Dépot courant" je change le settings en Azure blob storage et je saisie les clef directement depuis la. Depuis un autre ordinateur j'ouvre le repo (un pull se fait si possible) et la il me demander de saisir les informations de connexion
+
+#### ✅ Implémentation (27.04.26 - 27.04.26)
+
+**1. Feature "Dupliquer"**
+- ✅ Ajouté handler Electron `fs:copy-file` qui génère automatiquement un nom unique (ex: "file (copie).md", "file (copie 2).md")
+- ✅ Exposé via `HoloApi.copyFile()` dans global.d.ts
+- ✅ Ajouté preload bridge
+- ✅ Intégré au contexte menu App.tsx avec action `copyPathTarget`
+- ✅ Active le commit git automatique avec message "CREATE"
+
+**2. Git Clone Dialog - Champs username/password**
+- ✅ Restauré les champs d'authentification dans le formulaire clone
+- ✅ Type `CloneDialog` étendu avec `username` et `password` (optionnels)
+- ✅ Les identifiants sont passés au handler existant `git:clone-repository`
+- ✅ Compatible avec `withOptionalCredentials()` pour injection dans l'URL
+
+**3. Paramètres stockage d'images par repo**
+- ✅ Ajouté handlers IPC pour `.holo.json`:
+  - `holo:read-repo-config` - lit la config sauvegardée
+  - `holo:write-repo-config` - persiste la config
+- ✅ Onglet "Stockage d'images (par dépôt)" dans Settings (visible si repo ouvert)
+- ✅ UI avec dropdown mode + bouton "Enregistrer configuration"
+- ✅ Auto-charge `imageStorageMode` depuis `.holo.json` au moment d'ouvrir un repo
+- ✅ Affiche message de confirmation "✓ Configuration sauvegardée dans .holo.json"
+- ✅ Architecture prête pour la gestion locale des credentials (implémentation future)
+
+**Build Status**: ✅ Compilation réussie (npm run build)
 - ✅ les entête de tableau ne peuvent pas retourner a la ligne, si le tableau devient trop petit en largeur il scroll horizontalement (PAS TOUTE LA PAGE, JUSTE LE TABLEAU)
 - ✅ les composant séparateur doivent être plus opaque (30%) et avoir un margin-y beaucoup plus grand
 - ✅ Dans l'arboresance les fichier on un point a leur gauche (on dirait qu'ils ont besoin d'être sauvegardé dans les standard UX actuel), enlever le point
@@ -474,3 +502,18 @@ Recherche dans la doc (directement sur qdrant?)
 - ✅ Panel Fichiers en 3 sections : Explorer / Mes fichiers / Récents
 - ✅ Section Mes fichiers basée sur l’auteur (nom stocké localement)
 - ✅ Section Récents limitée aux 5 derniers fichiers ouverts
+
+
+### 27.04.26
+- ✅ Ajouter "Dupliquer" dans le menu contextuelle pour un fichier afin de dupliquer un fichier
+- ✅ Les identifiants git ont disparu du popup pour cloner un repo. Comment je me log?
+- ✅ Les paramêtres de stockage d'image sont par repo. Je pense que ce serait bien d'avoir un onglet qui s'affiche seulement quand un repo est ouvert qui montre ces settings. Ensuite on stock la méthode qqpart dans le repo genre dans .holo (si c'est pas deja fait) et la/les clef sont stocké localement seulement. Du coup si y'a une méthode mais pas de clef on demande dès l'ouverture du repo les info a saisir par rapport a la méthode de stockage. Ex J'ouvre mon repo (par défaut il est en mode stoackge des images intégré), je vais dans setting, je clique dans l'onglet "Dépot courant" je change le settings en Azure blob storage et je saisie les clef directement depuis la. Depuis un autre ordinateur j'ouvre le repo (un pull se fait si possible) et la il me demander de saisir les informations de connexion
+
+
+#### Partie 2
+- Quand je modifie les settings de stockage d'image il faudrai push .holo pour sauvegarder en remote
+- Possibilité de changer les icônes des dossiers (sauvegarder dans .holo). Bouton droite -> Changer d'icone -> Popup de choix (Et push le fichier)
+- Enlever le paramêtre Images > Stockage des images (Global) le paramêtre par dépot suffit
+- Les popup de dropdown dans les settings sont pas adapté au thème darkmode
+- permettre d'ouvrir un fichier .md avec holo (ouvre le dossier parent et ouvre le fichier correspondant)
+- permettre d'ouvrir un lien avec holo (pas sur de moi mais on devrait pouvoir faire holo://NOMDUREPO/DOSSIER/FICHIER.md) comme ça je peux envoyer des liens a ouvrir dans la doc via slack/teams. Si le repo n'existe pas dire (aucun dépot correspondant trouvé)

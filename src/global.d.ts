@@ -116,6 +116,12 @@ interface HoloApi {
     sourcePath: string,
     targetDirectoryPath: string,
   ) => Promise<{ ok: true; newPath: string }>
+  copyFile: (
+    sourcePath: string,
+    targetDirectoryPath: string,
+  ) => Promise<{ ok: true; newPath: string }>
+  readRepoConfig: () => Promise<any | null>
+  writeRepoConfig: (config: any) => Promise<{ ok: true }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
   gitPickCloneDirectory: () => Promise<string | null>
   gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>
