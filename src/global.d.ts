@@ -89,6 +89,8 @@ interface HoloApi {
   getAppVersion: () => Promise<string>
   openFileInNewWindow: (payload: HoloOpenFileInNewWindowPayload) => Promise<{ ok: true }>
   writeClipboardText: (text: string) => Promise<{ ok: true }>
+  checkForUpdates: () => Promise<unknown>
+  installUpdate: () => Promise<unknown>
   minimizeWindow: () => Promise<{ ok: true }>
   getWindowState: () => Promise<{ ok: true; isMaximized: boolean; platform: string }>
   dragWindowFromMaximized: (payload: { pointerScreenX: number; pointerScreenY: number; pointerOffsetRatioX: number; headerHeight: number }) => Promise<{ ok: boolean; isMaximized: boolean }>

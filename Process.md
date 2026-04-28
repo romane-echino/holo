@@ -521,3 +521,10 @@ Recherche dans la doc (directement sur qdrant?)
 
 ### 28.04.26
 - Sur windows, en mode fenêtre agrandie, quand on drag le header vers le bas ne correspond pas a l'ux des autres app windows. Quand on drag vers le bas la fenêtre sors du mode fullscreen et passe en mode restaure ce qui permet de la déplacé. (sous linux cette feature marche très bien)
+- Faire un bouton dans les paramêtres pour Mettre a jour Holo manuellement
+- J'ai fait un test ou j'ai ouvert un repo sur l'ordi A j'ai changer la méthode de stockage des images (ça a bien sauvegarder et commit), quand j'ai ouvert le meme repo sur l'ordi B j'ai vu qu'il a fait un pull mais il ne m'a pas averti que "La méthode de savegarde des images de ce dépot a changer, veuillez fournir les clef d'authentification
+- Quand je copie le lien d'un fichier il me donne bien "holo://documentation/Readme.md" sauf que teams ne l'interprete pas comme un lien est-qu'il y a qqch a faire pour que ça marche?
+- Dans .holo les configurations dossier/icones diffèrent entre windows/linux/mac et du coup ne fonctionne pas, il faudrai normaliser ça. Parce que sinon on se retrouve avec ça :
+"/home/romane/Bureau/Dev/documentation": "📄",
+"C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Dev": "📦",
+"C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Admin": "⚖️"

@@ -281,6 +281,22 @@ function getRepoConfigPath(rootPath: string): string {
   return `${rootPath}${separator}.holo.json`
 }
 
+function getRepoRelativeFolderPath(rootPath: string, folderPath: string): string {
+  const normalizedRoot = rootPath.replace(/[\/\\]+$/, '')
+  const normalizedFolder = folderPath.replace(/[\/\\]+$/, '')
+  if (normalizedFolder === normalizedRoot) {
+    return '.'
+  }
+  const rel = getCommitTargetPath(rootPath, folderPath).replace(/^[\/\\]/, '')
+  return rel || '.'
+}
+
+function resolveRepoRelativePath(rootPath: string, relPath: string): string {
+  if (!relPath || relPath === '.') return rootPath
+  const base = rootPath.replace(/[\/\\]+$/, '')
+  return base + '/' + relPath.replace(/\\/g, '/')
+}
+
 function buildHoloFileLink(rootPath: string | null, filePath: string): string {
   if (!rootPath) {
     return ''
@@ -1409,10 +1425,33 @@ function App() {
           setRepoImageStorageMode(mode)
         }
 
-        // Load folder icons from repo config
+        // Alert if image storage credentials are missing on this machine
+        if (!cancelled && mode && mode !== 'local') {
+          const isAbsoluteKey = (k: string) => k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~')
+          const hasAzure = !!(window.localStorage.getItem('holo-azure-blob-container-url') && window.localStorage.getItem('holo-azure-blob-sas-token'))
+          const hasS3 = !!(window.localStorage.getItem('holo-s3-region') && window.localStorage.getItem('holo-s3-bucket') && window.localStorage.getItem('holo-s3-access-key-id') && window.localStorage.getItem('holo-s3-secret-access-key'))
+          const hasDropbox = !!window.localStorage.getItem('holo-dropbox-access-token')
+          const hasGdrive = !!window.localStorage.getItem('holo-gdrive-access-token')
+          const credOk = (mode === 'azure' && hasAzure) || (mode === 's3' && hasS3) || (mode === 'dropbox' && hasDropbox) || (mode === 'gdrive' && hasGdrive)
+          void isAbsoluteKey // suppress unused warning
+          if (!credOk) {
+            window.alert(`Ce dépôt utilise le stockage d'images « ${mode} » mais les clés d'authentification ne sont pas configurées sur cette machine.\n\nVa dans Paramètres › Stockage d'images pour les saisir.`)
+            setShowSettings(true)
+          }
+        }
+
+        // Load folder icons from repo config (keys may be relative or legacy absolute paths)
         if (!cancelled) {
           if (repoConfig?.folderIcons && typeof repoConfig.folderIcons === 'object') {
-            setFolderIconByPath(repoConfig.folderIcons)
+            const rawIcons = repoConfig.folderIcons as Record<string, string>
+            const absIcons: Record<string, string> = {}
+            for (const [k, icon] of Object.entries(rawIcons)) {
+              // backward compat: if key looks like absolute path, use as-is
+              const isAbsPath = k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~')
+              const absKey = isAbsPath ? k : resolveRepoRelativePath(rootPath, k)
+              absIcons[absKey] = icon
+            }
+            setFolderIconByPath(absIcons)
           } else {
             setFolderIconByPath({})
           }
@@ -3393,12 +3432,24 @@ function App() {
           : undefined
       ) || {}
 
+      const relKey = getRepoRelativeFolderPath(rootPath, folderPath)
+
+      // Also remove any legacy absolute-path key for this folder
+      const legacyKeys = Object.keys(folderIcons).filter(k => k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~'))
+      for (const lk of legacyKeys) {
+        const normalized = lk.replace(/[\/\\]+$/, '')
+        const fp = folderPath.replace(/[\/\\]+$/, '')
+        if (normalized === fp) {
+          delete folderIcons[lk]
+        }
+      }
+
       const nextFolderIcons = icon
-        ? { ...folderIcons, [folderPath]: icon }
+        ? { ...folderIcons, [relKey]: icon }
         : { ...folderIcons }
-      
-      if (!icon && folderPath in nextFolderIcons) {
-        delete nextFolderIcons[folderPath]
+
+      if (!icon && relKey in nextFolderIcons) {
+        delete nextFolderIcons[relKey]
       }
 
       const nextConfig = existing && typeof existing === 'object' && !Array.isArray(existing)
@@ -4103,11 +4154,15 @@ function App() {
       return
     }
 
-    const link = buildHoloFileLink(rootPath, filePath)
+    const rawLink = buildHoloFileLink(rootPath, filePath)
 
-    if (!link) {
+    if (!rawLink) {
       return
     }
+
+    // Copy as Markdown link so Teams/Slack/Notion render it as a clickable hyperlink
+    const fileName = getBaseName(filePath).replace(/\.md$/i, '')
+    const link = `[${fileName}](${rawLink})`
 
     try {
       await holo.writeClipboardText(link)
@@ -6259,6 +6314,44 @@ function App() {
                       value={openaiPrompt}
                       onChange={(e) => setOpenaiPrompt(e.target.value)}
                     />
+                  </div>
+                </div>
+              </section>
+
+              {/* Application — mises à jour */}
+              <section>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Application</h3>
+                <div className="rounded-xl border border-white/8 bg-white/4 p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium text-white/80">Vérifier les mises à jour</span>
+                      {updateReady
+                        ? <span className="text-xs text-[#7B61FF]">Une mise à jour est prête à installer.</span>
+                        : updateAvailable
+                          ? <span className="text-xs text-white/50">Téléchargement en cours…</span>
+                          : <span className="text-xs text-white/40">Holo est à jour.</span>
+                      }
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {updateReady
+                        ? (
+                            <button
+                              className="rounded-lg bg-[#7B61FF] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#9d8bff] transition-colors"
+                              onClick={() => window.holo?.installUpdate()}
+                            >
+                              Redémarrer et installer
+                            </button>
+                          )
+                        : (
+                            <button
+                              className="rounded-lg border border-white/12 px-3 py-1.5 text-xs font-medium text-white/70 hover:bg-white/8 transition-colors"
+                              onClick={() => void window.holo?.checkForUpdates()}
+                            >
+                              Vérifier
+                            </button>
+                          )
+                      }
+                    </div>
                   </div>
                 </div>
               </section>
