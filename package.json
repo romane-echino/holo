@@ -1,7 +1,7 @@
 {
   "name": "holo",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Desktop Markdown editor with WYSIWYG experience and Git/GitHub workflow.",
   "author": {
     "name": "Romane Donnet",
