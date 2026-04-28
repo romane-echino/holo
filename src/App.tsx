@@ -750,7 +750,7 @@ function App() {
   })
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
-  const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('')
+  const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
   const [showAuthorModal, setShowAuthorModal] = useState(false)
@@ -4183,15 +4183,11 @@ function App() {
       return
     }
 
-    const rawLink = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
+    const link = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
 
-    if (!rawLink) {
+    if (!link) {
       return
     }
-
-    // Copy as Markdown link so Teams/Slack/Notion render it as a clickable hyperlink
-    const fileName = getBaseName(filePath).replace(/\.md$/i, '')
-    const link = `[${fileName}](${rawLink})`
 
     try {
       await holo.writeClipboardText(link)
@@ -6386,7 +6382,7 @@ function App() {
                     <label className="mb-1 block text-xs text-white/50">Passerelle lien HTTPS (Teams)</label>
                     <input
                       className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                      placeholder="https://holo-link-gateway.vercel.app"
+                      placeholder="https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app"
                       value={shareGatewayBaseUrl}
                       onChange={(e) => setShareGatewayBaseUrl(e.target.value)}
                     />
