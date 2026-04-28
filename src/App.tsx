@@ -281,6 +281,28 @@ function getRepoConfigPath(rootPath: string): string {
   return `${rootPath}${separator}.holo.json`
 }
 
+function buildHoloFileLink(rootPath: string | null, filePath: string): string {
+  if (!rootPath) {
+    return ''
+  }
+
+  const repoName = getBaseName(rootPath)
+  const repoRelativePath = getCommitTargetPath(rootPath, filePath).replace(/^\//, '')
+
+  if (!repoName || !repoRelativePath) {
+    return ''
+  }
+
+  const encodedRepoName = encodeURIComponent(repoName)
+  const encodedPath = repoRelativePath
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+
+  return `holo://${encodedRepoName}/${encodedPath}`
+}
+
 function getRelativeLinkPath(fromFilePath: string | null, targetFilePath: string, rootPath: string | null): string {
   if (!fromFilePath) {
     const repoRelative = getCommitTargetPath(rootPath, targetFilePath).replace(/^\//, '')
@@ -461,6 +483,7 @@ function TreeItem({
   node,
   selectedPath,
   fileIconByPath,
+  folderIconByPath,
   fileMetaByPath,
   onSelect,
   onContextMenu,
@@ -478,6 +501,7 @@ function TreeItem({
   node: TreeNode
   selectedPath: string | null
   fileIconByPath: Record<string, string>
+  folderIconByPath: Record<string, string>
   fileMetaByPath: Record<string, FileMeta>
   onSelect: (node: TreeNode) => void
   onContextMenu: (node: TreeNode, position: { x: number; y: number }) => void
@@ -562,7 +586,11 @@ function TreeItem({
         </span>
         <span className="w-5 text-center text-sm text-white/70">
           {node.type === 'directory' ? (
-            <i className={`fa-regular ${isExpanded ? 'fa-folder-open' : 'fa-folder'}`} />
+            folderIconByPath[node.path] ? (
+              <span>{folderIconByPath[node.path]}</span>
+            ) : (
+              <i className={`fa-regular ${isExpanded ? 'fa-folder-open' : 'fa-folder'}`} />
+            )
           ) : (
             fileIconByPath[node.path] ? <span>{fileIconByPath[node.path]}</span> : <i className="fa-regular fa-file-lines" />
           )}
@@ -587,6 +615,7 @@ function TreeItem({
               node={childNode}
               selectedPath={selectedPath}
               fileIconByPath={fileIconByPath}
+              folderIconByPath={folderIconByPath}
               fileMetaByPath={fileMetaByPath}
               onSelect={onSelect}
               onContextMenu={onContextMenu}
@@ -657,6 +686,7 @@ function App() {
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   const [pathStatsByPath, setPathStatsByPath] = useState<Record<string, FilePathStats>>({})
   const [recentFolders, setRecentFolders] = useState<string[]>([])
+  const [recentFolderIconByPath, setRecentFolderIconByPath] = useState<Record<string, string>>({})
   const [draggedPath, setDraggedPath] = useState<string | null>(null)
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -672,6 +702,7 @@ function App() {
   const [syncFeedback, setSyncFeedback] = useState<SyncFeedback>(DEFAULT_SYNC_FEEDBACK)
   const [showGitAuthHelp, setShowGitAuthHelp] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')
+  const [copyLinkStatus, setCopyLinkStatus] = useState<'idle' | 'copied'>('idle')
   const [remoteEditBlock, setRemoteEditBlock] = useState<{ isBlocked: boolean; message: string }>({
     isBlocked: false,
     message: '',
@@ -685,7 +716,6 @@ function App() {
   const [authorModalValue, setAuthorModalValue] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [gitEmail, setGitEmail] = useState('')
-  const [imageStorageMode, setImageStorageMode] = useState<ImageStorageMode>('local')
   const [repoImageModeReady, setRepoImageModeReady] = useState(false)
   const [repoImageStorageMode, setRepoImageStorageMode] = useState<ImageStorageMode>('local')
   const [azureBlobContainerUrl, setAzureBlobContainerUrl] = useState('')
@@ -712,6 +742,8 @@ function App() {
   const [recentFilePaths, setRecentFilePaths] = useState<string[]>([])
   const [fileIconByPath, setFileIconByPath] = useState<Record<string, string>>({})
   const [fileMetaByPath, setFileMetaByPath] = useState<Record<string, FileMeta>>({})
+  const [folderIconByPath, setFolderIconByPath] = useState<Record<string, string>>({})
+  const [showFolderIconPicker, setShowFolderIconPicker] = useState<string | null>(null)
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
   const imageDragDepthRef = useRef(0)
@@ -737,7 +769,16 @@ function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
+  const [windowIsMaximized, setWindowIsMaximized] = useState(false)
+  const [windowPlatform, setWindowPlatform] = useState('')
   const startupNavigationDoneRef = useRef(false)
+  const headerRef = useRef<HTMLElement | null>(null)
+  const headerDragStateRef = useRef<{
+    startClientX: number
+    startClientY: number
+    pointerOffsetRatioX: number
+    restored: boolean
+  } | null>(null)
 
   const turndownService = useMemo(() => {
     const service = new TurndownService({
@@ -932,6 +973,7 @@ function App() {
     setSelectedType('directory')
     setExpandedDirectories(new Set([result.rootPath]))
     setArchivedFiles([])
+    setFolderIconByPath({})
     setActiveTab(null)
     setActiveTabPath(null)
     setGitState(DEFAULT_GIT_STATE)
@@ -1216,6 +1258,52 @@ function App() {
   }, [refreshRecentFolders])
 
   useEffect(() => {
+    if (recentFolders.length === 0) {
+      setRecentFolderIconByPath({})
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) {
+      return
+    }
+
+    let cancelled = false
+
+    const loadRecentFolderIcons = async () => {
+      const pairs = await Promise.all(
+        recentFolders.map(async (folderPath) => {
+          try {
+            const icon = await holo.getRecentFolderIcon(folderPath)
+            return [folderPath, typeof icon === 'string' ? icon.trim() : ''] as const
+          } catch {
+            return [folderPath, ''] as const
+          }
+        }),
+      )
+
+      if (cancelled) {
+        return
+      }
+
+      const next: Record<string, string> = {}
+      for (const [folderPath, icon] of pairs) {
+        if (icon) {
+          next[folderPath] = icon
+        }
+      }
+
+      setRecentFolderIconByPath(next)
+    }
+
+    void loadRecentFolderIcons()
+
+    return () => {
+      cancelled = true
+    }
+  }, [getHoloApi, recentFolders])
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return
     }
@@ -1241,7 +1329,6 @@ function App() {
 
   useEffect(() => {
     const email = window.localStorage.getItem('holo-git-email')
-    const imageStorage = window.localStorage.getItem('holo-image-storage-mode')
     const azureContainerUrl = window.localStorage.getItem('holo-azure-container-url')
     const azureSasToken = window.localStorage.getItem('holo-azure-sas-token')
     const s3RegionValue = window.localStorage.getItem('holo-s3-region')
@@ -1259,9 +1346,6 @@ function App() {
     const provider = window.localStorage.getItem('holo-ai-provider')
     const prompt = window.localStorage.getItem('holo-openai-prompt')
     if (email) setGitEmail(email)
-    if (imageStorage === 'local' || imageStorage === 'azure' || imageStorage === 's3' || imageStorage === 'dropbox' || imageStorage === 'gdrive') {
-      setImageStorageMode(imageStorage)
-    }
     if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
     if (azureSasToken) setAzureBlobSasToken(azureSasToken)
     if (s3RegionValue) setS3Region(s3RegionValue)
@@ -1283,7 +1367,6 @@ function App() {
   }, [])
 
   useEffect(() => { window.localStorage.setItem('holo-git-email', gitEmail) }, [gitEmail])
-  useEffect(() => { window.localStorage.setItem('holo-image-storage-mode', imageStorageMode) }, [imageStorageMode])
   useEffect(() => { window.localStorage.setItem('holo-azure-container-url', azureBlobContainerUrl) }, [azureBlobContainerUrl])
   useEffect(() => { window.localStorage.setItem('holo-azure-sas-token', azureBlobSasToken) }, [azureBlobSasToken])
   useEffect(() => { window.localStorage.setItem('holo-s3-region', s3Region) }, [s3Region])
@@ -1318,15 +1401,21 @@ function App() {
     const loadRepoImageStorageMode = async () => {
       setRepoImageModeReady(false)
       try {
-        const raw = await holo.readFileOptional(getRepoConfigPath(rootPath))
-        if (!raw) {
-          return
-        }
-        const parsed = JSON.parse(raw) as { imageStorage?: { mode?: ImageStorageMode } }
-        const mode = parsed?.imageStorage?.mode
+        const repoConfig = await holo.readRepoConfig().catch(() => null)
+        const legacyMode = repoConfig?.imageStorage?.mode
+        const mode = repoConfig?.imageStorageMode ?? legacyMode
 
         if (!cancelled && (mode === 'local' || mode === 'azure' || mode === 's3' || mode === 'dropbox' || mode === 'gdrive')) {
-          setImageStorageMode(mode)
+          setRepoImageStorageMode(mode)
+        }
+
+        // Load folder icons from repo config
+        if (!cancelled) {
+          if (repoConfig?.folderIcons && typeof repoConfig.folderIcons === 'object') {
+            setFolderIconByPath(repoConfig.folderIcons)
+          } else {
+            setFolderIconByPath({})
+          }
         }
       } catch {
         // no repo config yet
@@ -1343,57 +1432,6 @@ function App() {
       cancelled = true
     }
   }, [getHoloApi, rootPath])
-
-  useEffect(() => {
-    if (!rootPath || !repoImageModeReady) {
-      return
-    }
-
-    const holo = getHoloApi()
-    if (!holo) {
-      return
-    }
-
-    const saveRepoImageStorageMode = async () => {
-      const configPath = getRepoConfigPath(rootPath)
-      let parsed: Record<string, unknown> = {}
-
-      try {
-        const existingRaw = await holo.readFileOptional(configPath)
-        if (!existingRaw) {
-          parsed = {}
-        } else {
-          const existingParsed = JSON.parse(existingRaw)
-          if (existingParsed && typeof existingParsed === 'object' && !Array.isArray(existingParsed)) {
-            parsed = existingParsed as Record<string, unknown>
-          }
-        }
-      } catch {
-        parsed = {}
-      }
-
-      const currentImageStorage =
-        parsed.imageStorage && typeof parsed.imageStorage === 'object' && !Array.isArray(parsed.imageStorage)
-          ? (parsed.imageStorage as Record<string, unknown>)
-          : {}
-
-      const nextConfig = {
-        ...parsed,
-        imageStorage: {
-          ...currentImageStorage,
-          mode: imageStorageMode,
-        },
-      }
-
-      try {
-        await holo.writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`)
-      } catch {
-        // ignore repository config write failures
-      }
-    }
-
-    void saveRepoImageStorageMode()
-  }, [getHoloApi, imageStorageMode, repoImageModeReady, rootPath])
 
   useEffect(() => {
     const filePaths = tree ? flatTreeFiles(tree) : []
@@ -1500,6 +1538,25 @@ function App() {
     }
 
     void loadAppVersion()
+  }, [])
+
+  useEffect(() => {
+    const loadWindowState = async () => {
+      const holo = window.holo
+      if (!holo) {
+        return
+      }
+
+      try {
+        const state = await holo.getWindowState()
+        setWindowIsMaximized(Boolean(state?.isMaximized))
+        setWindowPlatform(typeof state?.platform === 'string' ? state.platform : '')
+      } catch {
+        // ignore state loading errors
+      }
+    }
+
+    void loadWindowState()
   }, [])
 
   const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
@@ -1684,8 +1741,13 @@ function App() {
     const params = new URLSearchParams(window.location.search)
     const rootPathParam = params.get('rootPath')?.trim()
     const filePathParam = params.get('filePath')?.trim()
+    const startupErrorParam = params.get('startupError')?.trim()
 
     startupNavigationDoneRef.current = true
+
+    if (startupErrorParam) {
+      window.alert(startupErrorParam)
+    }
 
     if (!rootPathParam) {
       return
@@ -2385,14 +2447,14 @@ function App() {
         setSlashMenu(null)
         setSlashMenuIndex(0)
 
-        if (imageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
+        if (repoImageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
           window.alert('Configuration Azure incomplète (container URL + SAS token).')
           setShowSettings(true)
           return
         }
 
         if (
-          imageStorageMode === 's3'
+          repoImageStorageMode === 's3'
           && (!s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey.trim())
         ) {
           window.alert('Configuration S3 incomplète (region, bucket, access key, secret key).')
@@ -2400,13 +2462,13 @@ function App() {
           return
         }
 
-        if (imageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
+        if (repoImageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
           window.alert('Configuration Dropbox incomplète (access token).')
           setShowSettings(true)
           return
         }
 
-        if (imageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
+        if (repoImageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
           window.alert('Configuration Google Drive incomplète (access token).')
           setShowSettings(true)
           return
@@ -2428,14 +2490,14 @@ function App() {
             if (!base64) return
             try {
               const result = await holo.saveImage(file.name, base64, {
-                mode: imageStorageMode,
-                azure: imageStorageMode === 'azure'
+                mode: repoImageStorageMode,
+                azure: repoImageStorageMode === 'azure'
                   ? {
                     containerUrl: azureBlobContainerUrl,
                     sasToken: azureBlobSasToken,
                   }
                   : undefined,
-                s3: imageStorageMode === 's3'
+                s3: repoImageStorageMode === 's3'
                   ? {
                     region: s3Region,
                     bucket: s3Bucket,
@@ -2445,13 +2507,13 @@ function App() {
                     publicBaseUrl: s3PublicBaseUrl,
                   }
                   : undefined,
-                dropbox: imageStorageMode === 'dropbox'
+                dropbox: repoImageStorageMode === 'dropbox'
                   ? {
                     accessToken: dropboxAccessToken,
                     folderPath: dropboxFolderPath,
                   }
                   : undefined,
-                gdrive: imageStorageMode === 'gdrive'
+                gdrive: repoImageStorageMode === 'gdrive'
                   ? {
                     accessToken: gdriveAccessToken,
                     folderId: gdriveFolderId,
@@ -2608,18 +2670,18 @@ function App() {
   )
 
   const ensureImageProviderReady = useCallback(() => {
-    if (imageStorageMode === 'local') {
+    if (repoImageStorageMode === 'local') {
       return true
     }
 
-    if (imageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
+    if (repoImageStorageMode === 'azure' && (!azureBlobContainerUrl.trim() || !azureBlobSasToken.trim())) {
       window.alert('Configuration Azure incomplète (container URL + SAS token).')
       setShowSettings(true)
       return false
     }
 
     if (
-      imageStorageMode === 's3'
+      repoImageStorageMode === 's3'
       && (!s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey.trim())
     ) {
       window.alert('Configuration S3 incomplète (region, bucket, access key, secret key).')
@@ -2627,13 +2689,13 @@ function App() {
       return false
     }
 
-    if (imageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
+    if (repoImageStorageMode === 'dropbox' && !dropboxAccessToken.trim()) {
       window.alert('Configuration Dropbox incomplète (access token).')
       setShowSettings(true)
       return false
     }
 
-    if (imageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
+    if (repoImageStorageMode === 'gdrive' && !gdriveAccessToken.trim()) {
       window.alert('Configuration Google Drive incomplète (access token).')
       setShowSettings(true)
       return false
@@ -2645,7 +2707,7 @@ function App() {
     azureBlobSasToken,
     dropboxAccessToken,
     gdriveAccessToken,
-    imageStorageMode,
+    repoImageStorageMode,
     s3AccessKeyId,
     s3Bucket,
     s3Region,
@@ -2673,14 +2735,14 @@ function App() {
           if (!base64) return
           try {
             const result = await holo.saveImage(file.name, base64, {
-              mode: imageStorageMode,
-              azure: imageStorageMode === 'azure'
+              mode: repoImageStorageMode,
+              azure: repoImageStorageMode === 'azure'
                 ? {
                   containerUrl: azureBlobContainerUrl,
                   sasToken: azureBlobSasToken,
                 }
                 : undefined,
-              s3: imageStorageMode === 's3'
+              s3: repoImageStorageMode === 's3'
                 ? {
                   region: s3Region,
                   bucket: s3Bucket,
@@ -2690,13 +2752,13 @@ function App() {
                   publicBaseUrl: s3PublicBaseUrl,
                 }
                 : undefined,
-              dropbox: imageStorageMode === 'dropbox'
+              dropbox: repoImageStorageMode === 'dropbox'
                 ? {
                   accessToken: dropboxAccessToken,
                   folderPath: dropboxFolderPath,
                 }
                 : undefined,
-              gdrive: imageStorageMode === 'gdrive'
+              gdrive: repoImageStorageMode === 'gdrive'
                 ? {
                   accessToken: gdriveAccessToken,
                   folderId: gdriveFolderId,
@@ -2716,7 +2778,7 @@ function App() {
       azureBlobSasToken,
       ensureImageProviderReady,
       getHoloApi,
-      imageStorageMode,
+      repoImageStorageMode,
       s3AccessKeyId,
       s3Bucket,
       s3Endpoint,
@@ -3282,6 +3344,89 @@ function App() {
       console.error('Auto-commit (structure) failed:', error)
     }
   }, [gitState.isRepo])
+
+  const saveRepoImageConfig = useCallback(async () => {
+    if (!rootPath) {
+      return
+    }
+
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    try {
+      const existing = await holo.readRepoConfig().catch(() => null)
+      const nextConfig = existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...(existing as Record<string, unknown>), imageStorageMode: repoImageStorageMode }
+        : { imageStorageMode: repoImageStorageMode }
+
+      await holo.writeRepoConfig(nextConfig)
+      setRepoImageModeReady(true)
+      await refreshGitState(false)
+      await autoCommitStructuralChange(
+        buildAutoCommitMessage(appAuthor, 'UPDATE', rootPath, getRepoConfigPath(rootPath)),
+      )
+      window.alert('Configuration du dépôt sauvegardée.')
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, repoImageStorageMode, rootPath])
+
+  const saveFolderIconConfig = useCallback(async (folderPath: string, icon: string) => {
+    if (!rootPath) {
+      return
+    }
+
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    try {
+      const existing = await holo.readRepoConfig().catch(() => null)
+      const folderIcons = (
+        existing && typeof existing === 'object' && !Array.isArray(existing)
+          ? (existing as Record<string, unknown>).folderIcons as Record<string, string> | undefined
+          : undefined
+      ) || {}
+
+      const nextFolderIcons = icon
+        ? { ...folderIcons, [folderPath]: icon }
+        : { ...folderIcons }
+      
+      if (!icon && folderPath in nextFolderIcons) {
+        delete nextFolderIcons[folderPath]
+      }
+
+      const nextConfig = existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...(existing as Record<string, unknown>), folderIcons: nextFolderIcons }
+        : { folderIcons: nextFolderIcons }
+
+      await holo.writeRepoConfig(nextConfig)
+      setFolderIconByPath((prev) => {
+        if (icon) {
+          return { ...prev, [folderPath]: icon }
+        }
+
+        if (!(folderPath in prev)) {
+          return prev
+        }
+
+        const next = { ...prev }
+        delete next[folderPath]
+        return next
+      })
+      await refreshGitState(false)
+      await autoCommitStructuralChange(
+        buildAutoCommitMessage(appAuthor, 'UPDATE', rootPath, getRepoConfigPath(rootPath)),
+      )
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, rootPath])
 
   const moveNode = useCallback(
     async (sourcePath: string, targetDirectoryPath: string) => {
@@ -3937,7 +4082,8 @@ function App() {
       return
     }
 
-    await holo.toggleMaximizeWindow()
+    const result = await holo.toggleMaximizeWindow()
+    setWindowIsMaximized(Boolean(result?.isMaximized))
   }, [getHoloApi])
 
   const closeWindow = useCallback(async () => {
@@ -3949,6 +4095,122 @@ function App() {
 
     await holo.closeWindow()
   }, [getHoloApi])
+
+  const copyHoloLink = useCallback(async (filePath: string) => {
+    const holo = getHoloApi()
+
+    if (!holo || !rootPath) {
+      return
+    }
+
+    const link = buildHoloFileLink(rootPath, filePath)
+
+    if (!link) {
+      return
+    }
+
+    try {
+      await holo.writeClipboardText(link)
+      setCopyLinkStatus('copied')
+      window.setTimeout(() => setCopyLinkStatus('idle'), 2500)
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [getHoloApi, rootPath])
+
+  const onHeaderMouseDown = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+
+    if ((event.target as HTMLElement | null)?.closest('.no-drag')) {
+      return
+    }
+
+    const holo = window.holo
+
+    if (!holo) {
+      return
+    }
+
+    let isWindows = windowPlatform === 'win32'
+    let isMaximized = windowIsMaximized
+
+    if (!isWindows || !isMaximized) {
+      try {
+        const state = await holo.getWindowState()
+        isWindows = state?.platform === 'win32'
+        isMaximized = Boolean(state?.isMaximized)
+        setWindowPlatform(typeof state?.platform === 'string' ? state.platform : '')
+        setWindowIsMaximized(Boolean(state?.isMaximized))
+      } catch {
+        return
+      }
+    }
+
+    if (!isWindows || !isMaximized) {
+      return
+    }
+
+    headerDragStateRef.current = {
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      pointerOffsetRatioX: window.innerWidth > 0 ? event.clientX / window.innerWidth : 0.5,
+      restored: false,
+    }
+
+    const handleMouseMove = async (moveEvent: MouseEvent) => {
+      const dragState = headerDragStateRef.current
+
+      if (!dragState) {
+        return
+      }
+
+      const deltaX = Math.abs(moveEvent.clientX - dragState.startClientX)
+      const deltaY = Math.abs(moveEvent.clientY - dragState.startClientY)
+
+      if (!dragState.restored) {
+        if (deltaX < 6 && deltaY < 6) {
+          return
+        }
+
+        dragState.restored = true
+
+        try {
+          await holo.dragWindowFromMaximized({
+            pointerScreenX: moveEvent.screenX,
+            pointerScreenY: moveEvent.screenY,
+            pointerOffsetRatioX: dragState.pointerOffsetRatioX,
+            headerHeight: headerRef.current?.offsetHeight ?? 64,
+          })
+          setWindowIsMaximized(false)
+        } catch {
+          cleanup()
+        }
+
+        return
+      }
+
+      try {
+        const headerHeight = headerRef.current?.offsetHeight ?? 64
+        await holo.setWindowPosition({
+          x: Math.round(moveEvent.screenX - window.innerWidth * dragState.pointerOffsetRatioX),
+          y: Math.max(0, Math.round(moveEvent.screenY - Math.min(headerHeight / 2, 24))),
+        })
+      } catch {
+        cleanup()
+      }
+    }
+
+    const cleanup = () => {
+      headerDragStateRef.current = null
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', cleanup)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', cleanup)
+  }, [windowIsMaximized, windowPlatform])
 
   const openFileInNewWindow = useCallback(async (filePath: string) => {
     if (!rootPath) {
@@ -4073,6 +4335,9 @@ function App() {
     setGitState(DEFAULT_GIT_STATE)
     setSyncFeedback(DEFAULT_SYNC_FEEDBACK)
     setContextMenu(null)
+    setRepoImageStorageMode('local')
+    setRepoImageModeReady(false)
+    setFolderIconByPath({})
   }, [])
 
   const submitAuthorProfile = useCallback(() => {
@@ -4106,7 +4371,7 @@ function App() {
     >
 
       {/* App header */}
-      <header className="flex items-center pr-3" style={{ gridArea: 'appbar' }}>
+      <header ref={headerRef} className="flex items-center pr-3" style={{ gridArea: 'appbar' }} onMouseDown={(event) => { void onHeaderMouseDown(event) }}>
         <div className="flex-1 drag user-select-none">
           <div className="flex items-end gap-2">
             <img src="./logo.png" height={40} width={120} alt="logo" />
@@ -4367,13 +4632,20 @@ function App() {
                       <li key={folderPath}>
                         <div className={`flex items-center gap-1 rounded ${isActive ? 'bg-[#7B61FF]/20' : 'hover:bg-white/8'}`}>
                           <button
-                            className={`min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs ${isActive ? 'text-[#7B61FF]' : 'text-white/70 hover:text-white'}`}
+                            className={`min-w-0 flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs ${isActive ? 'text-[#7B61FF]' : 'text-white/70 hover:text-white'}`}
                             onClick={() => {
                               void openRecentFolder(folderPath)
                             }}
                             title={folderPath}
                           >
-                            {getBaseName(folderPath)}
+                            <span className="w-4 shrink-0 text-center text-sm leading-none">
+                              {recentFolderIconByPath[folderPath] ? (
+                                <span>{recentFolderIconByPath[folderPath]}</span>
+                              ) : (
+                                <i className="fa-regular fa-folder" />
+                              )}
+                            </span>
+                            <span className="truncate">{getBaseName(folderPath)}</span>
                           </button>
 
                           <button
@@ -4401,6 +4673,7 @@ function App() {
                   node={tree!}
                   selectedPath={selectedPath}
                   fileIconByPath={fileIconByPath}
+                  folderIconByPath={folderIconByPath}
                   fileMetaByPath={fileMetaByPath}
                   onSelect={onSelectNode}
                   onContextMenu={openTreeContextMenu}
@@ -4845,6 +5118,19 @@ function App() {
                         Sauvegardé
                       </span>
                     )}
+                    {copyLinkStatus === 'copied' && (
+                      <span className="flex items-center gap-1 text-[10px] text-sky-400">
+                        <i className="fa-solid fa-link" />
+                        Lien copié
+                      </span>
+                    )}
+                    <button
+                      className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
+                      onClick={() => void copyHoloLink(activeTab.path)}
+                      title="Copier le lien holo:// du fichier"
+                    >
+                      <i className="fa-solid fa-link mr-1" />Copier le lien
+                    </button>
                     <button
                       className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
                       onClick={() => void saveCurrentFile()}
@@ -5561,6 +5847,19 @@ function App() {
             </>
           )}
 
+          {!isArchivedContext && contextMenu.node.type === 'directory' && (
+            <>
+              <div className="my-1 h-px bg-white/8" />
+              <button
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                onClick={() => runContextAction(() => setShowFolderIconPicker(contextMenu.node.path))}
+              >
+                <i className="fa-regular fa-face-smile w-4 text-center" />
+                Changer l'icône
+              </button>
+            </>
+          )}
+
           {contextMenu.node.path !== rootPath && (
             <>
               <div className="my-1 h-px bg-white/8" />
@@ -5572,6 +5871,18 @@ function App() {
                 >
                   <i className="fa-solid fa-pen w-4 text-center" />
                   Renommer
+                </button>
+              )}
+
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                  onClick={() => runContextAction(() => {
+                    void copyHoloLink(contextMenu.node.path)
+                  })}
+                >
+                  <i className="fa-solid fa-link w-4 text-center" />
+                  Copier le lien
                 </button>
               )}
 
@@ -5642,6 +5953,57 @@ function App() {
         </div>
       )}
 
+      {showFolderIconPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            {/* En-tête */}
+            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-regular fa-face-smile text-[#7B61FF]" />
+                Changer l'icône du dossier
+              </h2>
+              <button
+                className="text-white/40 hover:text-white transition-colors"
+                onClick={() => setShowFolderIconPicker(null)}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+            </div>
+
+            <div className="p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-white/50">Choisir une icône</span>
+                {folderIconByPath[showFolderIconPicker] && (
+                  <button
+                    className="rounded px-2 py-0.5 text-xs text-white/40 hover:bg-white/8 hover:text-white/70"
+                    onClick={() => {
+                      void saveFolderIconConfig(showFolderIconPicker, '')
+                      setShowFolderIconPicker(null)
+                    }}
+                  >
+                    Supprimer
+                  </button>
+                )}
+              </div>
+              <div className="rounded-lg border border-white/10 bg-[#141515] p-2">
+                <EmojiPicker
+                  width={380}
+                  height={380}
+                  theme={Theme.DARK}
+                  searchDisabled={false}
+                  skinTonesDisabled
+                  previewConfig={{ showPreview: false }}
+                  onEmojiClick={(emojiData) => {
+                    void saveFolderIconConfig(showFolderIconPicker, emojiData.emoji)
+                    setShowFolderIconPicker(null)
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
@@ -5687,166 +6049,18 @@ function App() {
                 </div>
               </section>
 
-              <section>
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Images</h3>
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Stockage des images</label>
-                    <select
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
-                      value={imageStorageMode}
-                      onChange={(e) => setImageStorageMode(e.target.value as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive')}
-                    >
-                      <option value="local">Intégrer au dépôt Git (local)</option>
-                      <option value="azure">Azure Blob Storage (SAS)</option>
-                      <option value="s3">Amazon S3</option>
-                      <option value="dropbox">Dropbox</option>
-                      <option value="gdrive">Google Drive</option>
-                    </select>
-                  </div>
-
-                  {imageStorageMode === 'azure' && (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Azure container URL</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="https://account.blob.core.windows.net/container"
-                          value={azureBlobContainerUrl}
-                          onChange={(e) => setAzureBlobContainerUrl(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Azure SAS token</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                          placeholder="sv=...&se=...&sig=..."
-                          type="password"
-                          value={azureBlobSasToken}
-                          onChange={(e) => setAzureBlobSasToken(e.target.value)}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {imageStorageMode === 's3' && (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">S3 Region</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="eu-west-3"
-                          value={s3Region}
-                          onChange={(e) => setS3Region(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">S3 Bucket</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="my-doc-images"
-                          value={s3Bucket}
-                          onChange={(e) => setS3Bucket(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Access Key ID</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                          placeholder="AKIA..."
-                          value={s3AccessKeyId}
-                          onChange={(e) => setS3AccessKeyId(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Secret Access Key</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                          placeholder="..."
-                          type="password"
-                          value={s3SecretAccessKey}
-                          onChange={(e) => setS3SecretAccessKey(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Endpoint (optionnel)</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="https://s3.eu-west-3.amazonaws.com"
-                          value={s3Endpoint}
-                          onChange={(e) => setS3Endpoint(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Public base URL (optionnel)</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="https://cdn.example.com"
-                          value={s3PublicBaseUrl}
-                          onChange={(e) => setS3PublicBaseUrl(e.target.value)}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {imageStorageMode === 'dropbox' && (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Dropbox access token</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                          placeholder="sl.B..."
-                          type="password"
-                          value={dropboxAccessToken}
-                          onChange={(e) => setDropboxAccessToken(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Dropbox dossier (optionnel)</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="/holo-images"
-                          value={dropboxFolderPath}
-                          onChange={(e) => setDropboxFolderPath(e.target.value)}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {imageStorageMode === 'gdrive' && (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Google Drive access token</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                          placeholder="ya29...."
-                          type="password"
-                          value={gdriveAccessToken}
-                          onChange={(e) => setGdriveAccessToken(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-white/50">Google Drive folder ID (optionnel)</label>
-                        <input
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                          placeholder="1AbCdEf..."
-                          value={gdriveFolderId}
-                          onChange={(e) => setGdriveFolderId(e.target.value)}
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-              </section>
-
               {rootPath && (
                 <section>
                   <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Stockage d'images (par dépôt)</h3>
                   <div className="flex flex-col gap-3">
+                    <p className="text-xs leading-relaxed text-white/45">
+                      Le mode est sauvegardé dans <span className="font-mono text-white/70">.holo.json</span>. Les clés restent stockées localement sur cette machine.
+                    </p>
                     <div>
                       <label className="mb-1 block text-xs text-white/50">Stockage des images pour ce dépôt</label>
                       <select
-                        className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                        className="w-full rounded-lg border border-white/10 bg-[#232427] px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                        style={{ colorScheme: 'dark' }}
                         value={repoImageStorageMode}
                         onChange={(e) => setRepoImageStorageMode(e.target.value as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive')}
                       >
@@ -5857,21 +6071,138 @@ function App() {
                         <option value="gdrive">Google Drive</option>
                       </select>
                     </div>
+                    {repoImageStorageMode === 'azure' && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Azure container URL</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="https://account.blob.core.windows.net/container"
+                            value={azureBlobContainerUrl}
+                            onChange={(e) => setAzureBlobContainerUrl(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Azure SAS token</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                            placeholder="sv=...&se=...&sig=..."
+                            type="password"
+                            value={azureBlobSasToken}
+                            onChange={(e) => setAzureBlobSasToken(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {repoImageStorageMode === 's3' && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">S3 Region</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="eu-west-3"
+                            value={s3Region}
+                            onChange={(e) => setS3Region(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">S3 Bucket</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="my-doc-images"
+                            value={s3Bucket}
+                            onChange={(e) => setS3Bucket(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Access Key ID</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                            placeholder="AKIA..."
+                            value={s3AccessKeyId}
+                            onChange={(e) => setS3AccessKeyId(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Secret Access Key</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                            placeholder="..."
+                            type="password"
+                            value={s3SecretAccessKey}
+                            onChange={(e) => setS3SecretAccessKey(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Endpoint (optionnel)</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="https://s3.eu-west-3.amazonaws.com"
+                            value={s3Endpoint}
+                            onChange={(e) => setS3Endpoint(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Public base URL (optionnel)</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="https://cdn.example.com"
+                            value={s3PublicBaseUrl}
+                            onChange={(e) => setS3PublicBaseUrl(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {repoImageStorageMode === 'dropbox' && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Dropbox access token</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                            placeholder="sl.B..."
+                            type="password"
+                            value={dropboxAccessToken}
+                            onChange={(e) => setDropboxAccessToken(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Dropbox dossier (optionnel)</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="/holo-images"
+                            value={dropboxFolderPath}
+                            onChange={(e) => setDropboxFolderPath(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {repoImageStorageMode === 'gdrive' && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Google Drive access token</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
+                            placeholder="ya29...."
+                            type="password"
+                            value={gdriveAccessToken}
+                            onChange={(e) => setGdriveAccessToken(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-white/50">Google Drive folder ID (optionnel)</label>
+                          <input
+                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                            placeholder="1AbCdEf..."
+                            value={gdriveFolderId}
+                            onChange={(e) => setGdriveFolderId(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
                     <button
                       className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
-                      onClick={async () => {
-                        const holo = window.holo
-                        if (holo) {
-                          try {
-                            await holo.writeRepoConfig({
-                              imageStorageMode: repoImageStorageMode,
-                            })
-                            setRepoImageModeReady(true)
-                            window.alert('Configuration du stockage d\'images sauvegardée.')
-                          } catch (error) {
-                            window.alert('Erreur: ' + (error as Error).message)
-                          }
-                        }
+                      onClick={() => {
+                        void saveRepoImageConfig()
                       }}
                     >
                       Enregistrer configuration
@@ -5890,7 +6221,8 @@ function App() {
                   <div>
                     <label className="mb-1 block text-xs text-white/50">Provider IA</label>
                     <select
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                      className="w-full rounded-lg border border-white/10 bg-[#232427] px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
+                      style={{ colorScheme: 'dark' }}
                       value={aiProvider}
                       onChange={(e) => setAiProvider(e.target.value as 'auto' | 'openai' | 'gemini')}
                     >

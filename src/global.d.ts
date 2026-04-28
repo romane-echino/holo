@@ -88,13 +88,18 @@ interface HoloApi {
   appName: string
   getAppVersion: () => Promise<string>
   openFileInNewWindow: (payload: HoloOpenFileInNewWindowPayload) => Promise<{ ok: true }>
+  writeClipboardText: (text: string) => Promise<{ ok: true }>
   minimizeWindow: () => Promise<{ ok: true }>
+  getWindowState: () => Promise<{ ok: true; isMaximized: boolean; platform: string }>
+  dragWindowFromMaximized: (payload: { pointerScreenX: number; pointerScreenY: number; pointerOffsetRatioX: number; headerHeight: number }) => Promise<{ ok: boolean; isMaximized: boolean }>
+  setWindowPosition: (payload: { x: number; y: number }) => Promise<{ ok: true }>
   toggleMaximizeWindow: () => Promise<{ ok: true; isMaximized: boolean }>
   closeWindow: () => Promise<{ ok: true }>
   toggleDevTools: () => Promise<{ ok: true }>
   openExternalUrl: (url: string) => Promise<{ ok: true }>
   openFolder: () => Promise<OpenFolderResult>
   getRecentFolders: () => Promise<string[]>
+  getRecentFolderIcon: (folderPath: string) => Promise<string | null>
   removeRecentFolder: (folderPath: string) => Promise<string[]>
   openRecentFolder: (folderPath: string) => Promise<OpenFolderResult>
   refreshTree: () => Promise<OpenFolderResult>

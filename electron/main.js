@@ -838,13 +838,136 @@ function assertExternalHttpUrl(rawUrl) {
   return parsedUrl.toString()
 }
 
-function getLaunchPayloadFromArgv(argv) {
+function normalizeArgPath(rawArg) {
+  const trimmed = String(rawArg ?? '').trim().replace(/^"+|"+$/g, '')
+
+  if (!trimmed) {
+    return ''
+  }
+
+  if (trimmed.startsWith('file://')) {
+    try {
+      return fileURLToPath(trimmed)
+    } catch {
+      return ''
+    }
+  }
+
+  return trimmed
+}
+
+async function getLaunchPayloadFromArgv(argv) {
   const rootArg = argv.find((arg) => arg.startsWith('--holo-root='))
   const fileArg = argv.find((arg) => arg.startsWith('--holo-file='))
 
+  if (rootArg || fileArg) {
+    return {
+      rootPath: rootArg ? rootArg.slice('--holo-root='.length) : '',
+      filePath: fileArg ? fileArg.slice('--holo-file='.length) : '',
+    }
+  }
+
+  for (const arg of argv) {
+    if (typeof arg !== 'string') {
+      continue
+    }
+
+    const normalizedArg = arg.trim().replace(/^"+|"+$/g, '')
+
+    if (!normalizedArg.toLowerCase().startsWith('holo://')) {
+      continue
+    }
+
+    try {
+      const parsedUrl = new URL(normalizedArg)
+      const repoName = decodeURIComponent(parsedUrl.hostname.trim())
+      const relativeFilePath = decodeURIComponent(parsedUrl.pathname || '').replace(/^\/+/, '')
+
+      if (!repoName) {
+        return {
+          rootPath: '',
+          filePath: '',
+          startupError: 'Lien holo invalide: dépôt manquant.',
+        }
+      }
+
+      if (!relativeFilePath.toLowerCase().endsWith('.md')) {
+        return {
+          rootPath: '',
+          filePath: '',
+          startupError: 'Lien holo invalide: le fichier ciblé doit être un .md.',
+        }
+      }
+
+      const recentFolders = await getRecentFolders()
+      const matchingRepo = recentFolders.find((folderPath) =>
+        path.basename(folderPath).toLowerCase() === repoName.toLowerCase(),
+      )
+
+      if (!matchingRepo) {
+        return {
+          rootPath: '',
+          filePath: '',
+          startupError: `Aucun dépôt correspondant trouvé: ${repoName}`,
+        }
+      }
+
+      const targetFilePath = path.join(matchingRepo, relativeFilePath)
+      const targetStats = await fs.stat(targetFilePath).catch(() => null)
+
+      if (!targetStats || !targetStats.isFile()) {
+        return {
+          rootPath: '',
+          filePath: '',
+          startupError: `Fichier introuvable dans le dépôt ${repoName}: ${relativeFilePath}`,
+        }
+      }
+
+      return {
+        rootPath: matchingRepo,
+        filePath: targetFilePath,
+      }
+    } catch {
+      return {
+        rootPath: '',
+        filePath: '',
+        startupError: 'Impossible de lire le lien holo transmis au lancement.',
+      }
+    }
+  }
+
+  for (const arg of argv) {
+    if (typeof arg !== 'string' || arg.startsWith('-')) {
+      continue
+    }
+
+    const normalizedArgPath = normalizeArgPath(arg)
+
+    if (!normalizedArgPath) {
+      continue
+    }
+
+    const candidatePath = path.resolve(normalizedArgPath)
+    const stats = await fs.stat(candidatePath).catch(() => null)
+
+    if (!stats || !stats.isFile()) {
+      continue
+    }
+
+    if (!candidatePath.toLowerCase().endsWith('.md')) {
+      continue
+    }
+
+    return {
+      rootPath: path.dirname(candidatePath),
+      filePath: candidatePath,
+    }
+  }
+
   return {
-    rootPath: rootArg ? rootArg.slice('--holo-root='.length) : '',
-    filePath: fileArg ? fileArg.slice('--holo-file='.length) : '',
+    rootPath: '',
+    filePath: '',
+    startupError: '',
   }
 }
 
@@ -924,6 +1047,9 @@ function createWindow(launchPayload = null) {
   }
   if (launchPayload?.filePath) {
     query.filePath = launchPayload.filePath
+  }
+  if (launchPayload?.startupError) {
+    query.startupError = launchPayload.startupError
   }
 
   if (isDev) {
@@ -1005,6 +1131,41 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
 
 ipcMain.handle('fs:get-recent-folders', async () => getRecentFolders())
 
+ipcMain.handle('fs:get-recent-folder-icon', async (_event, folderPath) => {
+  if (typeof folderPath !== 'string' || !folderPath.trim()) {
+    return null
+  }
+
+  const normalizedFolderPath = path.resolve(folderPath)
+  const recentFolders = await getRecentFolders()
+
+  if (!recentFolders.includes(normalizedFolderPath)) {
+    return null
+  }
+
+  const configPath = path.join(normalizedFolderPath, '.holo.json')
+  const configStats = await fs.stat(configPath).catch(() => null)
+
+  if (!configStats || !configStats.isFile()) {
+    return null
+  }
+
+  try {
+    const rawConfig = await fs.readFile(configPath, 'utf8')
+    const parsedConfig = JSON.parse(rawConfig)
+    const folderIcons = parsedConfig?.folderIcons
+
+    if (!folderIcons || typeof folderIcons !== 'object' || Array.isArray(folderIcons)) {
+      return null
+    }
+
+    const icon = folderIcons[normalizedFolderPath] ?? folderIcons[folderPath]
+    return typeof icon === 'string' && icon.trim().length > 0 ? icon : null
+  } catch {
+    return null
+  }
+})
+
 ipcMain.handle('fs:remove-recent-folder', async (_event, folderPath) => removeRecentFolder(folderPath))
 
 ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
@@ -1023,6 +1184,54 @@ ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
 ipcMain.handle('window:minimize', async (event) => {
   const window = getWindowFromEvent(event)
   window.minimize()
+  return { ok: true }
+})
+
+ipcMain.handle('window:get-state', async (event) => {
+  const window = getWindowFromEvent(event)
+  return {
+    ok: true,
+    isMaximized: window.isMaximized(),
+    platform: process.platform,
+  }
+})
+
+ipcMain.handle('window:drag-from-maximized', async (event, payload) => {
+  const window = getWindowFromEvent(event)
+
+  if (process.platform !== 'win32' || !window.isMaximized()) {
+    return { ok: false, isMaximized: window.isMaximized() }
+  }
+
+  const pointerScreenX = Number(payload?.pointerScreenX ?? 0)
+  const pointerScreenY = Number(payload?.pointerScreenY ?? 0)
+  const pointerOffsetRatioX = Math.min(1, Math.max(0, Number(payload?.pointerOffsetRatioX ?? 0.5)))
+  const headerHeight = Math.max(1, Number(payload?.headerHeight ?? 64))
+
+  window.unmaximize()
+
+  const [restoredWidth] = window.getSize()
+  const targetX = Math.round(pointerScreenX - restoredWidth * pointerOffsetRatioX)
+  const targetY = Math.max(0, Math.round(pointerScreenY - Math.min(headerHeight / 2, 24)))
+
+  window.setPosition(targetX, targetY)
+
+  return {
+    ok: true,
+    isMaximized: false,
+  }
+})
+
+ipcMain.handle('window:set-position', async (event, payload) => {
+  const window = getWindowFromEvent(event)
+  const x = Math.round(Number(payload?.x ?? 0))
+  const y = Math.round(Number(payload?.y ?? 0))
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error('Position de fenêtre invalide.')
+  }
+
+  window.setPosition(x, y)
   return { ok: true }
 })
 
@@ -1769,9 +1978,21 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
   }
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
-  createWindow(getLaunchPayloadFromArgv(process.argv))
+
+  try {
+    if (app.isPackaged) {
+      app.setAsDefaultProtocolClient('holo')
+    } else {
+      const entryArg = process.argv[1] ? path.resolve(process.argv[1]) : path.join(__dirname, 'main.js')
+      app.setAsDefaultProtocolClient('holo', process.execPath, [entryArg])
+    }
+  } catch {
+    // Ignore protocol registration errors in restricted environments
+  }
+
+  createWindow(await getLaunchPayloadFromArgv(process.argv))
 
   // Configure auto-updater
   if (!isDev) {

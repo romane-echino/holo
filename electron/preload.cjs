@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, clipboard } = require('electron')
 
 const updateListeners = {
   'update-available': [],
@@ -8,7 +8,14 @@ const updateListeners = {
 
 contextBridge.exposeInMainWorld('holo', {
   appName: 'Holo',
+  writeClipboardText: (text) => {
+    clipboard.writeText(String(text ?? ''))
+    return Promise.resolve({ ok: true })
+  },
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  getWindowState: () => ipcRenderer.invoke('window:get-state'),
+  dragWindowFromMaximized: (payload) => ipcRenderer.invoke('window:drag-from-maximized', payload),
+  setWindowPosition: (payload) => ipcRenderer.invoke('window:set-position', payload),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggle-devtools'),
@@ -17,6 +24,7 @@ contextBridge.exposeInMainWorld('holo', {
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
+  getRecentFolderIcon: (folderPath) => ipcRenderer.invoke('fs:get-recent-folder-icon', folderPath),
   removeRecentFolder: (folderPath) => ipcRenderer.invoke('fs:remove-recent-folder', folderPath),
   openRecentFolder: (folderPath) => ipcRenderer.invoke('fs:open-recent-folder', folderPath),
   refreshTree: () => ipcRenderer.invoke('fs:refresh-tree'),
@@ -35,6 +43,8 @@ contextBridge.exposeInMainWorld('holo', {
   renamePath: (targetPath, newName) => ipcRenderer.invoke('fs:rename-path', targetPath, newName),
   movePath: (sourcePath, targetDirectoryPath) =>
     ipcRenderer.invoke('fs:move-path', sourcePath, targetDirectoryPath),
+  readRepoConfig: () => ipcRenderer.invoke('holo:read-repo-config'),
+  writeRepoConfig: (config) => ipcRenderer.invoke('holo:write-repo-config', config),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
   gitPickCloneDirectory: () => ipcRenderer.invoke('git:pick-clone-directory'),
   gitCloneRepository: (payload) => ipcRenderer.invoke('git:clone-repository', payload),

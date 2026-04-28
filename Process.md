@@ -517,3 +517,7 @@ Recherche dans la doc (directement sur qdrant?)
 - Les popup de dropdown dans les settings sont pas adapté au thème darkmode
 - permettre d'ouvrir un fichier .md avec holo (ouvre le dossier parent et ouvre le fichier correspondant)
 - permettre d'ouvrir un lien avec holo (pas sur de moi mais on devrait pouvoir faire holo://NOMDUREPO/DOSSIER/FICHIER.md) comme ça je peux envoyer des liens a ouvrir dans la doc via slack/teams. Si le repo n'existe pas dire (aucun dépot correspondant trouvé)
+
+
+### 28.04.26
+- Sur windows, en mode fenêtre agrandie, quand on drag le header vers le bas ne correspond pas a l'ux des autres app windows. Quand on drag vers le bas la fenêtre sors du mode fullscreen et passe en mode restaure ce qui permet de la déplacé. (sous linux cette feature marche très bien)
