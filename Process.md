@@ -520,7 +520,7 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 ### 28.04.26
-- Sur windows, en mode fenêtre agrandie, quand on drag le header vers le bas ne correspond pas a l'ux des autres app windows. Quand on drag vers le bas la fenêtre sors du mode fullscreen et passe en mode restaure ce qui permet de la déplacé. (sous linux cette feature marche très bien)
+- ✅ Sur windows, en mode fenêtre agrandie, quand on drag le header vers le bas ne correspond pas a l'ux des autres app windows. Quand on drag vers le bas la fenêtre sors du mode fullscreen et passe en mode restaure ce qui permet de la déplacé. (sous linux cette feature marche très bien)
 - ✅ Faire un bouton dans les paramêtres pour Mettre a jour Holo manuellement
 - ✅ J'ai fait un test ou j'ai ouvert un repo sur l'ordi A j'ai changer la méthode de stockage des images (ça a bien sauvegarder et commit), quand j'ai ouvert le meme repo sur l'ordi B j'ai vu qu'il a fait un pull mais il ne m'a pas averti que "La méthode de savegarde des images de ce dépot a changer, veuillez fournir les clef d'authentification
 - ✅ Quand je copie le lien d'un fichier il me donne bien "holo://documentation/Readme.md" sauf que teams ne l'interprete pas comme un lien est-qu'il y a qqch a faire pour que ça marche? (solution: passerelle HTTPS Vercel + redirection vers holo://)
@@ -529,6 +529,6 @@ Recherche dans la doc (directement sur qdrant?)
 "C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Dev": "📦",
 "C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Admin": "⚖️"
 
-- J'ai l'avertissement que les clef sont manquante a chaque fois que j'ouvre le repo. J'ai été voir dans le local storage et j'ai vu que les clef sont stocké global et pas par repo. Il faut changer ça et detecter si elle sont existante. Et je pense que ce serait mieux si elle était dans un fichier de config plutot que le local storage
-holo-SANITIZED_REPO_NAME-azure-url	XXXX
-holo-SANITIZED_REPO_NAME-azure-sas-token XXXXX
+- ✅ J'ai l'avertissement que les clef sont manquante a chaque fois que j'ouvre le repo. J'ai été voir dans le local storage et j'ai vu que les clef sont stocké global et pas par repo. Il faut changer ça et detecter si elle sont existante. Et je pense que ce serait mieux si elle était dans un fichier de config plutot que le local storage (solution: migré vers ~/.holo/holo-config.json)
+
+- ✅ Stocké pareil le nom (saisie au départ) dans un fichier de conf (solution: appAuthor stocké dans ~/.holo/holo-config.json)

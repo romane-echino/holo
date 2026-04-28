@@ -91,6 +91,10 @@ interface HoloApi {
   writeClipboardText: (text: string) => Promise<{ ok: true }>
   checkForUpdates: () => Promise<unknown>
   installUpdate: () => Promise<unknown>
+  getHoloConfig: () => Promise<Record<string, unknown>>
+  setHoloConfig: (cfg: Record<string, unknown>) => Promise<{ ok: true }>
+  getHoloConfigValue: (key: string) => Promise<unknown>
+  setHoloConfigValue: (key: string, value: unknown) => Promise<{ ok: true }>
   minimizeWindow: () => Promise<{ ok: true }>
   getWindowState: () => Promise<{ ok: true; isMaximized: boolean; platform: string }>
   dragWindowFromMaximized: (payload: { pointerScreenX: number; pointerScreenY: number; pointerOffsetRatioX: number; headerHeight: number }) => Promise<{ ok: boolean; isMaximized: boolean }>

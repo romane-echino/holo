@@ -93,6 +93,49 @@ async function removeRecentFolder(folderPath) {
   return filtered
 }
 
+function getHoloConfigPath() {
+  const dir = app.getPath('userData')
+  return path.join(dir, 'holo-config.json')
+}
+
+async function readHoloConfig() {
+  try {
+    const raw = await fs.readFile(getHoloConfigPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+async function writeHoloConfig(config) {
+  await fs.mkdir(path.dirname(getHoloConfigPath()), { recursive: true })
+  await fs.writeFile(getHoloConfigPath(), JSON.stringify(config, null, 2), 'utf8')
+}
+
+async function getHoloConfigValue(key) {
+  const config = await readHoloConfig()
+  return config[key] ?? null
+}
+
+async function setHoloConfigValue(key, value) {
+  const config = await readHoloConfig()
+  if (value === null || value === undefined) {
+    delete config[key]
+  } else {
+    config[key] = value
+  }
+  await writeHoloConfig(config)
+}
+
+async function getHoloConfig() {
+  return await readHoloConfig()
+}
+
+async function setHoloConfig(cfg) {
+  await writeHoloConfig(typeof cfg === 'object' && cfg !== null ? cfg : {})
+}
+
 function createDefaultGitState() {
   return {
     isRepo: false,
@@ -1179,6 +1222,17 @@ ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
   currentRootPath = targetPath
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
+})
+
+ipcMain.handle('app:get-config', async () => getHoloConfig())
+ipcMain.handle('app:set-config', async (_event, cfg) => {
+  await setHoloConfig(cfg)
+  return { ok: true }
+})
+ipcMain.handle('app:get-config-value', async (_event, key) => getHoloConfigValue(key))
+ipcMain.handle('app:set-config-value', async (_event, key, value) => {
+  await setHoloConfigValue(key, value)
+  return { ok: true }
 })
 
 ipcMain.handle('window:minimize', async (event) => {
