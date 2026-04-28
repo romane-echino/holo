@@ -511,20 +511,24 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 #### Partie 2
-- Quand je modifie les settings de stockage d'image il faudrai push .holo pour sauvegarder en remote
-- Possibilité de changer les icônes des dossiers (sauvegarder dans .holo). Bouton droite -> Changer d'icone -> Popup de choix (Et push le fichier)
-- Enlever le paramêtre Images > Stockage des images (Global) le paramêtre par dépot suffit
-- Les popup de dropdown dans les settings sont pas adapté au thème darkmode
+- ✅ Quand je modifie les settings de stockage d'image il faudrai push .holo pour sauvegarder en remote
+- ✅ Possibilité de changer les icônes des dossiers (sauvegarder dans .holo). Bouton droite -> Changer d'icone -> Popup de choix (Et push le fichier)
+- ✅ Enlever le paramêtre Images > Stockage des images (Global) le paramêtre par dépot suffit
+- ✅ Les popup de dropdown dans les settings sont pas adapté au thème darkmode
 - permettre d'ouvrir un fichier .md avec holo (ouvre le dossier parent et ouvre le fichier correspondant)
 - permettre d'ouvrir un lien avec holo (pas sur de moi mais on devrait pouvoir faire holo://NOMDUREPO/DOSSIER/FICHIER.md) comme ça je peux envoyer des liens a ouvrir dans la doc via slack/teams. Si le repo n'existe pas dire (aucun dépot correspondant trouvé)
 
 
 ### 28.04.26
 - Sur windows, en mode fenêtre agrandie, quand on drag le header vers le bas ne correspond pas a l'ux des autres app windows. Quand on drag vers le bas la fenêtre sors du mode fullscreen et passe en mode restaure ce qui permet de la déplacé. (sous linux cette feature marche très bien)
-- Faire un bouton dans les paramêtres pour Mettre a jour Holo manuellement
-- J'ai fait un test ou j'ai ouvert un repo sur l'ordi A j'ai changer la méthode de stockage des images (ça a bien sauvegarder et commit), quand j'ai ouvert le meme repo sur l'ordi B j'ai vu qu'il a fait un pull mais il ne m'a pas averti que "La méthode de savegarde des images de ce dépot a changer, veuillez fournir les clef d'authentification
-- Quand je copie le lien d'un fichier il me donne bien "holo://documentation/Readme.md" sauf que teams ne l'interprete pas comme un lien est-qu'il y a qqch a faire pour que ça marche?
-- Dans .holo les configurations dossier/icones diffèrent entre windows/linux/mac et du coup ne fonctionne pas, il faudrai normaliser ça. Parce que sinon on se retrouve avec ça :
+- ✅ Faire un bouton dans les paramêtres pour Mettre a jour Holo manuellement
+- ✅ J'ai fait un test ou j'ai ouvert un repo sur l'ordi A j'ai changer la méthode de stockage des images (ça a bien sauvegarder et commit), quand j'ai ouvert le meme repo sur l'ordi B j'ai vu qu'il a fait un pull mais il ne m'a pas averti que "La méthode de savegarde des images de ce dépot a changer, veuillez fournir les clef d'authentification
+- ✅ Quand je copie le lien d'un fichier il me donne bien "holo://documentation/Readme.md" sauf que teams ne l'interprete pas comme un lien est-qu'il y a qqch a faire pour que ça marche? (solution: passerelle HTTPS Vercel + redirection vers holo://)
+- ✅ Dans .holo les configurations dossier/icones diffèrent entre windows/linux/mac et du coup ne fonctionne pas, il faudrai normaliser ça. Parce que sinon on se retrouve avec ça :
 "/home/romane/Bureau/Dev/documentation": "📄",
 "C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Dev": "📦",
 "C:\\Users\\marceloechino\\Documents\\Scenario\\documentation\\Admin": "⚖️"
+
+- J'ai l'avertissement que les clef sont manquante a chaque fois que j'ouvre le repo. J'ai été voir dans le local storage et j'ai vu que les clef sont stocké global et pas par repo. Il faut changer ça et detecter si elle sont existante. Et je pense que ce serait mieux si elle était dans un fichier de config plutot que le local storage
+holo-SANITIZED_REPO_NAME-azure-url	XXXX
+holo-SANITIZED_REPO_NAME-azure-sas-token XXXXX

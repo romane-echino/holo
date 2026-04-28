@@ -1,0 +1,9 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/open",
+      "destination": "/open.html"
+    }
+  ]
+}

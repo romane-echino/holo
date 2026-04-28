@@ -58,6 +58,16 @@ Then install and launch Holo like any standard desktop app.
 - Use the Git panel to fetch/pull/sync when needed
 - Resolve conflicts directly from the app when they appear
 
+## Teams/Slack Share Links
+
+To make Holo links clickable in tools like Microsoft Teams, use the HTTPS gateway hosted on Vercel:
+
+- Gateway source is in [holo-link-gateway](holo-link-gateway)
+- Deploy this folder as a separate Vercel project (root directory: `holo-link-gateway`)
+- In Holo settings, fill **Application → Passerelle lien HTTPS (Teams)** with your deployed URL
+
+When configured, the “Copier le lien” action generates a clickable HTTPS link that redirects to `holo://...`.
+
 ## Tech Stack
 
 - Electron

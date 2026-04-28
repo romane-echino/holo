@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ouvrir dans Holo</title>
+    <style>
+      body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e5e7eb; margin: 0; }
+      .wrap { max-width: 760px; margin: 40px auto; padding: 24px; }
+      .card { border: 1px solid #2b3140; border-radius: 14px; padding: 20px; background: #141926; }
+      h1 { margin-top: 0; font-size: 22px; }
+      p { color: #b7bfd1; }
+      .btn { border: 0; border-radius: 10px; padding: 11px 14px; background: #7B61FF; color: #fff; cursor: pointer; font-weight: 600; }
+      .btn:hover { background: #9d8bff; }
+      .muted { font-size: 12px; color: #8a93a9; }
+      code { background: #1d2333; border: 1px solid #2b3140; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Ouverture Holo</h1>
+        <p id="status">Préparation du lien…</p>
+        <p class="muted" id="target"></p>
+        <button class="btn" id="openBtn" hidden>Ouvrir dans Holo</button>
+        <p class="muted">Si rien ne se passe, vérifie que l'application Holo est installée et associée au protocole <code>holo://</code>.</p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search)
+        var encoded = params.get('h')
+        var statusEl = document.getElementById('status')
+        var targetEl = document.getElementById('target')
+        var button = document.getElementById('openBtn')
+
+        if (!encoded) {
+          statusEl.textContent = 'Lien invalide : paramètre h manquant.'
+          return
+        }
+
+        var target = ''
+        try {
+          target = decodeURIComponent(encoded)
+        } catch {
+          statusEl.textContent = 'Lien invalide : encodage incorrect.'
+          return
+        }
+
+        if (!target.startsWith('holo://')) {
+          statusEl.textContent = 'Lien refusé : seul le protocole holo:// est autorisé.'
+          return
+        }
+
+        targetEl.textContent = target
+        var open = function () {
+          window.location.href = target
+        }
+
+        button.hidden = false
+        button.addEventListener('click', open)
+
+        statusEl.textContent = 'Tentative d’ouverture automatique…'
+        setTimeout(open, 120)
+      })()
+    </script>
+  </body>
+</html>

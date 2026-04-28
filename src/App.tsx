@@ -319,6 +319,31 @@ function buildHoloFileLink(rootPath: string | null, filePath: string): string {
   return `holo://${encodedRepoName}/${encodedPath}`
 }
 
+function buildShareableHoloLink(rootPath: string | null, filePath: string, gatewayBaseUrl: string): string {
+  const holoLink = buildHoloFileLink(rootPath, filePath)
+
+  if (!holoLink) {
+    return ''
+  }
+
+  const base = gatewayBaseUrl.trim().replace(/\/+$/, '')
+
+  if (!base) {
+    return holoLink
+  }
+
+  try {
+    const parsed = new URL(base)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return holoLink
+    }
+  } catch {
+    return holoLink
+  }
+
+  return `${base}/open?h=${encodeURIComponent(holoLink)}`
+}
+
 function getRelativeLinkPath(fromFilePath: string | null, targetFilePath: string, rootPath: string | null): string {
   if (!fromFilePath) {
     const repoRelative = getCommitTargetPath(rootPath, targetFilePath).replace(/^\//, '')
@@ -725,6 +750,7 @@ function App() {
   })
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
+  const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
   const [showAuthorModal, setShowAuthorModal] = useState(false)
@@ -1361,6 +1387,7 @@ function App() {
     const geminiKey = window.localStorage.getItem('holo-gemini-key')
     const provider = window.localStorage.getItem('holo-ai-provider')
     const prompt = window.localStorage.getItem('holo-openai-prompt')
+    const gatewayBaseUrl = window.localStorage.getItem('holo-share-gateway-url')
     if (email) setGitEmail(email)
     if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
     if (azureSasToken) setAzureBlobSasToken(azureSasToken)
@@ -1380,6 +1407,7 @@ function App() {
       setAiProvider(provider)
     }
     if (prompt) setOpenaiPrompt(prompt)
+    if (gatewayBaseUrl) setShareGatewayBaseUrl(gatewayBaseUrl)
   }, [])
 
   useEffect(() => { window.localStorage.setItem('holo-git-email', gitEmail) }, [gitEmail])
@@ -1399,6 +1427,7 @@ function App() {
   useEffect(() => { window.localStorage.setItem('holo-gemini-key', geminiApiKey) }, [geminiApiKey])
   useEffect(() => { window.localStorage.setItem('holo-ai-provider', aiProvider) }, [aiProvider])
   useEffect(() => { window.localStorage.setItem('holo-openai-prompt', openaiPrompt) }, [openaiPrompt])
+  useEffect(() => { window.localStorage.setItem('holo-share-gateway-url', shareGatewayBaseUrl) }, [shareGatewayBaseUrl])
 
   useEffect(() => {
     if (!rootPath) {
@@ -1428,7 +1457,7 @@ function App() {
         // Alert if image storage credentials are missing on this machine
         if (!cancelled && mode && mode !== 'local') {
           const isAbsoluteKey = (k: string) => k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~')
-          const hasAzure = !!(window.localStorage.getItem('holo-azure-blob-container-url') && window.localStorage.getItem('holo-azure-blob-sas-token'))
+          const hasAzure = !!(window.localStorage.getItem('holo-azure-container-url') && window.localStorage.getItem('holo-azure-sas-token'))
           const hasS3 = !!(window.localStorage.getItem('holo-s3-region') && window.localStorage.getItem('holo-s3-bucket') && window.localStorage.getItem('holo-s3-access-key-id') && window.localStorage.getItem('holo-s3-secret-access-key'))
           const hasDropbox = !!window.localStorage.getItem('holo-dropbox-access-token')
           const hasGdrive = !!window.localStorage.getItem('holo-gdrive-access-token')
@@ -4154,7 +4183,7 @@ function App() {
       return
     }
 
-    const rawLink = buildHoloFileLink(rootPath, filePath)
+    const rawLink = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
 
     if (!rawLink) {
       return
@@ -4171,7 +4200,7 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [getHoloApi, rootPath])
+  }, [getHoloApi, rootPath, shareGatewayBaseUrl])
 
   const onHeaderMouseDown = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0) {
@@ -6352,6 +6381,18 @@ function App() {
                           )
                       }
                     </div>
+                  </div>
+                  <div className="border-t border-white/8 pt-3">
+                    <label className="mb-1 block text-xs text-white/50">Passerelle lien HTTPS (Teams)</label>
+                    <input
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
+                      placeholder="https://holo-link-gateway.vercel.app"
+                      value={shareGatewayBaseUrl}
+                      onChange={(e) => setShareGatewayBaseUrl(e.target.value)}
+                    />
+                    <p className="mt-1 text-xs text-white/35">
+                      Si vide, Holo copie un lien direct <span className="font-mono">holo://</span>.
+                    </p>
                   </div>
                 </div>
               </section>
