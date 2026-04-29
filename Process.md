@@ -515,8 +515,8 @@ Recherche dans la doc (directement sur qdrant?)
 - ✅ Possibilité de changer les icônes des dossiers (sauvegarder dans .holo). Bouton droite -> Changer d'icone -> Popup de choix (Et push le fichier)
 - ✅ Enlever le paramêtre Images > Stockage des images (Global) le paramêtre par dépot suffit
 - ✅ Les popup de dropdown dans les settings sont pas adapté au thème darkmode
-- permettre d'ouvrir un fichier .md avec holo (ouvre le dossier parent et ouvre le fichier correspondant)
-- permettre d'ouvrir un lien avec holo (pas sur de moi mais on devrait pouvoir faire holo://NOMDUREPO/DOSSIER/FICHIER.md) comme ça je peux envoyer des liens a ouvrir dans la doc via slack/teams. Si le repo n'existe pas dire (aucun dépot correspondant trouvé)
+- ✅ permettre d'ouvrir un fichier .md avec holo (ouvre le dossier parent et ouvre le fichier correspondant)
+- ✅ permettre d'ouvrir un lien avec holo (pas sur de moi mais on devrait pouvoir faire holo://NOMDUREPO/DOSSIER/FICHIER.md) comme ça je peux envoyer des liens a ouvrir dans la doc via slack/teams. Si le repo n'existe pas dire (aucun dépot correspondant trouvé)
 
 
 ### 28.04.26
@@ -532,3 +532,8 @@ Recherche dans la doc (directement sur qdrant?)
 - ✅ J'ai l'avertissement que les clef sont manquante a chaque fois que j'ouvre le repo. J'ai été voir dans le local storage et j'ai vu que les clef sont stocké global et pas par repo. Il faut changer ça et detecter si elle sont existante. Et je pense que ce serait mieux si elle était dans un fichier de config plutot que le local storage (solution: migré vers ~/.holo/holo-config.json)
 
 - ✅ Stocké pareil le nom (saisie au départ) dans un fichier de conf (solution: appAuthor stocké dans ~/.holo/holo-config.json)
+
+
+
+### 29.04.26
+- Quand je clique sur un lien il ouvre une nouvelle instance (pourquoi pas), et je sais pas pourquoi il me demande mon nom, de paramêtrer les clefs etc... (alors que tout ça c'est dans le fichier de conf)

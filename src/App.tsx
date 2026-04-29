@@ -19,6 +19,7 @@ import {
   enhanceTablesInDocument,
 } from './components/table/tableEngine'
 import { useTableInteractions } from './components/table/useTableInteractions'
+import NewTable from './components/table/NewTable'
 
 type NodeType = 'file' | 'directory'
 
@@ -5792,10 +5793,15 @@ function App() {
 
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center">
-                <p className="text-center text-sm text-white/40">
+              <div className="flex flex-1 flex-col justify-center mx-auto max-w-272">
+                <p className="block text-center text-sm text-white/40">
                   Clique sur un fichier pour commencer l'édition
                 </p>
+
+
+                <div className=''>
+                  <NewTable />
+                </div>
               </div>
             )}
             </div>{/* end flex-1 min-w-0 content area */}
