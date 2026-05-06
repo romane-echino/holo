@@ -535,5 +535,23 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 
-### 29.04.26
-- Quand je clique sur un lien il ouvre une nouvelle instance (pourquoi pas), et je sais pas pourquoi il me demande mon nom, de paramêtrer les clefs etc... (alors que tout ça c'est dans le fichier de conf)
+### 06.05.26
+- ✅ Quand je clique sur un lien il ouvre une nouvelle instance (pourquoi pas), et je sais pas pourquoi il me demande mon nom, de paramêtrer les clefs etc... (alors que tout ça c'est dans le fichier de conf)
+- ✅ Gestion des templates
+  - Défini un fichier en tant que template (Ajouter dans le header qqch) (Clique droite, définir comme modèle) -> Il doit y avoir un détrompeur dans l'arboressence pour repérer les template
+  - Quand on crée un ficher, y'a un drop down qui liste les modèle (on peut laisser vide), et du coup ça duplique le contenu du fichier quand crée
+- ✅ Temps de chargement long chaque changement (sélection) de fichier (note de Romane : Il faut qu'on supporte des gros fichier et optimiser un maximum la lecture)
+- ✅ Mode read-only (A côté de l'icone de profile un petit switch read-only) transforme le programme en mode lecture seul (quand on clique sur un fichier on voit le markdown en beau et pas moyen d'éditer)
+- ✅ La recherche n'a pas l'aire de rechercher dans les titre / nom de fichier / description
+- ✅ Un collègue m'a reporté que quand il clique dans la section "Récents" sur un fichier cela ne lui ouvre pas le bon fichier
+
+
+#### Partie 2
+- Ajouter des changelog au démarrage (quand on a installé la nouvelle version) et dans settings possibilité de revoir ces changes logs
+- Export PDF
+- Quand je fais une liste en markdown et que je presse "TAB" cela me change le focus alors que j'aimerais pouvoir passer a une sous-liste
+- Quand on switch de fichier y'a le popup (partir sans sauvegarder) si je valide : plus moyen d'écrire ni de modifier quoi que ce soit.
+- Impossible de sélectionner du texte et créer un lien
+- Version responsive de l'interface (début préparation au mobile)
+- Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
+- Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs

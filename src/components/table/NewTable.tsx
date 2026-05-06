@@ -1,4 +1,4 @@
-import React, { use, useEffect } from 'react';
+import React, { useEffect } from 'react';
 
 interface NewTableProps {
     // Add your props here
@@ -75,7 +75,7 @@ const NewTable: React.FC<NewTableProps> = ({ }) => {
 
                     <tbody>
                         <tr>
-                            {columns.map((col, index) => (
+                            {columns.map((_, index) => (
                                 <td className='h-6' key={index} onMouseEnter={() => setColHover(index)} onMouseLeave={() => setColHover(null)}>
                                     {colHover === index ? (
                                         <div className='grid grid-cols-[auto_1fr_auto] h-6'>
@@ -160,7 +160,7 @@ const NewTable: React.FC<NewTableProps> = ({ }) => {
                                     </div>
                                 </td>
 
-                                {columns.map((col, colIndex) => (
+                                {columns.map((_, colIndex) => (
                                     <td
                                         key={colIndex}
                                         className="min-h-11  align-top p-0 cursor-text relative border-r border-[#525252] last:border-0"

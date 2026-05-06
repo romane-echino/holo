@@ -19,7 +19,6 @@ import {
   enhanceTablesInDocument,
 } from './components/table/tableEngine'
 import { useTableInteractions } from './components/table/useTableInteractions'
-import NewTable from './components/table/NewTable'
 
 type NodeType = 'file' | 'directory'
 
@@ -41,6 +40,7 @@ type NameDialog =
     mode: 'create-file' | 'create-directory'
     value: string
     targetDirectoryPath: string
+    selectedTemplatePath?: string | null
   }
   | {
     mode: 'rename'
@@ -102,6 +102,7 @@ type EditableMarkdownHeader = {
   author: string
   icon: string
   tags: string[]
+  isTemplate: boolean
 }
 
 type FilePathStats = {
@@ -134,6 +135,7 @@ type TocItem = {
 type FileMeta = {
   title: string
   description: string
+  isTemplate: boolean
 }
 
 type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
@@ -417,6 +419,11 @@ function readFrontMatterValue(line: string): string {
   return trimmed
 }
 
+function readFrontMatterBooleanValue(line: string): boolean {
+  const value = readFrontMatterValue(line).trim().toLowerCase()
+  return value === 'true' || value === '1' || value === 'yes' || value === 'oui'
+}
+
 function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
   const { frontMatterLines } = splitMarkdownFrontMatter(markdown)
   const header: EditableMarkdownHeader = {
@@ -425,6 +432,7 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
     author: '',
     icon: '',
     tags: [],
+    isTemplate: false,
   }
 
   for (const line of frontMatterLines) {
@@ -448,6 +456,10 @@ function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
         .split(',')
         .map((t) => t.trim().replace(/^["']|["']$/g, ''))
         .filter(Boolean)
+    }
+
+    if (key === 'template' || key === 'istemplate') {
+      header.isTemplate = readFrontMatterBooleanValue(line)
     }
   }
 
@@ -503,6 +515,22 @@ function updateTagsInMarkdown(markdown: string, tags: string[]): string {
     nextLines.push(`tags: ${serialized}`)
   }
   if (nextLines.length === 0) return body
+  return ['---', ...nextLines, '---', body].join('\n')
+}
+
+function updateMarkdownBooleanHeaderField(markdown: string, field: string, nextValue: boolean): string {
+  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
+  const fieldMatcher = new RegExp(`^${field}\\s*:`, 'i')
+  const nextLines = frontMatterLines.filter((line) => !fieldMatcher.test(line))
+
+  if (nextValue) {
+    nextLines.push(`${field}: true`)
+  }
+
+  if (nextLines.length === 0) {
+    return body
+  }
+
   return ['---', ...nextLines, '---', body].join('\n')
 }
 
@@ -638,10 +666,17 @@ function TreeItem({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs">
-            {node.type === 'file'
-              ? (fileMeta?.title?.trim() || node.name.replace(/\.md$/i, ''))
-              : node.name}
+          <span className="flex items-center gap-1.5">
+            <span className="block min-w-0 flex-1 truncate text-xs">
+              {node.type === 'file'
+                ? (fileMeta?.title?.trim() || node.name.replace(/\.md$/i, ''))
+                : node.name}
+            </span>
+            {node.type === 'file' && fileMeta?.isTemplate && (
+              <span className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-violet-200">
+                Modèle
+              </span>
+            )}
           </span>
           {node.type === 'file' && fileMeta?.description?.trim() && (
             <span className="block truncate text-[10px] text-white/35">{fileMeta.description.trim()}</span>
@@ -751,6 +786,7 @@ function App() {
   })
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
+  const [globalConfigReady, setGlobalConfigReady] = useState(false)
   const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
   const [appAuthor, setAppAuthor] = useState('')
@@ -758,6 +794,7 @@ function App() {
   const [authorModalMode, setAuthorModalMode] = useState<'startup' | 'edit'>('startup')
   const [authorModalValue, setAuthorModalValue] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [readOnlyMode, setReadOnlyMode] = useState(false)
   const [gitEmail, setGitEmail] = useState('')
   const [repoImageModeReady, setRepoImageModeReady] = useState(false)
   const [repoImageStorageMode, setRepoImageStorageMode] = useState<ImageStorageMode>('local')
@@ -807,6 +844,7 @@ function App() {
   const slashMenuListRef = useRef<HTMLDivElement | null>(null)
   const [aiDialog, setAiDialog] = useState<{ mode: 'generate' | 'transform'; prompt: string; isLoading: boolean; selectedText: string; error?: string } | null>(null)
   const aiSavedRangeRef = useRef<Range | null>(null)
+  const linkSavedRangeRef = useRef<Range | null>(null)
   const aiTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [columnTypePopup, setColumnTypePopup] = useState<{ x: number; y: number; thEl: HTMLElement } | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -908,6 +946,18 @@ function App() {
     return service
   }, [])
 
+  const templateOptions = useMemo(
+    () => Object.entries(fileMetaByPath)
+      .filter(([, meta]) => meta.isTemplate)
+      .map(([path, meta]) => ({
+        path,
+        label: meta.title.trim() || getBaseName(path).replace(/\.md$/i, ''),
+        description: meta.description.trim(),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' })),
+    [fileMetaByPath],
+  )
+
   useEffect(() => {
     if (!slashMenu) return
     const listEl = slashMenuListRef.current
@@ -918,7 +968,24 @@ function App() {
 
   const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
+  const isEditorReadOnly = readOnlyMode || remoteEditBlock.isBlocked
+  const effectiveEditorMode = readOnlyMode ? 'wysiwyg' : editorMode
   const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
+
+  const ensureWritableMode = useCallback(() => {
+    if (!readOnlyMode) {
+      return true
+    }
+
+    window.alert('Le mode lecture seule est activé. Désactive-le pour modifier ce contenu.')
+    return false
+  }, [readOnlyMode])
+
+  useEffect(() => {
+    if (readOnlyMode) {
+      setEditorMode('wysiwyg')
+    }
+  }, [readOnlyMode])
 
   const editableHeader = useMemo(
     () => getEditableMarkdownHeader(activeTab?.content ?? ''),
@@ -1351,84 +1418,125 @@ function App() {
       return
     }
 
-    const storedAuthor = window.localStorage.getItem('holo-author')
-    if (storedAuthor) {
-      setAppAuthor(storedAuthor)
-      return
+    let cancelled = false
+
+    const loadGlobalConfig = async () => {
+      const holo = getHoloApi()
+      const cfg = await holo?.getHoloConfig?.().catch(() => ({} as Record<string, unknown>))
+      const config = cfg && typeof cfg === 'object' ? cfg : {}
+
+      const fromConfigOrLocal = (configKey: string, localKey: string, fallback = '') => {
+        const cfgValue = config[configKey]
+        if (typeof cfgValue === 'string' && cfgValue.trim().length > 0) {
+          return cfgValue
+        }
+        const localValue = window.localStorage.getItem(localKey)
+        if (localValue && localValue.trim().length > 0) {
+          void holo?.setHoloConfigValue?.(configKey, localValue)
+          return localValue
+        }
+        return fallback
+      }
+
+      const fromConfigOrLocalBoolean = (configKey: string, localKey: string, fallback = false) => {
+        const cfgValue = config[configKey]
+        if (typeof cfgValue === 'boolean') {
+          return cfgValue
+        }
+        const localValue = window.localStorage.getItem(localKey)
+        if (localValue === 'true' || localValue === 'false') {
+          const parsed = localValue === 'true'
+          void holo?.setHoloConfigValue?.(configKey, parsed)
+          return parsed
+        }
+        return fallback
+      }
+
+      const author = fromConfigOrLocal('app-author', 'holo-author', '')
+      const readOnly = fromConfigOrLocalBoolean('app-read-only', 'holo-read-only', false)
+      const email = fromConfigOrLocal('git-email', 'holo-git-email', '')
+      const azureContainerUrl = fromConfigOrLocal('azure-container-url', 'holo-azure-container-url', '')
+      const azureSasToken = fromConfigOrLocal('azure-sas-token', 'holo-azure-sas-token', '')
+      const s3RegionValue = fromConfigOrLocal('s3-region', 'holo-s3-region', '')
+      const s3BucketValue = fromConfigOrLocal('s3-bucket', 'holo-s3-bucket', '')
+      const s3AccessKeyIdValue = fromConfigOrLocal('s3-access-key-id', 'holo-s3-access-key-id', '')
+      const s3SecretAccessKeyValue = fromConfigOrLocal('s3-secret-access-key', 'holo-s3-secret-access-key', '')
+      const s3EndpointValue = fromConfigOrLocal('s3-endpoint', 'holo-s3-endpoint', '')
+      const s3PublicBaseUrlValue = fromConfigOrLocal('s3-public-base-url', 'holo-s3-public-base-url', '')
+      const dropboxAccessTokenValue = fromConfigOrLocal('dropbox-access-token', 'holo-dropbox-access-token', '')
+      const dropboxFolderPathValue = fromConfigOrLocal('dropbox-folder-path', 'holo-dropbox-folder-path', '/holo-images')
+      const gdriveAccessTokenValue = fromConfigOrLocal('gdrive-access-token', 'holo-gdrive-access-token', '')
+      const gdriveFolderIdValue = fromConfigOrLocal('gdrive-folder-id', 'holo-gdrive-folder-id', '')
+      const openaiKey = fromConfigOrLocal('openai-api-key', 'holo-openai-key', '')
+      const geminiKey = fromConfigOrLocal('gemini-api-key', 'holo-gemini-key', '')
+      const providerRaw = fromConfigOrLocal('ai-provider', 'holo-ai-provider', 'auto')
+      const prompt = fromConfigOrLocal('openai-prompt', 'holo-openai-prompt', openaiPrompt)
+      const gatewayBaseUrl = fromConfigOrLocal('share-gateway-base-url', 'holo-share-gateway-url', shareGatewayBaseUrl)
+
+      if (cancelled) {
+        return
+      }
+
+      if (author) {
+        setAppAuthor(author)
+      } else {
+        setAuthorModalMode('startup')
+        setAuthorModalValue('')
+        setShowAuthorModal(true)
+      }
+
+      setReadOnlyMode(readOnly)
+      if (email) setGitEmail(email)
+      if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
+      if (azureSasToken) setAzureBlobSasToken(azureSasToken)
+      if (s3RegionValue) setS3Region(s3RegionValue)
+      if (s3BucketValue) setS3Bucket(s3BucketValue)
+      if (s3AccessKeyIdValue) setS3AccessKeyId(s3AccessKeyIdValue)
+      if (s3SecretAccessKeyValue) setS3SecretAccessKey(s3SecretAccessKeyValue)
+      if (s3EndpointValue) setS3Endpoint(s3EndpointValue)
+      if (s3PublicBaseUrlValue) setS3PublicBaseUrl(s3PublicBaseUrlValue)
+      if (dropboxAccessTokenValue) setDropboxAccessToken(dropboxAccessTokenValue)
+      if (dropboxFolderPathValue) setDropboxFolderPath(dropboxFolderPathValue)
+      if (gdriveAccessTokenValue) setGdriveAccessToken(gdriveAccessTokenValue)
+      if (gdriveFolderIdValue) setGdriveFolderId(gdriveFolderIdValue)
+      if (openaiKey) setOpenaiApiKey(openaiKey)
+      if (geminiKey) setGeminiApiKey(geminiKey)
+      if (providerRaw === 'auto' || providerRaw === 'openai' || providerRaw === 'gemini') {
+        setAiProvider(providerRaw)
+      }
+      if (prompt) setOpenaiPrompt(prompt)
+      if (gatewayBaseUrl) setShareGatewayBaseUrl(gatewayBaseUrl)
+
+      setGlobalConfigReady(true)
     }
 
-    setAuthorModalMode('startup')
-    setAuthorModalValue('')
-    setShowAuthorModal(true)
-  }, [])
+    void loadGlobalConfig()
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
+    return () => {
+      cancelled = true
     }
+  }, [getHoloApi, openaiPrompt, shareGatewayBaseUrl])
 
-    window.localStorage.setItem('holo-author', appAuthor)
-  }, [appAuthor])
-
-  useEffect(() => {
-    const email = window.localStorage.getItem('holo-git-email')
-    const azureContainerUrl = window.localStorage.getItem('holo-azure-container-url')
-    const azureSasToken = window.localStorage.getItem('holo-azure-sas-token')
-    const s3RegionValue = window.localStorage.getItem('holo-s3-region')
-    const s3BucketValue = window.localStorage.getItem('holo-s3-bucket')
-    const s3AccessKeyIdValue = window.localStorage.getItem('holo-s3-access-key-id')
-    const s3SecretAccessKeyValue = window.localStorage.getItem('holo-s3-secret-access-key')
-    const s3EndpointValue = window.localStorage.getItem('holo-s3-endpoint')
-    const s3PublicBaseUrlValue = window.localStorage.getItem('holo-s3-public-base-url')
-    const dropboxAccessTokenValue = window.localStorage.getItem('holo-dropbox-access-token')
-    const dropboxFolderPathValue = window.localStorage.getItem('holo-dropbox-folder-path')
-    const gdriveAccessTokenValue = window.localStorage.getItem('holo-gdrive-access-token')
-    const gdriveFolderIdValue = window.localStorage.getItem('holo-gdrive-folder-id')
-    const openaiKey = window.localStorage.getItem('holo-openai-key')
-    const geminiKey = window.localStorage.getItem('holo-gemini-key')
-    const provider = window.localStorage.getItem('holo-ai-provider')
-    const prompt = window.localStorage.getItem('holo-openai-prompt')
-    const gatewayBaseUrl = window.localStorage.getItem('holo-share-gateway-url')
-    if (email) setGitEmail(email)
-    if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
-    if (azureSasToken) setAzureBlobSasToken(azureSasToken)
-    if (s3RegionValue) setS3Region(s3RegionValue)
-    if (s3BucketValue) setS3Bucket(s3BucketValue)
-    if (s3AccessKeyIdValue) setS3AccessKeyId(s3AccessKeyIdValue)
-    if (s3SecretAccessKeyValue) setS3SecretAccessKey(s3SecretAccessKeyValue)
-    if (s3EndpointValue) setS3Endpoint(s3EndpointValue)
-    if (s3PublicBaseUrlValue) setS3PublicBaseUrl(s3PublicBaseUrlValue)
-    if (dropboxAccessTokenValue) setDropboxAccessToken(dropboxAccessTokenValue)
-    if (dropboxFolderPathValue) setDropboxFolderPath(dropboxFolderPathValue)
-    if (gdriveAccessTokenValue) setGdriveAccessToken(gdriveAccessTokenValue)
-    if (gdriveFolderIdValue) setGdriveFolderId(gdriveFolderIdValue)
-    if (openaiKey) setOpenaiApiKey(openaiKey)
-    if (geminiKey) setGeminiApiKey(geminiKey)
-    if (provider === 'auto' || provider === 'openai' || provider === 'gemini') {
-      setAiProvider(provider)
-    }
-    if (prompt) setOpenaiPrompt(prompt)
-    if (gatewayBaseUrl) setShareGatewayBaseUrl(gatewayBaseUrl)
-  }, [])
-
-  useEffect(() => { window.localStorage.setItem('holo-git-email', gitEmail) }, [gitEmail])
-  useEffect(() => { window.localStorage.setItem('holo-azure-container-url', azureBlobContainerUrl) }, [azureBlobContainerUrl])
-  useEffect(() => { window.localStorage.setItem('holo-azure-sas-token', azureBlobSasToken) }, [azureBlobSasToken])
-  useEffect(() => { window.localStorage.setItem('holo-s3-region', s3Region) }, [s3Region])
-  useEffect(() => { window.localStorage.setItem('holo-s3-bucket', s3Bucket) }, [s3Bucket])
-  useEffect(() => { window.localStorage.setItem('holo-s3-access-key-id', s3AccessKeyId) }, [s3AccessKeyId])
-  useEffect(() => { window.localStorage.setItem('holo-s3-secret-access-key', s3SecretAccessKey) }, [s3SecretAccessKey])
-  useEffect(() => { window.localStorage.setItem('holo-s3-endpoint', s3Endpoint) }, [s3Endpoint])
-  useEffect(() => { window.localStorage.setItem('holo-s3-public-base-url', s3PublicBaseUrl) }, [s3PublicBaseUrl])
-  useEffect(() => { window.localStorage.setItem('holo-dropbox-access-token', dropboxAccessToken) }, [dropboxAccessToken])
-  useEffect(() => { window.localStorage.setItem('holo-dropbox-folder-path', dropboxFolderPath) }, [dropboxFolderPath])
-  useEffect(() => { window.localStorage.setItem('holo-gdrive-access-token', gdriveAccessToken) }, [gdriveAccessToken])
-  useEffect(() => { window.localStorage.setItem('holo-gdrive-folder-id', gdriveFolderId) }, [gdriveFolderId])
-  useEffect(() => { window.localStorage.setItem('holo-openai-key', openaiApiKey) }, [openaiApiKey])
-  useEffect(() => { window.localStorage.setItem('holo-gemini-key', geminiApiKey) }, [geminiApiKey])
-  useEffect(() => { window.localStorage.setItem('holo-ai-provider', aiProvider) }, [aiProvider])
-  useEffect(() => { window.localStorage.setItem('holo-openai-prompt', openaiPrompt) }, [openaiPrompt])
-  useEffect(() => { window.localStorage.setItem('holo-share-gateway-url', shareGatewayBaseUrl) }, [shareGatewayBaseUrl])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('app-author', appAuthor) }, [appAuthor, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('app-read-only', readOnlyMode) }, [readOnlyMode, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('git-email', gitEmail) }, [gitEmail, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('azure-container-url', azureBlobContainerUrl) }, [azureBlobContainerUrl, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('azure-sas-token', azureBlobSasToken) }, [azureBlobSasToken, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-region', s3Region) }, [s3Region, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-bucket', s3Bucket) }, [s3Bucket, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-access-key-id', s3AccessKeyId) }, [s3AccessKeyId, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-secret-access-key', s3SecretAccessKey) }, [s3SecretAccessKey, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-endpoint', s3Endpoint) }, [s3Endpoint, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('s3-public-base-url', s3PublicBaseUrl) }, [s3PublicBaseUrl, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('dropbox-access-token', dropboxAccessToken) }, [dropboxAccessToken, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('dropbox-folder-path', dropboxFolderPath) }, [dropboxFolderPath, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('gdrive-access-token', gdriveAccessToken) }, [gdriveAccessToken, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('gdrive-folder-id', gdriveFolderId) }, [gdriveFolderId, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('openai-api-key', openaiApiKey) }, [openaiApiKey, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('gemini-api-key', geminiApiKey) }, [geminiApiKey, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('ai-provider', aiProvider) }, [aiProvider, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('openai-prompt', openaiPrompt) }, [openaiPrompt, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('share-gateway-base-url', shareGatewayBaseUrl) }, [shareGatewayBaseUrl, globalConfigReady])
 
   useEffect(() => {
     if (!rootPath) {
@@ -1456,14 +1564,12 @@ function App() {
         }
 
         // Alert if image storage credentials are missing on this machine
-        if (!cancelled && mode && mode !== 'local') {
-          const isAbsoluteKey = (k: string) => k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~')
-          const hasAzure = !!(window.localStorage.getItem('holo-azure-container-url') && window.localStorage.getItem('holo-azure-sas-token'))
-          const hasS3 = !!(window.localStorage.getItem('holo-s3-region') && window.localStorage.getItem('holo-s3-bucket') && window.localStorage.getItem('holo-s3-access-key-id') && window.localStorage.getItem('holo-s3-secret-access-key'))
-          const hasDropbox = !!window.localStorage.getItem('holo-dropbox-access-token')
-          const hasGdrive = !!window.localStorage.getItem('holo-gdrive-access-token')
+        if (!cancelled && globalConfigReady && mode && mode !== 'local') {
+          const hasAzure = !!(azureBlobContainerUrl.trim() && azureBlobSasToken.trim())
+          const hasS3 = !!(s3Region.trim() && s3Bucket.trim() && s3AccessKeyId.trim() && s3SecretAccessKey.trim())
+          const hasDropbox = !!dropboxAccessToken.trim()
+          const hasGdrive = !!gdriveAccessToken.trim()
           const credOk = (mode === 'azure' && hasAzure) || (mode === 's3' && hasS3) || (mode === 'dropbox' && hasDropbox) || (mode === 'gdrive' && hasGdrive)
-          void isAbsoluteKey // suppress unused warning
           if (!credOk) {
             window.alert(`Ce dépôt utilise le stockage d'images « ${mode} » mais les clés d'authentification ne sont pas configurées sur cette machine.\n\nVa dans Paramètres › Stockage d'images pour les saisir.`)
             setShowSettings(true)
@@ -1528,6 +1634,7 @@ function App() {
               icon: header.icon.trim(),
               title: header.title.trim(),
               description: header.description.trim(),
+              isTemplate: header.isTemplate,
             }
           } catch {
             return {
@@ -1535,6 +1642,7 @@ function App() {
               icon: '',
               title: '',
               description: '',
+              isTemplate: false,
             }
           }
         }),
@@ -1551,10 +1659,11 @@ function App() {
           next[entry.filePath] = entry.icon
         }
 
-        if (entry.title || entry.description) {
+        if (entry.title || entry.description || entry.isTemplate) {
           nextMeta[entry.filePath] = {
             title: entry.title,
             description: entry.description,
+            isTemplate: entry.isTemplate,
           }
         }
       }
@@ -1774,7 +1883,12 @@ function App() {
       }
 
       try {
-        await checkRemoteFreshnessAndGuardEditing(true)
+        // Open the file immediately using cached git state — no blocking network fetch
+        if (rootPath && gitState.isRepo && gitState.incoming > 0) {
+          applyRemoteEditBlockFromGitState(gitState)
+        } else {
+          setRemoteEditBlock({ isBlocked: false, message: '' })
+        }
 
         const nextContent = await holo.readFile(filePath)
         const stats = await holo.getPathStats(filePath).catch(() => null)
@@ -1799,7 +1913,7 @@ function App() {
         window.alert((error as Error).message)
       }
     },
-    [checkRemoteFreshnessAndGuardEditing, getHoloApi],
+    [applyRemoteEditBlockFromGitState, getHoloApi, gitState],
   )
 
   useEffect(() => {
@@ -1862,6 +1976,10 @@ function App() {
       return
     }
 
+    if (!ensureWritableMode()) {
+      return
+    }
+
     const holo = getHoloApi()
 
     if (!holo) {
@@ -1897,17 +2015,17 @@ function App() {
         setTimeout(() => setSaveStatus('idle'), 3000)
       }
     }
-  }, [activeTab, appAuthor, getHoloApi, refreshGitState, refreshTree, gitState.isRepo, rootPath])
+  }, [activeTab, appAuthor, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, gitState.isRepo, rootPath])
 
   const updateActiveTabContent = useCallback(
     (nextContent: string) => {
-      if (remoteEditBlock.isBlocked) {
+      if (isEditorReadOnly) {
         return
       }
 
       setActiveTab((prev) => (prev ? { ...prev, content: nextContent, isDirty: true } : prev))
     },
-    [remoteEditBlock.isBlocked],
+    [isEditorReadOnly],
   )
 
   const updateEditableHeader = useCallback(
@@ -1964,6 +2082,19 @@ function App() {
           if (tagMatch) {
             results.push({ path: filePath, name, excerpt: header.tags.map((t) => `#${t}`).join(' '), matchType: 'tag' })
             return
+          }
+
+          // Name / title / description match
+          if (!isTagSearch) {
+            const nameLower = name.toLowerCase()
+            const titleLower = header.title.toLowerCase()
+            const descLower = header.description.toLowerCase()
+            if (nameLower.includes(needle) || titleLower.includes(needle) || descLower.includes(needle)) {
+              const label = header.title || name
+              const excerpt = header.description ? `${label} — ${header.description}` : label
+              results.push({ path: filePath, name, excerpt, matchType: 'content' })
+              return
+            }
           }
 
           // Content match (skip if tag-only search)
@@ -2398,6 +2529,52 @@ function App() {
     }
   }, [aiDialog, askAi, markdownToHtml, turndownService, updateActiveTabBody])
 
+  const insertLinkIntoEditor = useCallback((text: string, url: string) => {
+    const editor = wysiwygEditorRef.current
+
+    if (!editor) {
+      return
+    }
+
+    const trimmedUrl = url.trim()
+
+    if (!trimmedUrl) {
+      linkSavedRangeRef.current = null
+      return
+    }
+
+    const trimmedText = text.trim() || trimmedUrl
+    const sel = window.getSelection()
+    const savedRange = linkSavedRangeRef.current
+
+    editor.focus()
+
+    if (savedRange && sel) {
+      sel.removeAllRanges()
+      sel.addRange(savedRange)
+    }
+
+    const activeRange = sel?.rangeCount ? sel.getRangeAt(0) : null
+
+    if (activeRange) {
+      activeRange.deleteContents()
+      const anchor = document.createElement('a')
+      anchor.setAttribute('href', trimmedUrl)
+      anchor.textContent = trimmedText
+      activeRange.insertNode(anchor)
+      activeRange.setStartAfter(anchor)
+      activeRange.collapse(true)
+      sel?.removeAllRanges()
+      sel?.addRange(activeRange)
+    } else {
+      document.execCommand('insertHTML', false, `<a href="${trimmedUrl}">${trimmedText}</a>`)
+    }
+
+    const md = turndownService.turndown(editor.innerHTML)
+    updateActiveTabBody(md)
+    linkSavedRangeRef.current = null
+  }, [turndownService, updateActiveTabBody])
+
   const executeSlashCommand = useCallback((cmd: SlashCommand) => {
     const editor = wysiwygEditorRef.current
     if (!editor) return
@@ -2507,9 +2684,12 @@ function App() {
         break
       }
       case 'link': {
+        const sel = window.getSelection()
+        const selectedText = sel?.toString() ?? ''
+        linkSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
         setSlashMenu(null)
         setSlashMenuIndex(0)
-        setLinkDialog({ text: '', url: '', pageQuery: '' })
+        setLinkDialog({ text: selectedText, url: '', pageQuery: '' })
         return
       }
       case 'image': {
@@ -2655,24 +2835,26 @@ function App() {
 
   const onEditorDragOver = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
+      if (isEditorReadOnly) return
       if (!hasImageInDragEvent(event)) return
 
       event.preventDefault()
       event.dataTransfer.dropEffect = 'copy'
       setIsImageDragOverEditor(true)
     },
-    [hasImageInDragEvent],
+    [hasImageInDragEvent, isEditorReadOnly],
   )
 
   const onEditorDragEnter = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
+      if (isEditorReadOnly) return
       if (!hasImageInDragEvent(event)) return
 
       event.preventDefault()
       imageDragDepthRef.current += 1
       setIsImageDragOverEditor(true)
     },
-    [hasImageInDragEvent],
+    [hasImageInDragEvent, isEditorReadOnly],
   )
 
   const onEditorDragLeave = useCallback(() => {
@@ -2890,6 +3072,10 @@ function App() {
 
   const onRawDrop = useCallback(
     (event: React.DragEvent<HTMLTextAreaElement>) => {
+      if (isEditorReadOnly) {
+        return
+      }
+
       imageDragDepthRef.current = 0
       setIsImageDragOverEditor(false)
       const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile)
@@ -2902,13 +3088,13 @@ function App() {
         updateActiveTabBody(next)
       })
     },
-    [handleImageFiles, isImageFile, updateActiveTabBody],
+    [handleImageFiles, isEditorReadOnly, isImageFile, updateActiveTabBody],
   )
 
   const onWysiwygInput = useCallback(() => {
     const editor = wysiwygEditorRef.current
 
-    if (!editor || isSyncingWysiwygRef.current || remoteEditBlock.isBlocked) {
+    if (!editor || isSyncingWysiwygRef.current || isEditorReadOnly) {
       return
     }
 
@@ -2922,14 +3108,14 @@ function App() {
     const markdown = turndownService.turndown(editor.innerHTML)
     updateActiveTabBody(markdown)
     refreshTableSummaries()
-  }, [getBlockTextBeforeCursor, refreshTableSummaries, remoteEditBlock.isBlocked, slashMenu, turndownService, updateActiveTabBody])
+  }, [getBlockTextBeforeCursor, isEditorReadOnly, refreshTableSummaries, slashMenu, turndownService, updateActiveTabBody])
   const onWysiwygKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const editor = wysiwygEditorRef.current
       if (!editor) return
 
-      if (remoteEditBlock.isBlocked) {
-        const allowedShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c'
+      if (isEditorReadOnly) {
+        const allowedShortcut = (event.ctrlKey || event.metaKey) && ['a', 'c'].includes(event.key.toLowerCase())
 
         if (!allowedShortcut) {
           event.preventDefault()
@@ -3294,7 +3480,7 @@ function App() {
         }
       }
     },
-    [deleteCurrentBlockContents, executeSlashCommand, getBlockTextBeforeCursor, remoteEditBlock.isBlocked, slashMenu, slashMenuIndex, turndownService, updateActiveTabBody],
+    [deleteCurrentBlockContents, executeSlashCommand, getBlockTextBeforeCursor, isEditorReadOnly, slashMenu, slashMenuIndex, turndownService, updateActiveTabBody],
   )
 
   // Selection change → show/hide floating popup
@@ -3415,6 +3601,10 @@ function App() {
   }, [gitState.isRepo])
 
   const saveRepoImageConfig = useCallback(async () => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       return
     }
@@ -3441,9 +3631,13 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, repoImageStorageMode, rootPath])
+  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, repoImageStorageMode, rootPath])
 
   const saveFolderIconConfig = useCallback(async (folderPath: string, icon: string) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       return
     }
@@ -3507,10 +3701,14 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, rootPath])
+  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, rootPath])
 
   const moveNode = useCallback(
     async (sourcePath: string, targetDirectoryPath: string) => {
+      if (!ensureWritableMode()) {
+        return
+      }
+
       const holo = getHoloApi()
 
       if (!holo || sourcePath === targetDirectoryPath || isSameOrChildPath(sourcePath, targetDirectoryPath)) {
@@ -3547,7 +3745,7 @@ function App() {
         setDropTargetPath(null)
       }
     },
-    [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath, selectedPath],
+    [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, rootPath, selectedPath],
   )
 
   useEffect(() => {
@@ -3559,14 +3757,14 @@ function App() {
       }
 
       event.preventDefault()
-      if (activeTab) {
+      if (activeTab && !readOnlyMode) {
         void saveCurrentFile()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveCurrentFile, activeTab])
+  }, [saveCurrentFile, activeTab, readOnlyMode])
 
   useEffect(() => {
     if (!contextMenu) {
@@ -3626,6 +3824,10 @@ function App() {
   )
 
   const openCreateFileDialog = useCallback((targetPath?: string | null, targetType?: NodeType | null) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
@@ -3641,10 +3843,15 @@ function App() {
       mode: 'create-file',
       value: '',
       targetDirectoryPath: targetDirectory ?? rootPath,
+      selectedTemplatePath: null,
     })
-  }, [rootPath, selectedPath, selectedType])
+  }, [ensureWritableMode, rootPath, selectedPath, selectedType])
 
   const openCreateDirectoryDialog = useCallback((targetPath?: string | null, targetType?: NodeType | null) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
@@ -3661,9 +3868,13 @@ function App() {
       value: '',
       targetDirectoryPath: targetDirectory ?? rootPath,
     })
-  }, [rootPath, selectedPath, selectedType])
+  }, [ensureWritableMode, rootPath, selectedPath, selectedType])
 
   const openRenameDialog = useCallback((targetPathOverride?: string | null) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       window.alert('Ouvre d’abord un dossier.')
       return
@@ -3686,10 +3897,14 @@ function App() {
       value: getBaseName(targetPath),
       targetPath,
     })
-  }, [rootPath, selectedPath])
+  }, [ensureWritableMode, rootPath, selectedPath])
 
   const submitNameDialog = useCallback(async () => {
     if (!nameDialog || !rootPath) {
+      return
+    }
+
+    if (!ensureWritableMode()) {
       return
     }
 
@@ -3714,6 +3929,13 @@ function App() {
         const filename = value.endsWith('.md') ? value : `${value}.md`
         const newFilePath = `${nameDialog.targetDirectoryPath}/${filename}`
         await holo.createFile(nameDialog.targetDirectoryPath, filename)
+
+        if (nameDialog.selectedTemplatePath) {
+          const templateContent = await holo.readFile(nameDialog.selectedTemplatePath)
+          const contentFromTemplate = updateMarkdownBooleanHeaderField(templateContent, 'template', false)
+          await holo.writeFile(newFilePath, contentFromTemplate)
+        }
+
         commitMessage = buildAutoCommitMessage(appAuthor, 'ADD', rootPath, newFilePath)
         
         // Auto-open the created file
@@ -3769,9 +3991,67 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath, autoCommitStructuralChange, appAuthor])
+  }, [ensureWritableMode, getHoloApi, nameDialog, activeTabPath, refreshGitState, refreshTree, rootPath, selectedPath, autoCommitStructuralChange, appAuthor])
+
+  const toggleTemplateStatus = useCallback(async (targetPath: string, nextValue: boolean) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    try {
+      const currentContent = await holo.readFile(targetPath)
+      const nextContent = updateMarkdownBooleanHeaderField(currentContent, 'template', nextValue)
+
+      await holo.writeFile(targetPath, nextContent)
+
+      if (activeTab?.path === targetPath) {
+        setActiveTab((prev) => (prev ? { ...prev, content: nextContent, isDirty: false } : prev))
+      }
+
+      setFileMetaByPath((prev) => {
+        const currentMeta = prev[targetPath] ?? { title: '', description: '', isTemplate: false }
+
+        if (!currentMeta.title && !currentMeta.description && !nextValue) {
+          const next = { ...prev }
+          delete next[targetPath]
+          return next
+        }
+
+        return {
+          ...prev,
+          [targetPath]: {
+            ...currentMeta,
+            isTemplate: nextValue,
+          },
+        }
+      })
+
+      const stats = await holo.getPathStats(targetPath).catch(() => null)
+      if (stats) {
+        setPathStatsByPath((prev) => ({
+          ...prev,
+          [targetPath]: stats,
+        }))
+      }
+
+      await refreshTree()
+      await refreshGitState(false)
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [activeTab?.path, ensureWritableMode, getHoloApi, refreshGitState, refreshTree])
 
   const archivePathTarget = useCallback(async (targetPath: string) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       return
     }
@@ -3811,9 +4091,13 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
 
   const restoreArchivedPathTarget = useCallback(async (archivedPath: string) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       return
     }
@@ -3847,9 +4131,13 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
+  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
 
   const deletePathTarget = useCallback(async (targetPath: string) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath || targetPath === rootPath) {
       return
     }
@@ -3881,9 +4169,13 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [activeTabPath, appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath])
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, rootPath])
 
   const copyPathTarget = useCallback(async (targetPath: string) => {
+    if (!ensureWritableMode()) {
+      return
+    }
+
     if (!rootPath) {
       return
     }
@@ -3907,7 +4199,7 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [appAuthor, autoCommitStructuralChange, getHoloApi, refreshGitState, refreshTree, rootPath])
+  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, rootPath])
 
   const openTreeContextMenu = useCallback((node: TreeNode, position: { x: number; y: number }) => {
     setSelectedPath(node.path)
@@ -4461,6 +4753,21 @@ function App() {
           </div>
         </div>
         <div className="flex gap-2 text-white/50 no-drag">
+          <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white/70">
+            <span className="uppercase tracking-wide">Read-only</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={readOnlyMode}
+              className={`relative h-5 w-9 rounded-full transition-colors ${readOnlyMode ? 'bg-[#7B61FF]' : 'bg-white/15'}`}
+              onClick={() => setReadOnlyMode((previous) => !previous)}
+              title={readOnlyMode ? 'Désactiver le mode lecture seule' : 'Activer le mode lecture seule'}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${readOnlyMode ? 'translate-x-4.5' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </label>
           <div className="relative">
             <button
               className="size-8 rounded-full border border-white/20 bg-white/5 text-[10px] font-bold text-white/80 hover:border-[#7B61FF]/60 hover:text-white"
@@ -4829,6 +5136,8 @@ function App() {
                         <button
                           className={`w-full truncate rounded px-2 py-1 text-left text-xs ${selectedPath === filePath ? 'bg-[#7B61FF]/20 text-[#9d8bff]' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
                           onClick={() => {
+                            setSelectedPath(filePath)
+                            setSelectedType('file')
                             void openFile(filePath)
                           }}
                           title={filePath}
@@ -5171,16 +5480,26 @@ function App() {
                     {activeTab.isDirty ? '● non sauvegardé' : ''}
                   </span>
                   <div className="flex items-center gap-2">
+                    {readOnlyMode && (
+                      <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-200">
+                        Lecture seule
+                      </span>
+                    )}
                     <div className="flex items-center rounded border border-white/10 bg-[#1f2021] p-0.5">
                       <button
-                        className={`rounded px-2 py-1 text-[10px] font-medium ${editorMode === 'raw' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
-                        onClick={() => setEditorMode('raw')}
+                        className={`rounded px-2 py-1 text-[10px] font-medium ${effectiveEditorMode === 'raw' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'} ${readOnlyMode ? 'cursor-not-allowed opacity-40' : ''}`}
+                        onClick={() => {
+                          if (!readOnlyMode) {
+                            setEditorMode('raw')
+                          }
+                        }}
+                        disabled={readOnlyMode}
                         title="Mode RAW"
                       >
                         RAW
                       </button>
                       <button
-                        className={`rounded px-2 py-1 text-[10px] font-medium ${editorMode === 'wysiwyg' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
+                        className={`rounded px-2 py-1 text-[10px] font-medium ${effectiveEditorMode === 'wysiwyg' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
                         onClick={() => setEditorMode('wysiwyg')}
                         title="Mode WYSIWYG"
                       >
@@ -5215,7 +5534,7 @@ function App() {
                     <button
                       className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
                       onClick={() => void saveCurrentFile()}
-                      disabled={!activeTab.isDirty || saveStatus === 'saving'}
+                      disabled={readOnlyMode || !activeTab.isDirty || saveStatus === 'saving'}
                       title="Sauvegarder (Ctrl+S)"
                     >
                       {saveStatus === 'saving' ? (
@@ -5265,6 +5584,7 @@ function App() {
                               ? 'hover:bg-white/8'
                               : 'opacity-0 hover:opacity-100 hover:bg-white/8 focus:opacity-100'
                           } group-hover:opacity-100`}
+                          disabled={isEditorReadOnly}
                           onClick={() => setShowEmojiPicker((v) => !v)}
                           title="Ajouter une icône"
                         >
@@ -5314,7 +5634,7 @@ function App() {
                         ref={titleInputRef}
                         className="w-full bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
                         value={editableHeader.title}
-                        readOnly={remoteEditBlock.isBlocked}
+                        readOnly={isEditorReadOnly}
                         onChange={(event) => updateEditableHeader('title', event.target.value)}
                         placeholder="Sans titre"
                       />
@@ -5325,7 +5645,7 @@ function App() {
                       className="mb-5 w-full resize-none bg-transparent text-sm leading-7 text-white/55 outline-none placeholder:text-white/20"
                       rows={2}
                       value={editableHeader.description}
-                      readOnly={remoteEditBlock.isBlocked}
+                      readOnly={isEditorReadOnly}
                       onChange={(event) => updateEditableHeader('description', event.target.value)}
                       placeholder="Ajouter une description…"
                     />
@@ -5337,7 +5657,7 @@ function App() {
                         <input
                           className="bg-transparent outline-none placeholder:text-white/20 hover:text-white/60 focus:text-white/80"
                           value={editableHeader.author}
-                          readOnly={remoteEditBlock.isBlocked}
+                          readOnly={isEditorReadOnly}
                           onChange={(event) => updateEditableHeader('author', event.target.value)}
                           placeholder="Auteur"
                           size={Math.max(editableHeader.author.length, 6)}
@@ -5363,7 +5683,7 @@ function App() {
                           {tag}
                           <button
                             className="ml-0.5 text-[#9d8bff]/50 hover:text-[#9d8bff] transition-colors"
-                            disabled={remoteEditBlock.isBlocked}
+                            disabled={isEditorReadOnly}
                             onClick={() => updateTags(editableHeader.tags.filter((t) => t !== tag))}
                             title="Supprimer ce tag"
                           >
@@ -5377,7 +5697,7 @@ function App() {
                           className="rounded-full border border-[#7B61FF]/40 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff] outline-none placeholder:text-[#9d8bff]/30 w-24"
                           placeholder="Tag…"
                           value={tagInput}
-                          readOnly={remoteEditBlock.isBlocked}
+                          readOnly={isEditorReadOnly}
                           onChange={(e) => setTagInput(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ',') {
@@ -5406,7 +5726,7 @@ function App() {
                       ) : (
                         <button
                           className="flex items-center gap-1 rounded-full border border-dashed border-white/15 px-2.5 py-0.5 text-xs text-white/25 hover:border-[#7B61FF]/40 hover:text-[#9d8bff] transition-colors"
-                          disabled={remoteEditBlock.isBlocked}
+                          disabled={isEditorReadOnly}
                           onClick={() => setShowTagInput(true)}
                         >
                           <i className="fa-solid fa-plus text-[9px]" />
@@ -5417,11 +5737,11 @@ function App() {
 
                     {/* Corps du document */}
                     <div className="relative">
-                    {editorMode === 'raw' ? (
+                    {effectiveEditorMode === 'raw' ? (
                       <textarea
                         className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25 select-text"
                         value={activeTabBody}
-                        readOnly={remoteEditBlock.isBlocked}
+                        readOnly={isEditorReadOnly}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
                         onDrop={onRawDrop}
                         onDragEnter={onEditorDragEnter}
@@ -5434,7 +5754,7 @@ function App() {
                         <div
                           ref={wysiwygEditorRef}
                           className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-normal [&_th]:break-words [&_th[data-table-drag-type='column']]:cursor-grab [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_.table-drag-source]:bg-[#7B61FF]/18 [&_.table-drag-source]:ring-1 [&_.table-drag-source]:ring-[#9d8bff]/40 [&_.table-drag-target]:bg-[#7B61FF]/12 [&_.table-drag-target]:ring-1 [&_.table-drag-target]:ring-[#9d8bff]/30 [&_.table-row-index-badge]:mr-2 [&_.table-row-index-badge]:inline-flex [&_.table-row-index-badge]:h-4 [&_.table-row-index-badge]:min-w-4 [&_.table-row-index-badge]:items-center [&_.table-row-index-badge]:justify-center [&_.table-row-index-badge]:rounded [&_.table-row-index-badge]:bg-white/10 [&_.table-row-index-badge]:px-1 [&_.table-row-index-badge]:text-[10px] [&_.table-row-index-badge]:text-white/45 [&_.table-row-index-badge]:font-medium [&_.table-row-index-badge]:cursor-grab [&_.table-scroll-wrapper]:overflow-x-auto [&_.table-scroll-wrapper]:rounded-lg [&_.table-scroll-wrapper]:border [&_.table-scroll-wrapper]:border-white/10 [&_.table-add-row-btn]:block [&_.table-add-row-btn]:w-full [&_.table-add-row-btn]:cursor-pointer [&_.table-add-row-btn]:rounded-b-lg [&_.table-add-row-btn]:border [&_.table-add-row-btn]:border-t-0 [&_.table-add-row-btn]:border-white/10 [&_.table-add-row-btn]:py-1.5 [&_.table-add-row-btn]:text-center [&_.table-add-row-btn]:text-[11px] [&_.table-add-row-btn]:text-white/35 [&_.table-add-row-btn:hover]:bg-white/5 [&_.table-add-row-btn:hover]:text-white/60 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-10 [&_hr]:border-none [&_hr]:h-px [&_hr]:bg-white/30 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
-                          contentEditable={!remoteEditBlock.isBlocked}
+                          contentEditable={!isEditorReadOnly}
                           suppressContentEditableWarning
                           spellCheck
                           onInput={onWysiwygInput}
@@ -5611,8 +5931,11 @@ function App() {
                     <button
                       className="rounded px-2 py-1 text-xs text-[#9d8bff] hover:bg-[#7B61FF]/20"
                       onClick={() => {
-                        const link = window.prompt('URL du lien', 'https://')
-                        if (link) runWysiwygCommand('createLink', link)
+                        const sel = window.getSelection()
+                        const selectedText = sel?.toString() ?? ''
+                        linkSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
+                        setSelectionPopup(null)
+                        setLinkDialog({ text: selectedText, url: 'https://', pageQuery: '' })
                       }}
                       title="Lien"
                     >
@@ -5799,9 +6122,12 @@ function App() {
                 </p>
 
 
+                {/*
                 <div className=''>
                   <NewTable />
                 </div>
+                
+                */}
               </div>
             )}
             </div>{/* end flex-1 min-w-0 content area */}
@@ -5957,6 +6283,25 @@ function App() {
                 >
                   <i className="fa-solid fa-pen w-4 text-center" />
                   Renommer
+                </button>
+              )}
+
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <div className="my-1 h-px bg-white/8" />
+              )}
+
+              {!isArchivedContext && contextMenu.node.type === 'file' && (
+                <button
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/8 hover:text-white"
+                  onClick={() => runContextAction(() => {
+                    void toggleTemplateStatus(
+                      contextMenu.node.path,
+                      !Boolean(fileMetaByPath[contextMenu.node.path]?.isTemplate),
+                    )
+                  })}
+                >
+                  <i className="fa-solid fa-layer-group w-4 text-center" />
+                  {fileMetaByPath[contextMenu.node.path]?.isTemplate ? 'Retirer du modèle' : 'Définir comme modèle'}
                 </button>
               )}
 
@@ -6501,18 +6846,12 @@ function App() {
                   value={linkDialog.url}
                   onChange={(e) => setLinkDialog({ ...linkDialog, url: e.target.value })}
                   onKeyDown={(e) => {
-                    if (e.key === 'Escape') { setLinkDialog(null); return }
+                    if (e.key === 'Escape') { setLinkDialog(null); linkSavedRangeRef.current = null; return }
                     if (e.key === 'Enter') {
                       const text = linkDialog.text.trim() || linkDialog.url.trim()
                       const url = linkDialog.url.trim()
-                      if (!url) { setLinkDialog(null); return }
-                      const editor = wysiwygEditorRef.current
-                      if (editor) {
-                        editor.focus()
-                        document.execCommand('insertHTML', false, `<a href="${url}">${text}</a>`)
-                        const md = turndownService.turndown(editor.innerHTML)
-                        updateActiveTabBody(md)
-                      }
+                      if (!url) { setLinkDialog(null); linkSavedRangeRef.current = null; return }
+                      insertLinkIntoEditor(text, url)
                       setLinkDialog(null)
                     }
                   }}
@@ -6557,21 +6896,18 @@ function App() {
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
-                  onClick={() => setLinkDialog(null)}
+                  onClick={() => {
+                    setLinkDialog(null)
+                    linkSavedRangeRef.current = null
+                  }}
                 >Annuler</button>
                 <button
                   className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff]"
                   onClick={() => {
                     const text = linkDialog.text.trim() || linkDialog.url.trim()
                     const url = linkDialog.url.trim()
-                    if (!url) { setLinkDialog(null); return }
-                    const editor = wysiwygEditorRef.current
-                    if (editor) {
-                      editor.focus()
-                      document.execCommand('insertHTML', false, `<a href="${url}">${text}</a>`)
-                      const md = turndownService.turndown(editor.innerHTML)
-                      updateActiveTabBody(md)
-                    }
+                    if (!url) { setLinkDialog(null); linkSavedRangeRef.current = null; return }
+                    insertLinkIntoEditor(text, url)
                     setLinkDialog(null)
                   }}
                 >Insérer</button>
@@ -6670,6 +7006,33 @@ function App() {
                 }
                 placeholder="Nom"
               />
+
+              {nameDialog.mode === 'create-file' && (
+                <div className="mt-3 space-y-1.5">
+                  <label className="block text-xs font-medium text-white/60">Modèle</label>
+                  <select
+                    className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors focus:border-[#7B61FF] focus:bg-white/10"
+                    value={nameDialog.selectedTemplatePath ?? ''}
+                    onChange={(event) =>
+                      setNameDialog((previous) =>
+                        previous && previous.mode === 'create-file'
+                          ? {
+                            ...previous,
+                            selectedTemplatePath: event.target.value || null,
+                          }
+                          : previous,
+                      )
+                    }
+                  >
+                    <option value="">Aucun modèle</option>
+                    {templateOptions.map((template) => (
+                      <option key={template.path} value={template.path}>
+                        {template.label}{template.description ? ` — ${template.description}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="mt-5 flex items-center justify-end gap-2">
                 <button
