@@ -140,6 +140,12 @@ type FileMeta = {
 
 type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
 
+type ChangelogEntry = {
+  version: string
+  releasedAt: string
+  items: string[]
+}
+
 const DEFAULT_GIT_STATE: GitState = {
   isRepo: false,
   branch: null,
@@ -156,6 +162,40 @@ const DEFAULT_SYNC_FEEDBACK: SyncFeedback = {
   message: null,
   at: null,
 }
+
+const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '0.2.8',
+    releasedAt: '2026-05-07',
+    items: [
+      'Export PDF : bouton déplacé à côté de « Copier le lien » sur le fichier actif.',
+      'Liens dans l’éditeur : indication « Ctrl+clic » et ouverture via Ctrl/Cmd+clic.',
+      'Stabilité édition : correctif du blocage après changement de fichier sans sauvegarde.',
+      'Responsive : accès à la table des matières en mode compact via le bouton « Plan ».',
+      'Fenêtre desktop : largeur minimale réduite à 400px.',
+    ],
+  },
+  {
+    version: '0.2.7',
+    releasedAt: '2026-05-07',
+    items: [
+      'Templates : définir un fichier comme modèle et créer un document depuis un modèle.',
+      'Mode lecture seule : switch global près du profil et blocage des actions d’édition.',
+      'Recherche : prise en compte du titre, du nom de fichier et de la description.',
+      'Récents : correction de l’ouverture du bon fichier.',
+      'Navigation fichiers : ouverture plus rapide (suppression du fetch distant bloquant).',
+    ],
+  },
+  {
+    version: '0.2.6',
+    releasedAt: '2026-05-06',
+    items: [
+      'Migration de la configuration globale vers ~/.holo/holo-config.json.',
+      'Correction du lancement via lien holo:// (plus de re-saisie du profil et des clés).',
+      'Améliorations de stabilité sur les actions de fichiers.',
+    ],
+  },
+]
 
 function normalizeGitState(input: Partial<GitState> | null | undefined): GitState {
   return {
@@ -187,6 +227,96 @@ function isLikelyGitAuthError(rawMessage: string | null | undefined): boolean {
   if (!rawMessage) return false
   const message = rawMessage.toLowerCase()
   return /authentication failed|could not read username|permission denied \(publickey\)|could not read from remote repository|repository not found|credentials|identifiants|ssh/.test(message)
+}
+
+const MARKDOWN_LIST_ITEM_PATTERN = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[(?: |x|X)\]\s+)?/
+
+function isMarkdownListItemLine(line: string): boolean {
+  return MARKDOWN_LIST_ITEM_PATTERN.test(line)
+}
+
+function getMarkdownListOutdentSize(line: string): number {
+  if (line.startsWith('\t')) return 1
+  if (line.startsWith('  ')) return 2
+  if (line.startsWith(' ')) return 1
+  return 0
+}
+
+function applyMarkdownListTabBehavior(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  outdent: boolean,
+): {
+  handled: boolean
+  nextText: string
+  nextSelectionStart: number
+  nextSelectionEnd: number
+} {
+  const safeStart = Math.max(0, Math.min(selectionStart, text.length))
+  const safeEnd = Math.max(safeStart, Math.min(selectionEnd, text.length))
+  const blockStart = text.lastIndexOf('\n', Math.max(0, safeStart - 1)) + 1
+  const normalizedEnd = safeEnd > blockStart && text[safeEnd - 1] === '\n' ? safeEnd - 1 : safeEnd
+  const nextLineBreakIndex = text.indexOf('\n', normalizedEnd)
+  const blockEnd = nextLineBreakIndex === -1 ? text.length : nextLineBreakIndex
+  const selectedBlock = text.slice(blockStart, blockEnd)
+  const lines = selectedBlock.split('\n')
+  const handledLines = lines.map((line) => isMarkdownListItemLine(line))
+
+  if (!handledLines.some(Boolean)) {
+    return {
+      handled: false,
+      nextText: text,
+      nextSelectionStart: safeStart,
+      nextSelectionEnd: safeEnd,
+    }
+  }
+
+  const removals: number[] = []
+  const nextLines = lines.map((line, index) => {
+    if (!handledLines[index]) {
+      removals[index] = 0
+      return line
+    }
+
+    if (!outdent) {
+      removals[index] = 0
+      return `  ${line}`
+    }
+
+    const removal = getMarkdownListOutdentSize(line)
+    removals[index] = removal
+    return removal > 0 ? line.slice(removal) : line
+  })
+
+  const nextBlock = nextLines.join('\n')
+  const nextText = `${text.slice(0, blockStart)}${nextBlock}${text.slice(blockEnd)}`
+  const deltas = handledLines.map((handled, index) => {
+    if (!handled) return 0
+    return outdent ? -removals[index] : 2
+  })
+
+  const adjustBoundary = (boundary: number) => {
+    const relative = boundary - blockStart
+    let adjusted = relative
+    let lineOffset = 0
+
+    for (let index = 0; index < lines.length; index += 1) {
+      if (handledLines[index] && relative >= lineOffset) {
+        adjusted += deltas[index]
+      }
+      lineOffset += lines[index].length + 1
+    }
+
+    return Math.max(blockStart, Math.min(blockStart + adjusted, blockStart + nextBlock.length))
+  }
+
+  return {
+    handled: true,
+    nextText,
+    nextSelectionStart: adjustBoundary(safeStart),
+    nextSelectionEnd: adjustBoundary(safeEnd),
+  }
 }
 
 function getParentPath(targetPath: string): string {
@@ -786,6 +916,9 @@ function App() {
   })
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [appVersion, setAppVersion] = useState('')
+  const [showChangelogModal, setShowChangelogModal] = useState(false)
+  const [seenChangelogVersion, setSeenChangelogVersion] = useState('')
+  const [selectedChangelogVersion, setSelectedChangelogVersion] = useState<string | null>(null)
   const [globalConfigReady, setGlobalConfigReady] = useState(false)
   const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
@@ -831,6 +964,7 @@ function App() {
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
+  const rawEditorRef = useRef<HTMLTextAreaElement | null>(null)
   const codeBlockLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSyncingWysiwygRef = useRef(false)
   const lastWysiwygSyncedTabRef = useRef<string | null>(null)
@@ -839,9 +973,11 @@ function App() {
   const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null)
   const [tablePopup, setTablePopup] = useState<{ x: number; y: number } | null>(null)
   const [codeBlockPopup, setCodeBlockPopup] = useState<{ x: number; y: number; codeEl: HTMLElement } | null>(null)
+  const [showCompactToc, setShowCompactToc] = useState(false)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; query: string } | null>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
   const slashMenuListRef = useRef<HTMLDivElement | null>(null)
+  const compactTocRef = useRef<HTMLDivElement | null>(null)
   const [aiDialog, setAiDialog] = useState<{ mode: 'generate' | 'transform'; prompt: string; isLoading: boolean; selectedText: string; error?: string } | null>(null)
   const aiSavedRangeRef = useRef<Range | null>(null)
   const linkSavedRangeRef = useRef<Range | null>(null)
@@ -852,6 +988,8 @@ function App() {
   const [updateProgress, setUpdateProgress] = useState(0)
   const [windowIsMaximized, setWindowIsMaximized] = useState(false)
   const [windowPlatform, setWindowPlatform] = useState('')
+  const [isCompactLayout, setIsCompactLayout] = useState(typeof window !== 'undefined' ? window.innerWidth < 1180 : false)
+  const [isSidebarOpenOnCompact, setIsSidebarOpenOnCompact] = useState(false)
   const startupNavigationDoneRef = useRef(false)
   const headerRef = useRef<HTMLElement | null>(null)
   const headerDragStateRef = useRef<{
@@ -970,7 +1108,28 @@ function App() {
   const desktopApiAvailable = typeof window.holo !== 'undefined'
   const isEditorReadOnly = readOnlyMode || remoteEditBlock.isBlocked
   const effectiveEditorMode = readOnlyMode ? 'wysiwyg' : editorMode
+  const selectedChangelogEntry = useMemo(
+    () => CHANGELOG_ENTRIES.find((entry) => entry.version === selectedChangelogVersion) ?? null,
+    [selectedChangelogVersion],
+  )
+  const currentVersionChangelog = useMemo(
+    () => CHANGELOG_ENTRIES.find((entry) => entry.version === appVersion) ?? null,
+    [appVersion],
+  )
   const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
+
+  const focusActiveEditorSoon = useCallback(() => {
+    window.setTimeout(() => {
+      if (effectiveEditorMode === 'raw') {
+        rawEditorRef.current?.focus()
+        return
+      }
+
+      if (!isEditorReadOnly) {
+        wysiwygEditorRef.current?.focus()
+      }
+    }, 0)
+  }, [effectiveEditorMode, isEditorReadOnly])
 
   const ensureWritableMode = useCallback(() => {
     if (!readOnlyMode) {
@@ -986,6 +1145,52 @@ function App() {
       setEditorMode('wysiwyg')
     }
   }, [readOnlyMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const onResize = () => {
+      setIsCompactLayout(window.innerWidth < 1180)
+    }
+
+    onResize()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    if (!isCompactLayout) {
+      setIsSidebarOpenOnCompact(false)
+    }
+  }, [isCompactLayout])
+
+  useEffect(() => {
+    if (isCompactLayout && activeTabPath) {
+      setIsSidebarOpenOnCompact(false)
+    }
+  }, [activeTabPath, isCompactLayout])
+
+  const selectSidebar = useCallback((sidebar: 'files' | 'git' | 'search') => {
+    setActiveSidebar(sidebar)
+    if (isCompactLayout) {
+      setIsSidebarOpenOnCompact(true)
+    }
+  }, [isCompactLayout])
+
+  useEffect(() => {
+    if (!globalConfigReady || !appVersion || !currentVersionChangelog || showChangelogModal) {
+      return
+    }
+
+    if (seenChangelogVersion === appVersion) {
+      return
+    }
+
+    setSelectedChangelogVersion(appVersion)
+    setShowChangelogModal(true)
+  }, [appVersion, currentVersionChangelog, globalConfigReady, seenChangelogVersion, showChangelogModal])
 
   const editableHeader = useMemo(
     () => getEditableMarkdownHeader(activeTab?.content ?? ''),
@@ -1454,6 +1659,7 @@ function App() {
 
       const author = fromConfigOrLocal('app-author', 'holo-author', '')
       const readOnly = fromConfigOrLocalBoolean('app-read-only', 'holo-read-only', false)
+      const seenVersion = fromConfigOrLocal('seen-changelog-version', 'holo-seen-changelog-version', '')
       const email = fromConfigOrLocal('git-email', 'holo-git-email', '')
       const azureContainerUrl = fromConfigOrLocal('azure-container-url', 'holo-azure-container-url', '')
       const azureSasToken = fromConfigOrLocal('azure-sas-token', 'holo-azure-sas-token', '')
@@ -1486,6 +1692,7 @@ function App() {
       }
 
       setReadOnlyMode(readOnly)
+  setSeenChangelogVersion(seenVersion)
       if (email) setGitEmail(email)
       if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
       if (azureSasToken) setAzureBlobSasToken(azureSasToken)
@@ -1519,6 +1726,7 @@ function App() {
 
   useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('app-author', appAuthor) }, [appAuthor, globalConfigReady])
   useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('app-read-only', readOnlyMode) }, [readOnlyMode, globalConfigReady])
+  useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('seen-changelog-version', seenChangelogVersion) }, [seenChangelogVersion, globalConfigReady])
   useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('git-email', gitEmail) }, [gitEmail, globalConfigReady])
   useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('azure-container-url', azureBlobContainerUrl) }, [azureBlobContainerUrl, globalConfigReady])
   useEffect(() => { if (globalConfigReady) void window.holo?.setHoloConfigValue('azure-sas-token', azureBlobSasToken) }, [azureBlobSasToken, globalConfigReady])
@@ -1820,6 +2028,40 @@ function App() {
     }
   }, [activeTabPath])
 
+  useEffect(() => {
+    if (!showCompactToc) {
+      return
+    }
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (compactTocRef.current?.contains(event.target as Node)) {
+        return
+      }
+
+      setShowCompactToc(false)
+    }
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowCompactToc(false)
+      }
+    }
+
+    window.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onEscape)
+
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onEscape)
+    }
+  }, [showCompactToc])
+
+  useEffect(() => {
+    if (!isCompactLayout || tocItems.length === 0) {
+      setShowCompactToc(false)
+    }
+  }, [isCompactLayout, tocItems.length])
+
   // Listen for update notifications from Electron
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1909,11 +2151,76 @@ function App() {
 
         setActiveTabPath(filePath)
         setRecentFilePaths((prev) => [filePath, ...prev.filter((path) => path !== filePath)].slice(0, 20))
+        setShowCompactToc(false)
+        focusActiveEditorSoon()
       } catch (error) {
         window.alert((error as Error).message)
       }
     },
-    [applyRemoteEditBlockFromGitState, getHoloApi, gitState],
+    [applyRemoteEditBlockFromGitState, focusActiveEditorSoon, getHoloApi, gitState],
+  )
+
+  const openEditorLink = useCallback(
+    async (href: string) => {
+      const trimmedHref = href.trim()
+      if (!trimmedHref) {
+        return
+      }
+
+      const holo = getHoloApi()
+
+      if (/^(https?:|mailto:|holo:)/i.test(trimmedHref)) {
+        if (holo) {
+          await holo.openExternalUrl(trimmedHref)
+        }
+        return
+      }
+
+      const cleanHref = trimmedHref.split('#')[0]?.split('?')[0]?.trim() ?? ''
+      if (!cleanHref) {
+        return
+      }
+
+      let targetPath: string | null = null
+
+      if (cleanHref.startsWith('/')) {
+        if (rootPath) {
+          targetPath = resolveRepoRelativePath(rootPath, cleanHref.replace(/^\/+/, ''))
+        }
+      } else if (activeTabPath) {
+        const normalizedBaseDir = getParentPath(activeTabPath).replace(/\\/g, '/')
+        const baseParts = normalizedBaseDir.split('/').filter(Boolean)
+        const hrefParts = cleanHref.replace(/\\/g, '/').split('/').filter(Boolean)
+        const resolvedParts = [...baseParts]
+
+        for (const part of hrefParts) {
+          if (part === '.') {
+            continue
+          }
+
+          if (part === '..') {
+            if (resolvedParts.length > 0) {
+              resolvedParts.pop()
+            }
+            continue
+          }
+
+          resolvedParts.push(part)
+        }
+
+        targetPath = `${activeTabPath.replace(/\\/g, '/').startsWith('/') ? '/' : ''}${resolvedParts.join('/')}`
+      }
+
+      if (targetPath?.toLowerCase().endsWith('.md')) {
+        await openFile(targetPath)
+        return
+      }
+
+      if (holo) {
+        await holo.openExternalUrl(trimmedHref)
+      }
+    },
+    [activeTabPath, getHoloApi, openFile, rootPath],
   )
 
   useEffect(() => {
@@ -1963,6 +2270,25 @@ function App() {
           if (!continueWithoutSave) {
             return
           }
+
+          // Discard transient editing state before navigating to another file
+          window.getSelection()?.removeAllRanges()
+          wysiwygEditorRef.current?.blur()
+          rawEditorRef.current?.blur()
+          setActiveTab((prev) => (prev ? { ...prev, isDirty: false } : prev))
+          setActiveTab(null)
+          setActiveTabPath(null)
+          lastWysiwygSyncedTabRef.current = null
+          isSyncingWysiwygRef.current = false
+          aiSavedRangeRef.current = null
+          linkSavedRangeRef.current = null
+          setSelectionPopup(null)
+          setTablePopup(null)
+          setCodeBlockPopup(null)
+          setColumnTypePopup(null)
+          setHoveredCodeBlock(null)
+          setShowCompactToc(false)
+          setSlashMenu(null)
         }
 
         await openFile(node.path)
@@ -2242,6 +2568,12 @@ function App() {
       }
     })
 
+    doc.querySelectorAll('a').forEach((anchor) => {
+      if (!anchor.getAttribute('title')) {
+        anchor.setAttribute('title', 'Ctrl+clic pour ouvrir le lien')
+      }
+    })
+
     doc.querySelectorAll('pre code').forEach((block) => {
       hljs.highlightElement(block as HTMLElement)
       // Wrap each line in a span for line numbers
@@ -2254,6 +2586,66 @@ function App() {
 
     return doc.body.innerHTML
   }, [getNextTableDndId])
+
+  const exportActiveFileToPdf = useCallback(async () => {
+    if (!activeTab) {
+      window.alert('Aucun fichier actif à exporter.')
+      return
+    }
+
+    const holo = getHoloApi()
+
+    if (!holo) {
+      return
+    }
+
+    try {
+      const header = getEditableMarkdownHeader(activeTab.content)
+      const title = (header.title.trim() || activeTab.name.replace(/\.md$/i, '') || 'Document').trim()
+      const bodyHtml = markdownToHtml(splitMarkdownFrontMatter(activeTab.content).body)
+
+      const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</title>
+  <style>
+    @page { size: A4; margin: 18mm; }
+    body { font-family: Inter, Segoe UI, Arial, sans-serif; color: #1a1a1a; line-height: 1.55; }
+    h1, h2, h3, h4 { margin: 1.2em 0 0.5em; line-height: 1.25; }
+    p, ul, ol, blockquote, pre, table { margin: 0.55em 0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { background: #f4f4f5; padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+    blockquote { border-left: 3px solid #8b5cf6; padding-left: 12px; color: #444; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #d4d4d8; padding: 8px; text-align: left; vertical-align: top; }
+    img { max-width: 100%; height: auto; }
+    a { color: #5b46d9; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  ${bodyHtml}
+</body>
+</html>`
+
+      const result = await holo.exportPdf({
+        html,
+        suggestedName: `${title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'document'}.pdf`,
+      })
+
+      if (!result.ok) {
+        if (!result.canceled) {
+          window.alert(result.error || 'Export PDF annulé.')
+        }
+        return
+      }
+
+      window.alert(`PDF exporté :\n${result.filePath}`)
+    } catch (error) {
+      window.alert((error as Error).message)
+    }
+  }, [activeTab, getHoloApi, markdownToHtml])
 
   const syncWysiwygFromMarkdown = useCallback(
     (markdown: string) => {
@@ -3091,6 +3483,40 @@ function App() {
     [handleImageFiles, isEditorReadOnly, isImageFile, updateActiveTabBody],
   )
 
+  const onRawKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key !== 'Tab' || isEditorReadOnly) {
+        return
+      }
+
+      const target = event.currentTarget
+      const result = applyMarkdownListTabBehavior(
+        target.value,
+        target.selectionStart ?? 0,
+        target.selectionEnd ?? 0,
+        event.shiftKey,
+      )
+
+      if (!result.handled) {
+        return
+      }
+
+      event.preventDefault()
+
+      if (result.nextText !== target.value) {
+        updateActiveTabBody(result.nextText)
+      }
+
+      requestAnimationFrame(() => {
+        const textarea = rawEditorRef.current
+        if (!textarea) return
+        textarea.focus()
+        textarea.setSelectionRange(result.nextSelectionStart, result.nextSelectionEnd)
+      })
+    },
+    [isEditorReadOnly, updateActiveTabBody],
+  )
+
   const onWysiwygInput = useCallback(() => {
     const editor = wysiwygEditorRef.current
 
@@ -3232,6 +3658,16 @@ function App() {
         const sel = window.getSelection()
         const anchor = sel?.anchorNode ?? null
         const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement ?? null
+        const currentListItem = anchorEl?.closest('li') as HTMLLIElement | null
+
+        if (currentListItem && editor.contains(currentListItem)) {
+          event.preventDefault()
+          document.execCommand(event.shiftKey ? 'outdent' : 'indent', false)
+          const md = turndownService.turndown(editor.innerHTML)
+          updateActiveTabBody(md)
+          return
+        }
+
         const currentCell = anchorEl?.closest('td, th') as HTMLTableCellElement | null
         const table = currentCell?.closest('table') as HTMLTableElement | null
 
@@ -4739,22 +5175,31 @@ function App() {
 
   return (
     <main
-      className="h-screen bg-[#242527] text-white rounded-lg font-sans gap-x-2 grid overflow-hidden grid-cols-[auto_1fr] grid-rows-[64px_1fr] select-none"
-      style={{ gridTemplateAreas: `'appbar appbar' 'sidebar content'` }}
+      className={`h-screen bg-[#242527] text-white rounded-lg font-sans ${isCompactLayout ? 'grid grid-cols-1 grid-rows-[64px_1fr]' : 'gap-x-2 grid grid-cols-[auto_1fr] grid-rows-[64px_1fr]'} overflow-hidden select-none`}
+      style={{ gridTemplateAreas: isCompactLayout ? `'appbar' 'content'` : `'appbar appbar' 'sidebar content'` }}
     >
 
       {/* App header */}
-      <header ref={headerRef} className="flex items-center pr-3" style={{ gridArea: 'appbar' }} onMouseDown={(event) => { void onHeaderMouseDown(event) }}>
+      <header ref={headerRef} className={`flex items-center ${isCompactLayout ? 'gap-2 px-2 pr-2' : 'pr-3'} min-w-0`} style={{ gridArea: 'appbar' }} onMouseDown={(event) => { void onHeaderMouseDown(event) }}>
+        {isCompactLayout && (
+          <button
+            className="no-drag size-9 shrink-0 rounded-lg border border-white/10 bg-white/5 text-white/75 hover:border-[#7B61FF]/50 hover:text-white"
+            onClick={() => setIsSidebarOpenOnCompact((previous) => !previous)}
+            title="Ouvrir le panneau latéral"
+          >
+            <i className="fa-solid fa-bars" />
+          </button>
+        )}
         <div className="flex-1 drag user-select-none">
-          <div className="flex items-end gap-2">
+          <div className={`flex items-end gap-2 min-w-0 ${isCompactLayout ? 'overflow-hidden' : ''}`}>
             <img src="./logo.png" height={40} width={120} alt="logo" />
             {showTypeRBadge && <span className="text-sm font-bold text-red-500">TypeR</span>}
-            {appVersion && <span className="text-[10px] text-white/35 pb-3 -ml-4">v{appVersion}</span>}
+            {appVersion && <span className={`text-[10px] text-white/35 pb-3 ${isCompactLayout ? '' : '-ml-4'}`}>v{appVersion}</span>}
           </div>
         </div>
-        <div className="flex gap-2 text-white/50 no-drag">
+        <div className={`flex gap-2 text-white/50 no-drag ${isCompactLayout ? 'shrink-0' : ''}`}>
           <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white/70">
-            <span className="uppercase tracking-wide">Read-only</span>
+            {!isCompactLayout && <span className="uppercase tracking-wide">Read-only</span>}
             <button
               type="button"
               role="switch"
@@ -4844,10 +5289,22 @@ function App() {
         </div>
       </header>
 
-      <aside className="flex gap-2 z-10 pl-2 font-quicksand" style={{ gridArea: 'sidebar' }}>
+      {isCompactLayout && isSidebarOpenOnCompact && (
+        <div
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[1px]"
+          onClick={() => setIsSidebarOpenOnCompact(false)}
+        />
+      )}
+
+      <aside
+        className={`${isCompactLayout
+          ? `fixed left-0 top-[64px] bottom-0 z-40 ${isSidebarOpenOnCompact ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-200`
+          : 'flex gap-2 z-10 pl-2'} font-quicksand`}
+        style={isCompactLayout ? undefined : { gridArea: 'sidebar' }}
+      >
 
         {/* Icônes de navigation principale */}
-        <nav className="flex flex-col gap-4 pt-4">
+        <nav className={`flex flex-col gap-4 pt-4 ${isCompactLayout ? 'bg-[#242527] px-2 pb-4' : ''}`}>
 
           {/* Bouton Fichiers */}
           <div
@@ -4856,7 +5313,7 @@ function App() {
                 ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
                 : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
             }`}
-            onClick={() => setActiveSidebar('files')}
+            onClick={() => selectSidebar('files')}
           >
             <i className="fa-jelly-duo fa-regular fa-folder text-2xl" />
             {activeTab && (
@@ -4874,7 +5331,7 @@ function App() {
                   ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
                   : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
               }`}
-              onClick={() => setActiveSidebar('git')}
+              onClick={() => selectSidebar('git')}
             >
               <i className="fa-brands fa-git-alt text-2xl" />
             </div>
@@ -4903,7 +5360,7 @@ function App() {
                 ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
                 : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
             }`}
-            onClick={() => setActiveSidebar(activeSidebar === 'search' ? 'files' : 'search')}
+            onClick={() => selectSidebar(activeSidebar === 'search' ? 'files' : 'search')}
             title="Rechercher"
           >
             <i className="fa-solid fa-magnifying-glass text-xl" />
@@ -4928,7 +5385,7 @@ function App() {
 
         {/* Panel Fichiers */}
         {activeSidebar === 'files' && (
-          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
+          <nav className={`bg-[#1f2021] ${isCompactLayout ? 'w-[min(340px,calc(100vw-88px))] rounded-r-lg rounded-tl-none' : 'w-[340px] shrink-0 rounded-t-lg'} overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3`}>
             
             {/* Titre du dossier */}
             <div className="flex items-center justify-between gap-2">
@@ -5159,7 +5616,7 @@ function App() {
 
         {/* Panel Recherche */}
         {activeSidebar === 'search' && (
-          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
+          <nav className={`bg-[#1f2021] ${isCompactLayout ? 'w-[min(340px,calc(100vw-88px))] rounded-r-lg rounded-tl-none' : 'w-[340px] shrink-0 rounded-t-lg'} overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3`}>
             <h2 className="text-sm font-semibold text-white/80">🔍 Recherche</h2>
 
             {/* Input */}
@@ -5249,7 +5706,7 @@ function App() {
 
         {/* Panel Git */}
         {activeSidebar === 'git' && (
-          <nav className="bg-[#1f2021] w-[340px] shrink-0 rounded-t-lg overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3">
+          <nav className={`bg-[#1f2021] ${isCompactLayout ? 'w-[min(340px,calc(100vw-88px))] rounded-r-lg rounded-tl-none' : 'w-[340px] shrink-0 rounded-t-lg'} overflow-x-hidden overflow-y-auto p-5 flex flex-col gap-3`}>
             
             {/* Titre */}
             <div>
@@ -5475,11 +5932,11 @@ function App() {
             {activeTab ? (
               <>
                 {/* Barre de contrôles fine */}
-                <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-6 py-2">
-                  <span className="text-[10px] text-white/25">
+                <div className={`flex shrink-0 items-center border-b border-white/5 ${isCompactLayout ? 'flex-wrap gap-2 px-3 py-2' : 'justify-between px-6 py-2'}`}>
+                  <span className={`text-[10px] text-white/25 ${isCompactLayout ? 'w-full' : ''}`}>
                     {activeTab.isDirty ? '● non sauvegardé' : ''}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className={`flex items-center gap-2 ${isCompactLayout ? 'w-full flex-wrap' : ''}`}>
                     {readOnlyMode && (
                       <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-200">
                         Lecture seule
@@ -5524,6 +5981,48 @@ function App() {
                         Lien copié
                       </span>
                     )}
+                    {isCompactLayout && tocItems.length > 0 && (
+                      <div ref={compactTocRef} className="relative">
+                        <button
+                          className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
+                          onClick={() => setShowCompactToc((prev) => !prev)}
+                          title="Afficher la table des matières"
+                        >
+                          <i className="fa-solid fa-list-ul mr-1" />Plan
+                        </button>
+                        {showCompactToc && (
+                          <div className="absolute right-0 top-[calc(100%+8px)] z-40 w-[min(280px,calc(100vw-24px))] rounded-xl border border-white/10 bg-[#1a1b1c] p-2 shadow-2xl backdrop-blur-sm">
+                            <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">
+                              Table des matières
+                            </p>
+                            <nav className="max-h-72 space-y-0.5 overflow-y-auto">
+                              {tocItems.map((item) => (
+                                <button
+                                  key={`compact-${item.headingIndex}-${item.text}`}
+                                  className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-white/60 transition-colors hover:bg-white/8 hover:text-white/95"
+                                  style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
+                                  onClick={() => {
+                                    onTocItemClick(item.headingIndex)
+                                    setShowCompactToc(false)
+                                  }}
+                                  title={item.text}
+                                >
+                                  {item.text}
+                                </button>
+                              ))}
+                            </nav>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => void exportActiveFileToPdf()}
+                      disabled={!activeTab}
+                      title="Exporter le fichier actif en PDF"
+                    >
+                      <i className="fa-solid fa-file-pdf mr-1" />Exporter en PDF
+                    </button>
                     <button
                       className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
                       onClick={() => void copyHoloLink(activeTab.path)}
@@ -5572,8 +6071,8 @@ function App() {
                   }}
                 >
                   <div className="flex min-h-full">
-                    <div className="flex-1 min-w-0 px-10 pt-12 pb-40 xl:px-14">
-                    <div className="mx-auto max-w-272">
+                    <div className={`flex-1 min-w-0 ${isCompactLayout ? 'px-4 pt-6 pb-24 sm:px-6' : 'px-10 pt-12 pb-40 xl:px-14'}`}>
+                    <div className={`mx-auto ${isCompactLayout ? 'max-w-full' : 'max-w-272'}`}>
 
                     {/* Bouton icône au-dessus du titre */}
                     <div className="mb-3">
@@ -5632,7 +6131,7 @@ function App() {
 
                       <input
                         ref={titleInputRef}
-                        className="w-full bg-transparent text-[2.15rem] font-bold leading-tight text-white outline-none placeholder:text-white/20"
+                        className={`w-full bg-transparent font-bold leading-tight text-white outline-none placeholder:text-white/20 ${isCompactLayout ? 'text-[1.8rem]' : 'text-[2.15rem]'}`}
                         value={editableHeader.title}
                         readOnly={isEditorReadOnly}
                         onChange={(event) => updateEditableHeader('title', event.target.value)}
@@ -5739,10 +6238,12 @@ function App() {
                     <div className="relative">
                     {effectiveEditorMode === 'raw' ? (
                       <textarea
+                        ref={rawEditorRef}
                         className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25 select-text"
                         value={activeTabBody}
                         readOnly={isEditorReadOnly}
                         onChange={(event) => updateActiveTabBody(event.target.value)}
+                        onKeyDown={onRawKeyDown}
                         onDrop={onRawDrop}
                         onDragEnter={onEditorDragEnter}
                         onDragOver={onEditorDragOver}
@@ -5798,6 +6299,17 @@ function App() {
                           onDragOver={onWysiwygDragOver}
                           onDragLeave={onEditorDragLeave}
                           onClick={(e) => {
+                            const linkEl = (e.target as HTMLElement).closest('a') as HTMLAnchorElement | null
+                            if (linkEl) {
+                              const href = linkEl.getAttribute('href')?.trim()
+                              if (href && (e.ctrlKey || e.metaKey)) {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                void openEditorLink(href)
+                              }
+                              return
+                            }
+
                             // + Nouveau button below tables
                             if ((e.target as HTMLElement).classList.contains('table-add-row-btn')) {
                               e.preventDefault()
@@ -6698,6 +7210,33 @@ function App() {
               <section>
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Application</h3>
                 <div className="rounded-xl border border-white/8 bg-white/4 p-4 flex flex-col gap-3">
+                  <div className="border-b border-white/8 pb-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-white/80">Changelog</span>
+                      {appVersion && currentVersionChangelog && seenChangelogVersion !== appVersion && (
+                        <span className="rounded-full border border-[#7B61FF]/35 bg-[#7B61FF]/15 px-2 py-0.5 text-[10px] font-semibold text-[#c8b8ff]">
+                          Nouveau
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {CHANGELOG_ENTRIES.map((entry) => (
+                        <button
+                          key={entry.version}
+                          type="button"
+                          className="flex items-center justify-between rounded-lg border border-white/8 bg-white/4 px-3 py-2 text-left text-xs text-white/70 hover:bg-white/8 hover:text-white"
+                          onClick={() => {
+                            setSelectedChangelogVersion(entry.version)
+                            setShowChangelogModal(true)
+                          }}
+                        >
+                          <span className="font-medium">v{entry.version}</span>
+                          <span className="text-white/45">{entry.releasedAt}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-sm font-medium text-white/80">Vérifier les mises à jour</span>
@@ -6817,6 +7356,56 @@ function App() {
                   Valider
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChangelogModal && selectedChangelogEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-sparkles text-[#7B61FF]" />
+                Nouveautés v{selectedChangelogEntry.version}
+              </h2>
+              <button
+                className="text-white/40 hover:text-white transition-colors"
+                onClick={() => {
+                  if (selectedChangelogEntry.version === appVersion) {
+                    setSeenChangelogVersion(appVersion)
+                  }
+                  setShowChangelogModal(false)
+                }}
+              >
+                <i className="fa-solid fa-xmark" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5">
+              <p className="mb-3 text-xs text-white/45">Publié le {selectedChangelogEntry.releasedAt}</p>
+              <ul className="space-y-2 text-sm text-white/80">
+                {selectedChangelogEntry.items.map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <span className="mt-1 text-[#7B61FF]">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="flex justify-end border-t border-white/8 px-6 py-4">
+              <button
+                className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
+                onClick={() => {
+                  if (selectedChangelogEntry.version === appVersion) {
+                    setSeenChangelogVersion(appVersion)
+                  }
+                  setShowChangelogModal(false)
+                }}
+              >
+                Compris
+              </button>
             </div>
           </div>
         </div>

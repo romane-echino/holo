@@ -547,11 +547,11 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 #### Partie 2
-- Ajouter des changelog au démarrage (quand on a installé la nouvelle version) et dans settings possibilité de revoir ces changes logs
-- Export PDF
-- Quand je fais une liste en markdown et que je presse "TAB" cela me change le focus alors que j'aimerais pouvoir passer a une sous-liste
-- Quand on switch de fichier y'a le popup (partir sans sauvegarder) si je valide : plus moyen d'écrire ni de modifier quoi que ce soit.
-- Impossible de sélectionner du texte et créer un lien
-- Version responsive de l'interface (début préparation au mobile)
+ ✅ Ajouter des changelog au démarrage (quand on a installé la nouvelle version) et dans settings possibilité de revoir ces changes logs
+ ✅ Export PDF
+ ✅ Quand je fais une liste en markdown et que je presse "TAB" cela me change le focus alors que j'aimerais pouvoir passer a une sous-liste
+ ✅ Quand on switch de fichier y'a le popup (partir sans sauvegarder) si je valide : plus moyen d'écrire ni de modifier quoi que ce soit.
+ ✅ Impossible de sélectionner du texte et créer un lien
+ ✅ Version responsive de l'interface (début préparation au mobile)
 - Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
 - Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs

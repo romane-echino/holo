@@ -1042,7 +1042,7 @@ function createWindow(launchPayload = null) {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
-    minWidth: 980,
+    minWidth: 400,
     minHeight: 640,
     frame: false,
     autoHideMenuBar: true,
@@ -1345,6 +1345,64 @@ ipcMain.handle('app:install-update', async () => {
 
 ipcMain.handle('app:get-update-state', async () => updateState)
 ipcMain.handle('app:get-version', async () => app.getVersion())
+ipcMain.handle('app:export-pdf', async (event, payload) => {
+  const rawHtml = typeof payload?.html === 'string' ? payload.html : ''
+  const rawSuggestedName = typeof payload?.suggestedName === 'string' ? payload.suggestedName : 'document'
+
+  if (!rawHtml.trim()) {
+    throw new Error('Contenu PDF vide.')
+  }
+
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender)
+  const safeBaseName = rawSuggestedName
+    .replace(/[<>:"/\\|?*]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.pdf$/i, '') || 'document'
+
+  const defaultPdfPath = path.join(app.getPath('documents'), `${safeBaseName}.pdf`)
+  const saveResult = await dialog.showSaveDialog(ownerWindow ?? undefined, {
+    title: 'Exporter en PDF',
+    defaultPath: defaultPdfPath,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  })
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return { ok: false, canceled: true }
+  }
+
+  let printWindow = null
+  try {
+    printWindow = new BrowserWindow({
+      show: false,
+      width: 1240,
+      height: 1754,
+      webPreferences: {
+        sandbox: false,
+        contextIsolation: true,
+      },
+    })
+
+    await printWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(rawHtml)}`)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    const pdfBuffer = await printWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      marginsType: 1,
+      landscape: false,
+      preferCSSPageSize: true,
+    })
+
+    await fs.writeFile(saveResult.filePath, pdfBuffer)
+
+    return { ok: true, filePath: saveResult.filePath }
+  } finally {
+    if (printWindow && !printWindow.isDestroyed()) {
+      printWindow.destroy()
+    }
+  }
+})
 ipcMain.handle('app:open-file-in-new-window', async (_event, payload) => {
   const rootPath = String(payload?.rootPath ?? '').trim()
   const filePath = String(payload?.filePath ?? '').trim()

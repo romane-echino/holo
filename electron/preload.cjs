@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('holo', {
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggle-devtools'),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  exportPdf: (payload) => ipcRenderer.invoke('app:export-pdf', payload),
   openFileInNewWindow: (payload) => ipcRenderer.invoke('app:open-file-in-new-window', payload),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),

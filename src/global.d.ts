@@ -87,6 +87,7 @@ type HoloArchivedFileEntry = {
 interface HoloApi {
   appName: string
   getAppVersion: () => Promise<string>
+  exportPdf: (payload: { html: string; suggestedName?: string }) => Promise<{ ok: true; filePath: string } | { ok: false; canceled?: boolean; error?: string }>
   openFileInNewWindow: (payload: HoloOpenFileInNewWindowPayload) => Promise<{ ok: true }>
   writeClipboardText: (text: string) => Promise<{ ok: true }>
   checkForUpdates: () => Promise<unknown>
