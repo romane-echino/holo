@@ -553,8 +553,7 @@ Recherche dans la doc (directement sur qdrant?)
  ✅ Quand on switch de fichier y'a le popup (partir sans sauvegarder) si je valide : plus moyen d'écrire ni de modifier quoi que ce soit.
  ✅ Impossible de sélectionner du texte et créer un lien
  ✅ Version responsive de l'interface (début préparation au mobile)
-- Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
-- Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs
+
 
 
 ##### feedback
@@ -563,3 +562,14 @@ Recherche dans la doc (directement sur qdrant?)
 - ✅ J'ai denouveau le bug de sauvegarde : J'ouvre un fichier, modifier qqch sans sauvegarder, je selectionne un autres fichier, le popup de "etes-vous sur de...." apparait, je clique "oui" et la plus possible d'écrire dans le fichier
 - ✅ En mobile la table des matière disparait (c'est cool), mais ça serait bien que dans le menu en haut qu'on puisse avoir un popup pour la voir et l'utiliser
 - ✅ Faudrai réduire un peu la min-width de tout le programme (genre 400px), je sais pas si y'en a une appliquée qq part
+
+
+### 08.05.26
+- Refonte complète
+  - séparer tout en composant (ui)
+  - faire un document pour l'ia afin de se retrouver dans le projet
+  - séparer aussi les fonctionnalité markdown en composant standardisé (editor et markdown result)
+  - nettoyer / structuré
+  - grosse QA globale planifié avec un document pour revalider TOUTES les fonctionnalités. je prendrais point par point et noterai mes tests et feedback
+- Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
+- Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs
