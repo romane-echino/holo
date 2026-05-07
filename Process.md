@@ -555,3 +555,11 @@ Recherche dans la doc (directement sur qdrant?)
  ✅ Version responsive de l'interface (début préparation au mobile)
 - Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
 - Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs
+
+
+##### feedback
+- ✅ L'ux de l'export PDF n'est pas bon, il faut que quand on ouvre un fichier a côté de "Copier le lien" on ajoute le bouton "Exporter en pdf" et l'enlever du panneau settings (ça sers a rien la dedans)
+- ✅ Ajouter un petit tooltip sur les liens indiquand de faire CTRL+Clique pour ouvrir le lien (et dev qu'on puisse le faire evidemment)
+- ✅ J'ai denouveau le bug de sauvegarde : J'ouvre un fichier, modifier qqch sans sauvegarder, je selectionne un autres fichier, le popup de "etes-vous sur de...." apparait, je clique "oui" et la plus possible d'écrire dans le fichier
+- ✅ En mobile la table des matière disparait (c'est cool), mais ça serait bien que dans le menu en haut qu'on puisse avoir un popup pour la voir et l'utiliser
+- ✅ Faudrai réduire un peu la min-width de tout le programme (genre 400px), je sais pas si y'en a une appliquée qq part
