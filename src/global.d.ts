@@ -92,6 +92,10 @@ interface HoloApi {
   writeClipboardText: (text: string) => Promise<{ ok: true }>
   checkForUpdates: () => Promise<unknown>
   installUpdate: () => Promise<unknown>
+  getUpdateState: () => Promise<unknown>
+  onUpdateAvailable: (callback: () => void) => () => void
+  onUpdateReady: (callback: () => void) => () => void
+  onUpdateProgress: (callback: (data: { percent: number }) => void) => () => void
   getHoloConfig: () => Promise<Record<string, unknown>>
   setHoloConfig: (cfg: Record<string, unknown>) => Promise<{ ok: true }>
   getHoloConfigValue: (key: string) => Promise<unknown>
@@ -132,8 +136,8 @@ interface HoloApi {
     sourcePath: string,
     targetDirectoryPath: string,
   ) => Promise<{ ok: true; newPath: string }>
-  readRepoConfig: () => Promise<any | null>
-  writeRepoConfig: (config: any) => Promise<{ ok: true }>
+  readRepoConfig: () => Promise<Record<string, unknown> | null>
+  writeRepoConfig: (config: Record<string, unknown>) => Promise<{ ok: true }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
   gitPickCloneDirectory: () => Promise<string | null>
   gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>

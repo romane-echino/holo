@@ -1,24 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { marked } from 'marked'
-import TurndownService from 'turndown'
-import { gfm } from 'turndown-plugin-gfm'
 import EmojiPicker from 'emoji-picker-react'
 import { Theme } from 'emoji-picker-react'
-import hljs from 'highlight.js'
 import * as prettier from 'prettier/standalone'
+import {
+  turndownService,
+  parseMarkdownToHtml,
+  splitMarkdownFrontMatter,
+  getEditableMarkdownHeader,
+  updateMarkdownHeaderField,
+  updateTagsInMarkdown,
+  updateMarkdownBooleanHeaderField,
+  updateMarkdownBody,
+} from './lib/markdown'
 import * as prettierPluginBabel from 'prettier/plugins/babel'
 import * as prettierPluginEstree from 'prettier/plugins/estree'
 import * as prettierPluginTypescript from 'prettier/plugins/typescript'
 import * as prettierPluginPostcss from 'prettier/plugins/postcss'
 import * as prettierPluginHtml from 'prettier/plugins/html'
 import * as prettierPluginMarkdown from 'prettier/plugins/markdown'
-import { TableControlsOverlay } from './components/table/TableControlsOverlay'
-import {
-  COLUMN_TYPES,
-  TYPE_EMOJIS,
-  enhanceTablesInDocument,
-} from './components/table/tableEngine'
 import { useTableInteractions } from './components/table/useTableInteractions'
+import { AppHeader } from './components/AppHeader'
+import { AiDialogModal } from './components/AiDialogModal'
+import { AppModals } from './components/AppModals'
+import { AppSidebar } from './components/AppSidebar'
+import { EditorCanvas } from './components/EditorCanvas'
+import { EditorEmptyState } from './components/EditorEmptyState'
+import { EditorOverlays } from './components/EditorOverlays'
+import { EditorRightToc } from './components/EditorRightToc'
+import { EditorTopBar } from './components/EditorTopBar'
+import { SettingsModal } from './components/SettingsModal'
+import type { EditableMarkdownHeader, FilePathStats, SlashCommand, WysiwygCommand } from './types/editor'
+import type {
+  NameDialog,
+  GitDialog,
+  CloneDialog,
+  ConfirmDialogState,
+  ChangelogEntry,
+} from './types/shared'
 
 type NodeType = 'file' | 'directory'
 
@@ -34,37 +52,6 @@ type OpenFolderResult = {
   rootPath: string
   tree: TreeNode
 } | null
-
-type NameDialog =
-  | {
-    mode: 'create-file' | 'create-directory'
-    value: string
-    targetDirectoryPath: string
-    selectedTemplatePath?: string | null
-  }
-  | {
-    mode: 'rename'
-    value: string
-    targetPath: string
-  }
-
-type GitDialog =
-  | {
-    mode: 'commit'
-    value: string
-  }
-  | {
-    mode: 'merge'
-    value: string
-  }
-
-type CloneDialog = {
-  repoUrl: string
-  destinationPath: string
-  username: string
-  password: string
-  isSubmitting: boolean
-}
 
 type GitState = {
   isRepo: boolean
@@ -94,20 +81,6 @@ type ContextMenuState = {
   x: number
   y: number
   node: TreeNode
-}
-
-type EditableMarkdownHeader = {
-  title: string
-  description: string
-  author: string
-  icon: string
-  tags: string[]
-  isTemplate: boolean
-}
-
-type FilePathStats = {
-  modifiedAt: string
-  createdAt: string
 }
 
 type ArchivedFileEntry = {
@@ -140,11 +113,7 @@ type FileMeta = {
 
 type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
 
-type ChangelogEntry = {
-  version: string
-  releasedAt: string
-  items: string[]
-}
+// ChangelogEntry imported from shared types
 
 const DEFAULT_GIT_STATE: GitState = {
   isRepo: false,
@@ -166,13 +135,14 @@ const DEFAULT_SYNC_FEEDBACK: SyncFeedback = {
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
     version: '0.2.8',
-    releasedAt: '2026-05-07',
+    releasedAt: '2026-05-08',
     items: [
       'Export PDF : bouton déplacé à côté de « Copier le lien » sur le fichier actif.',
       'Liens dans l’éditeur : indication « Ctrl+clic » et ouverture via Ctrl/Cmd+clic.',
       'Stabilité édition : correctif du blocage après changement de fichier sans sauvegarde.',
       'Responsive : accès à la table des matières en mode compact via le bouton « Plan ».',
       'Fenêtre desktop : largeur minimale réduite à 400px.',
+      'Templates : variables ($DATE, $AUTHOR…) détectées et pré-remplies, saisies dans le dialog de création.',
     ],
   },
   {
@@ -319,6 +289,21 @@ function applyMarkdownListTabBehavior(
   }
 }
 
+const TEMPLATE_VARIABLE_RE = /\$[A-Z][A-Z0-9_]*/g
+
+function extractTemplateVariables(content: string): string[] {
+  const matches = content.match(TEMPLATE_VARIABLE_RE)
+  return matches ? [...new Set(matches)] : []
+}
+
+function applyTemplateVariables(content: string, vars: Record<string, string>): string {
+  return content.replace(TEMPLATE_VARIABLE_RE, (match) => vars[match] ?? match)
+}
+
+function normalizeVersionLabel(value: string): string {
+  return value.trim().replace(/^v/i, '')
+}
+
 function getParentPath(targetPath: string): string {
   const normalized = targetPath.replace(/\\/g, '/')
   const index = normalized.lastIndexOf('/')
@@ -415,18 +400,18 @@ function getRepoConfigPath(rootPath: string): string {
 }
 
 function getRepoRelativeFolderPath(rootPath: string, folderPath: string): string {
-  const normalizedRoot = rootPath.replace(/[\/\\]+$/, '')
-  const normalizedFolder = folderPath.replace(/[\/\\]+$/, '')
+  const normalizedRoot = rootPath.replace(/[/\\]+$/, '')
+  const normalizedFolder = folderPath.replace(/[/\\]+$/, '')
   if (normalizedFolder === normalizedRoot) {
     return '.'
   }
-  const rel = getCommitTargetPath(rootPath, folderPath).replace(/^[\/\\]/, '')
+  const rel = getCommitTargetPath(rootPath, folderPath).replace(/^[/\\]/, '')
   return rel || '.'
 }
 
 function resolveRepoRelativePath(rootPath: string, relPath: string): string {
   if (!relPath || relPath === '.') return rootPath
-  const base = rootPath.replace(/[\/\\]+$/, '')
+  const base = rootPath.replace(/[/\\]+$/, '')
   return base + '/' + relPath.replace(/\\/g, '/')
 }
 
@@ -500,178 +485,6 @@ function getRelativeLinkPath(fromFilePath: string | null, targetFilePath: string
   const relativePath = [...upSegments, ...downSegments].join('/')
 
   return relativePath || getBaseName(targetFilePath)
-}
-
-function splitMarkdownFrontMatter(markdown: string) {
-  const lines = markdown.split(/\r?\n/)
-
-  if (lines[0] !== '---') {
-    return {
-      hasFrontMatter: false,
-      frontMatterLines: [] as string[],
-      body: markdown,
-    }
-  }
-
-  const endIndex = lines.findIndex((line, index) => index > 0 && line === '---')
-
-  if (endIndex <= 0) {
-    return {
-      hasFrontMatter: false,
-      frontMatterLines: [] as string[],
-      body: markdown,
-    }
-  }
-
-  return {
-    hasFrontMatter: true,
-    frontMatterLines: lines.slice(1, endIndex),
-    body: lines.slice(endIndex + 1).join('\n'),
-  }
-}
-
-function escapeFrontMatterValue(value: string): string {
-  const normalized = value.replace(/\r?\n/g, ' ')
-  return `"${normalized.replace(/"/g, '\\"')}"`
-}
-
-function readFrontMatterValue(line: string): string {
-  const [, raw = ''] = line.split(/:(.*)/)
-  const trimmed = raw.trim()
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"'))
-    || (trimmed.startsWith('\'') && trimmed.endsWith('\''))
-  ) {
-    return trimmed.slice(1, -1)
-  }
-
-  return trimmed
-}
-
-function readFrontMatterBooleanValue(line: string): boolean {
-  const value = readFrontMatterValue(line).trim().toLowerCase()
-  return value === 'true' || value === '1' || value === 'yes' || value === 'oui'
-}
-
-function getEditableMarkdownHeader(markdown: string): EditableMarkdownHeader {
-  const { frontMatterLines } = splitMarkdownFrontMatter(markdown)
-  const header: EditableMarkdownHeader = {
-    title: '',
-    description: '',
-    author: '',
-    icon: '',
-    tags: [],
-    isTemplate: false,
-  }
-
-  for (const line of frontMatterLines) {
-    const match = line.match(/^([a-zA-Z0-9_-]+)\s*:/)
-
-    if (!match) {
-      continue
-    }
-
-    const key = match[1].toLowerCase()
-
-    if (key === 'title' || key === 'description' || key === 'author' || key === 'icon') {
-      header[key] = readFrontMatterValue(line)
-    }
-
-    if (key === 'tags') {
-      const raw = line.replace(/^tags\s*:/i, '').trim()
-      // Support both inline [a, b] and bare a, b
-      const inner = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
-      header.tags = inner
-        .split(',')
-        .map((t) => t.trim().replace(/^["']|["']$/g, ''))
-        .filter(Boolean)
-    }
-
-    if (key === 'template' || key === 'istemplate') {
-      header.isTemplate = readFrontMatterBooleanValue(line)
-    }
-  }
-
-  return header
-}
-
-function updateMarkdownHeaderField(
-  markdown: string,
-  field: keyof EditableMarkdownHeader,
-  nextValue: string,
-): string {
-  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
-  const nextLines = [...frontMatterLines]
-  const key = field
-  const keyMatcher = new RegExp(`^${key}\\s*:`, 'i')
-  const existingIndexes = nextLines
-    .map((line, index) => (keyMatcher.test(line) ? index : -1))
-    .filter((index) => index >= 0)
-
-  for (let index = existingIndexes.length - 1; index >= 1; index -= 1) {
-    nextLines.splice(existingIndexes[index], 1)
-  }
-
-  const firstExistingIndex = existingIndexes.length > 0 ? existingIndexes[0] : -1
-  const cleanedValue = nextValue;
-
-  if (!cleanedValue) {
-    if (firstExistingIndex >= 0) {
-      nextLines.splice(firstExistingIndex, 1)
-    }
-  } else {
-    const nextLine = `${key}: ${escapeFrontMatterValue(cleanedValue)}`
-
-    if (firstExistingIndex >= 0) {
-      nextLines[firstExistingIndex] = nextLine
-    } else {
-      nextLines.push(nextLine)
-    }
-  }
-
-  if (nextLines.length === 0) {
-    return body
-  }
-
-  return ['---', ...nextLines, '---', body].join('\n')
-}
-
-function updateTagsInMarkdown(markdown: string, tags: string[]): string {
-  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
-  const nextLines = frontMatterLines.filter((l) => !/^tags\s*:/i.test(l))
-  if (tags.length > 0) {
-    const serialized = '[' + tags.map((t) => `"${t.replace(/"/g, '\\"')}"`).join(', ') + ']'
-    nextLines.push(`tags: ${serialized}`)
-  }
-  if (nextLines.length === 0) return body
-  return ['---', ...nextLines, '---', body].join('\n')
-}
-
-function updateMarkdownBooleanHeaderField(markdown: string, field: string, nextValue: boolean): string {
-  const { frontMatterLines, body } = splitMarkdownFrontMatter(markdown)
-  const fieldMatcher = new RegExp(`^${field}\\s*:`, 'i')
-  const nextLines = frontMatterLines.filter((line) => !fieldMatcher.test(line))
-
-  if (nextValue) {
-    nextLines.push(`${field}: true`)
-  }
-
-  if (nextLines.length === 0) {
-    return body
-  }
-
-  return ['---', ...nextLines, '---', body].join('\n')
-}
-
-function updateMarkdownBody(markdown: string, nextBody: string): string {
-  const { frontMatterLines } = splitMarkdownFrontMatter(markdown)
-
-  if (frontMatterLines.length === 0) {
-    return nextBody
-  }
-
-  return ['---', ...frontMatterLines, '---', nextBody].join('\n')
 }
 
 function flatTreeFiles(node: TreeNode): string[] {
@@ -844,15 +657,6 @@ function TreeItem({
   )
 }
 
-type SlashCommand = {
-  id: string
-  icon: string
-  label: string
-  hint: string
-  keywords?: string[]
-  requiresApiKey?: boolean
-}
-
 const normalize = (s: string) =>
   s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
 
@@ -919,6 +723,9 @@ function App() {
   const [showChangelogModal, setShowChangelogModal] = useState(false)
   const [seenChangelogVersion, setSeenChangelogVersion] = useState('')
   const [selectedChangelogVersion, setSelectedChangelogVersion] = useState<string | null>(null)
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null)
+  const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false)
+  const [pendingFileSwitchPath, setPendingFileSwitchPath] = useState<string | null>(null)
   const [globalConfigReady, setGlobalConfigReady] = useState(false)
   const [shareGatewayBaseUrl, setShareGatewayBaseUrl] = useState('https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
@@ -978,6 +785,7 @@ function App() {
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
   const slashMenuListRef = useRef<HTMLDivElement | null>(null)
   const compactTocRef = useRef<HTMLDivElement | null>(null)
+  const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null)
   const [aiDialog, setAiDialog] = useState<{ mode: 'generate' | 'transform'; prompt: string; isLoading: boolean; selectedText: string; error?: string } | null>(null)
   const aiSavedRangeRef = useRef<Range | null>(null)
   const linkSavedRangeRef = useRef<Range | null>(null)
@@ -999,90 +807,6 @@ function App() {
     restored: boolean
   } | null>(null)
 
-  const turndownService = useMemo(() => {
-    const service = new TurndownService({
-      headingStyle: 'atx',
-      codeBlockStyle: 'fenced',
-      bulletListMarker: '-',
-    })
-    service.use(gfm)
-    
-    
-    // Convert images back to markdown, restoring relative paths
-    service.addRule('localImage', {
-      filter: 'img',
-      replacement: (_content, node) => {
-        const img = node as HTMLImageElement
-        let src = img.getAttribute('src') ?? ''
-        const dataSrc = img.getAttribute('data-src')
-        const alt = img.getAttribute('alt') ?? ''
-        
-        // If data-src exists, use that for relative path
-        if (dataSrc) {
-          src = dataSrc
-        }
-        // Otherwise keep the src as is (data URLs, external URLs)
-        
-        return `![${alt}](${src})`
-      },
-    })
-    
-    // Task list items with custom classes (task-item / task-label)
-    service.addRule('taskListItem', {
-      filter: (node) => {
-        return node.nodeName === 'LI' && (node as HTMLElement).classList.contains('task-item')
-      },
-      replacement: (_content, node) => {
-        const li = node as HTMLElement
-        const checkbox = li.querySelector('input[type="checkbox"]') as HTMLInputElement | null
-        const label = li.querySelector('.task-label')
-        const text = (label?.textContent ?? '').replace(/\u200B/g, '').trim()
-        const checked = checkbox?.hasAttribute('checked') ?? false
-        return `\n- [${checked ? 'x' : ' '}] ${text}`
-      },
-    })
-
-    // Code block rule — preserve language from class
-    service.addRule('codeBlock', {
-      filter: (node) => node.nodeName === 'PRE' && Boolean((node as HTMLElement).querySelector('code')),
-      replacement: (_content, node) => {
-        const code = (node as HTMLElement).querySelector('code')
-        const lang = Array.from(code?.classList ?? [])
-          .find((c) => c.startsWith('language-'))
-          ?.replace('language-', '') ?? ''
-        const actualLang = lang === 'plaintext' ? '' : lang
-        const text = (code?.textContent ?? '').replace(/\u200B/g, '').trim()
-        return `\n\n\`\`\`${actualLang}\n${text}\n\`\`\`\n\n`
-      },
-    })
-
-    // Checkbox cell in table → "x" or ""
-    service.addRule('tableCheckboxCell', {
-      filter: (node) => node.nodeName === 'TD' && (node as HTMLElement).classList.contains('col-checkbox-cell'),
-      replacement: (_content, node) => {
-        return (node as HTMLElement).dataset.checked === 'true' ? 'x' : ''
-      },
-    })
-
-    // Monkey-patch turndown to strip generated tfoot rows before conversion
-    const origTurndown = service.turndown.bind(service)
-    service.turndown = (html: string | Node) => {
-      if (typeof html === 'string') {
-        const div = document.createElement('div')
-        div.innerHTML = html
-        div.querySelectorAll('.table-summary-row, tfoot, .table-add-row-btn, .table-row-index-badge').forEach((el) => el.remove())
-        // Unwrap table-scroll-wrapper: replace div with its children
-        div.querySelectorAll('.table-scroll-wrapper').forEach((wrapper) => {
-          while (wrapper.firstChild) wrapper.parentNode?.insertBefore(wrapper.firstChild, wrapper)
-          wrapper.parentNode?.removeChild(wrapper)
-        })
-        return origTurndown(div.innerHTML)
-      }
-      return origTurndown(html as HTMLElement)
-    }
-    
-    return service
-  }, [])
 
   const templateOptions = useMemo(
     () => Object.entries(fileMetaByPath)
@@ -1139,6 +863,52 @@ function App() {
     window.alert('Le mode lecture seule est activé. Désactive-le pour modifier ce contenu.')
     return false
   }, [readOnlyMode])
+
+  const requestConfirmation = useCallback((dialog: ConfirmDialogState): Promise<boolean> => {
+    return new Promise((resolve) => {
+      confirmDialogResolverRef.current = resolve
+      setConfirmDialog(dialog)
+    })
+  }, [])
+
+  const resolveConfirmationDialog = useCallback((value: boolean) => {
+    const resolver = confirmDialogResolverRef.current
+    confirmDialogResolverRef.current = null
+    setConfirmDialog(null)
+    resolver?.(value)
+  }, [])
+
+  const markCurrentVersionChangelogAsSeen = useCallback(() => {
+    const normalized = normalizeVersionLabel(appVersion)
+    if (!normalized) {
+      return
+    }
+    setSeenChangelogVersion(normalized)
+    window.localStorage.setItem('holo-seen-changelog-version', normalized)
+    if (globalConfigReady) {
+      void window.holo?.setHoloConfigValue('seen-changelog-version', normalized)
+    }
+  }, [appVersion, globalConfigReady])
+
+  const discardTransientEditorState = useCallback(() => {
+    window.getSelection()?.removeAllRanges()
+    wysiwygEditorRef.current?.blur()
+    rawEditorRef.current?.blur()
+    setActiveTab((prev) => (prev ? { ...prev, isDirty: false } : prev))
+    setActiveTab(null)
+    setActiveTabPath(null)
+    lastWysiwygSyncedTabRef.current = null
+    isSyncingWysiwygRef.current = false
+    aiSavedRangeRef.current = null
+    linkSavedRangeRef.current = null
+    setSelectionPopup(null)
+    setTablePopup(null)
+    setCodeBlockPopup(null)
+    setColumnTypePopup(null)
+    setHoveredCodeBlock(null)
+    setShowCompactToc(false)
+    setSlashMenu(null)
+  }, [])
 
   useEffect(() => {
     if (readOnlyMode) {
@@ -1227,7 +997,7 @@ function App() {
       const level = match[1].length
       const text = match[2]
         .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-        .replace(/[\*_`~]/g, '')
+        .replace(/[*_`~]/g, '')
         .trim()
 
       if (!text) {
@@ -1297,7 +1067,9 @@ function App() {
     const holo = window.holo
     if (holo) {
       try {
-        const repoConfig = await holo.readRepoConfig()
+        const repoConfig = await holo.readRepoConfig() as {
+          imageStorageMode?: ImageStorageMode
+        } | null
         if (repoConfig?.imageStorageMode) {
           setRepoImageStorageMode(repoConfig.imageStorageMode)
           setRepoImageModeReady(true)
@@ -1532,9 +1304,12 @@ function App() {
         return false
       }
 
-      const shouldPullNow = window.confirm(
-        'Une version plus récente de ce dépôt est disponible sur le remote.\n\nPull maintenant pour débloquer l’édition ?',
-      )
+      const shouldPullNow = await requestConfirmation({
+        title: 'Mise à jour distante disponible',
+        message: 'Une version plus récente de ce dépôt est disponible sur le remote.\n\nPull maintenant pour débloquer l’édition ?',
+        confirmLabel: 'Pull maintenant',
+        cancelLabel: 'Plus tard',
+      })
 
       if (!shouldPullNow) {
         return false
@@ -1556,7 +1331,7 @@ function App() {
         setIsGitBusy(false)
       }
     },
-    [activeTab?.isDirty, activeTabPath, applyRemoteEditBlockFromGitState, getHoloApi, gitState.isRepo, isGitBusy, refreshTree, rootPath],
+    [activeTab?.isDirty, activeTabPath, applyRemoteEditBlockFromGitState, getHoloApi, gitState.isRepo, isGitBusy, refreshTree, requestConfirmation, rootPath],
   )
 
   useEffect(() => {
@@ -1691,8 +1466,8 @@ function App() {
         setShowAuthorModal(true)
       }
 
-      setReadOnlyMode(readOnly)
-  setSeenChangelogVersion(seenVersion)
+        setReadOnlyMode(readOnly)
+        setSeenChangelogVersion(normalizeVersionLabel(seenVersion))
       if (email) setGitEmail(email)
       if (azureContainerUrl) setAzureBlobContainerUrl(azureContainerUrl)
       if (azureSasToken) setAzureBlobSasToken(azureSasToken)
@@ -1763,7 +1538,11 @@ function App() {
     const loadRepoImageStorageMode = async () => {
       setRepoImageModeReady(false)
       try {
-        const repoConfig = await holo.readRepoConfig().catch(() => null)
+        const repoConfig = await holo.readRepoConfig().catch(() => null) as {
+          imageStorageMode?: ImageStorageMode
+          imageStorage?: { mode?: ImageStorageMode }
+          folderIcons?: Record<string, string>
+        } | null
         const legacyMode = repoConfig?.imageStorage?.mode
         const mode = repoConfig?.imageStorageMode ?? legacyMode
 
@@ -1791,7 +1570,7 @@ function App() {
             const absIcons: Record<string, string> = {}
             for (const [k, icon] of Object.entries(rawIcons)) {
               // backward compat: if key looks like absolute path, use as-is
-              const isAbsPath = k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~')
+              const isAbsPath = k.startsWith('/') || /^[A-Za-z]:[/\\]/.test(k) || k.startsWith('~')
               const absKey = isAbsPath ? k : resolveRepoRelativePath(rootPath, k)
               absIcons[absKey] = icon
             }
@@ -1919,7 +1698,7 @@ function App() {
 
       const version = await window.holo.getAppVersion().catch(() => '')
       if (version) {
-        setAppVersion(version)
+        setAppVersion(normalizeVersionLabel(version))
       }
     }
 
@@ -2062,13 +1841,50 @@ function App() {
     }
   }, [isCompactLayout, tocItems.length])
 
+  // When a template is selected in the name dialog, load its variables
+  useEffect(() => {
+    if (!nameDialog || nameDialog.mode !== 'create-file' || !nameDialog.selectedTemplatePath) {
+      if (nameDialog && nameDialog.mode === 'create-file' && !nameDialog.selectedTemplatePath) {
+        setNameDialog((prev) =>
+          prev && prev.mode === 'create-file' ? { ...prev, templateVariables: undefined } : prev,
+        )
+      }
+      return
+    }
+
+    const holo = getHoloApi()
+    if (!holo) return
+
+    const templatePath = nameDialog.selectedTemplatePath
+    void holo.readFile(templatePath).then((content: string) => {
+      const variables = extractTemplateVariables(content)
+      if (variables.length === 0) {
+        setNameDialog((prev) =>
+          prev && prev.mode === 'create-file' ? { ...prev, templateVariables: undefined } : prev,
+        )
+        return
+      }
+      const today = new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+      const autoValues: Record<string, string> = {}
+      for (const v of variables) {
+        if (v === '$DATE') autoValues[v] = today
+        else if (v === '$AUTHOR' || v === '$AUTEUR') autoValues[v] = appAuthor ?? ''
+        else autoValues[v] = ''
+      }
+      setNameDialog((prev) =>
+        prev && prev.mode === 'create-file' ? { ...prev, templateVariables: autoValues } : prev,
+      )
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(nameDialog as { selectedTemplatePath?: string | null } | null)?.selectedTemplatePath])
+
   // Listen for update notifications from Electron
   useEffect(() => {
     if (typeof window === 'undefined') {
       return
     }
 
-    const holo = window.holo as any
+    const holo = window.holo
 
     if (!holo) {
       return
@@ -2263,32 +2079,9 @@ function App() {
       if (node.type === 'file') {
         const isDirty = activeTab?.isDirty ?? false
         if (isDirty && activeTabPath && activeTabPath !== node.path) {
-          const continueWithoutSave = window.confirm(
-            'Le fichier courant a des modifications non sauvegardées. Continuer sans sauvegarder ?'
-          )
-
-          if (!continueWithoutSave) {
-            return
-          }
-
-          // Discard transient editing state before navigating to another file
-          window.getSelection()?.removeAllRanges()
-          wysiwygEditorRef.current?.blur()
-          rawEditorRef.current?.blur()
-          setActiveTab((prev) => (prev ? { ...prev, isDirty: false } : prev))
-          setActiveTab(null)
-          setActiveTabPath(null)
-          lastWysiwygSyncedTabRef.current = null
-          isSyncingWysiwygRef.current = false
-          aiSavedRangeRef.current = null
-          linkSavedRangeRef.current = null
-          setSelectionPopup(null)
-          setTablePopup(null)
-          setCodeBlockPopup(null)
-          setColumnTypePopup(null)
-          setHoveredCodeBlock(null)
-          setShowCompactToc(false)
-          setSlashMenu(null)
+          setPendingFileSwitchPath(node.path)
+          setShowUnsavedChangesModal(true)
+          return
         }
 
         await openFile(node.path)
@@ -2296,6 +2089,24 @@ function App() {
     },
     [activeTab, activeTabPath, openFile],
   )
+
+  const confirmDiscardAndSwitchFile = useCallback(async () => {
+    if (!pendingFileSwitchPath) {
+      setShowUnsavedChangesModal(false)
+      return
+    }
+
+    setShowUnsavedChangesModal(false)
+    discardTransientEditorState()
+    const nextPath = pendingFileSwitchPath
+    setPendingFileSwitchPath(null)
+    await openFile(nextPath)
+  }, [discardTransientEditorState, openFile, pendingFileSwitchPath])
+
+  const cancelDiscardAndSwitchFile = useCallback(() => {
+    setShowUnsavedChangesModal(false)
+    setPendingFileSwitchPath(null)
+  }, [])
 
   const saveCurrentFile = useCallback(async () => {
     if (!activeTab) {
@@ -2509,83 +2320,10 @@ function App() {
     return `table-dnd-${next}`
   }, [])
 
-  const markdownToHtml = useCallback((markdown: string) => {
-    const parsed = marked.parse(markdown)
-    const html = typeof parsed === 'string' ? parsed : ''
-
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-
-    doc.querySelectorAll('img').forEach((img) => {
-      const rawSrc = img.getAttribute('src')?.trim()
-      if (!rawSrc) return
-
-      // Skip external URLs and data URLs
-      if (/^(https?:|data:)/i.test(rawSrc)) {
-        return
-      }
-
-      // Store relative path and use placeholder
-      let imagePath = rawSrc.replace(/^\/+/, '')
-      if (!imagePath.startsWith('images/')) {
-        imagePath = 'images/' + imagePath
-      }
-      
-      img.setAttribute('data-src', imagePath)
-      img.setAttribute('src', 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3C/svg%3E')
-    })
-
-    doc.querySelectorAll('li > input[type="checkbox"]').forEach((checkbox) => {
-      const input = checkbox as HTMLInputElement
-      input.removeAttribute('disabled')
-      input.classList.add('task-checkbox')
-
-      const parentLi = input.closest('li')
-      if (parentLi) {
-        parentLi.classList.add('task-item')
-        const parentUl = parentLi.closest('ul')
-        if (parentUl) {
-          parentUl.classList.add('task-list')
-        }
-
-        if (!parentLi.querySelector('.task-label')) {
-          const label = doc.createElement('span')
-          label.classList.add('task-label')
-
-          while (input.nextSibling) {
-            label.appendChild(input.nextSibling)
-          }
-
-          if (!label.textContent?.trim()) {
-            label.textContent = 'Tâche'
-          }
-
-          parentLi.appendChild(label)
-        }
-
-        if (input.checked) {
-          parentLi.classList.add('task-item-checked')
-        }
-      }
-    })
-
-    doc.querySelectorAll('a').forEach((anchor) => {
-      if (!anchor.getAttribute('title')) {
-        anchor.setAttribute('title', 'Ctrl+clic pour ouvrir le lien')
-      }
-    })
-
-    doc.querySelectorAll('pre code').forEach((block) => {
-      hljs.highlightElement(block as HTMLElement)
-      // Wrap each line in a span for line numbers
-      const lines = block.innerHTML.split('\n')
-      if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
-      block.innerHTML = lines.map((line) => `<span class="code-line">${line || '\u200B'}</span>`).join('\n')
-    })
-
-    enhanceTablesInDocument(doc, getNextTableDndId)
-
-    return doc.body.innerHTML
-  }, [getNextTableDndId])
+  const markdownToHtml = useCallback(
+    (markdown: string) => parseMarkdownToHtml(markdown, getNextTableDndId),
+    [getNextTableDndId],
+  )
 
   const exportActiveFileToPdf = useCallback(async () => {
     if (!activeTab) {
@@ -3998,19 +3736,7 @@ function App() {
   }, [])
 
   const runWysiwygCommand = useCallback(
-    (
-      command:
-        | 'bold'
-        | 'italic'
-        | 'underline'
-        | 'strikeThrough'
-        | 'insertUnorderedList'
-        | 'insertOrderedList'
-        | 'formatBlock'
-        | 'createLink'
-        | 'insertHTML',
-      value?: string,
-    ) => {
+    (command: WysiwygCommand, value?: string) => {
       const editor = wysiwygEditorRef.current
 
       if (!editor) {
@@ -4095,10 +3821,10 @@ function App() {
       const relKey = getRepoRelativeFolderPath(rootPath, folderPath)
 
       // Also remove any legacy absolute-path key for this folder
-      const legacyKeys = Object.keys(folderIcons).filter(k => k.startsWith('/') || /^[A-Za-z]:[\/\\]/.test(k) || k.startsWith('~'))
+      const legacyKeys = Object.keys(folderIcons).filter(k => k.startsWith('/') || /^[A-Za-z]:[/\\]/.test(k) || k.startsWith('~'))
       for (const lk of legacyKeys) {
-        const normalized = lk.replace(/[\/\\]+$/, '')
-        const fp = folderPath.replace(/[\/\\]+$/, '')
+        const normalized = lk.replace(/[/\\]+$/, '')
+        const fp = folderPath.replace(/[/\\]+$/, '')
         if (normalized === fp) {
           delete folderIcons[lk]
         }
@@ -4368,7 +4094,10 @@ function App() {
 
         if (nameDialog.selectedTemplatePath) {
           const templateContent = await holo.readFile(nameDialog.selectedTemplatePath)
-          const contentFromTemplate = updateMarkdownBooleanHeaderField(templateContent, 'template', false)
+          let contentFromTemplate = updateMarkdownBooleanHeaderField(templateContent, 'template', false)
+          if (nameDialog.templateVariables && Object.keys(nameDialog.templateVariables).length > 0) {
+            contentFromTemplate = applyTemplateVariables(contentFromTemplate, nameDialog.templateVariables)
+          }
           await holo.writeFile(newFilePath, contentFromTemplate)
         }
 
@@ -4492,7 +4221,13 @@ function App() {
       return
     }
 
-    const confirmed = window.confirm('Archiver ce fichier ?')
+    const confirmed = await requestConfirmation({
+      title: 'Archiver le fichier',
+      message: 'Archiver ce fichier ?',
+      confirmLabel: 'Archiver',
+      cancelLabel: 'Annuler',
+      intent: 'danger',
+    })
 
     if (!confirmed) {
       return
@@ -4527,7 +4262,7 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, requestConfirmation, rootPath])
 
   const restoreArchivedPathTarget = useCallback(async (archivedPath: string) => {
     if (!ensureWritableMode()) {
@@ -4538,7 +4273,12 @@ function App() {
       return
     }
 
-    const confirmed = window.confirm('Récupérer ce fichier archivé ?')
+    const confirmed = await requestConfirmation({
+      title: 'Récupérer le fichier',
+      message: 'Récupérer ce fichier archivé ?',
+      confirmLabel: 'Récupérer',
+      cancelLabel: 'Annuler',
+    })
 
     if (!confirmed) {
       return
@@ -4567,7 +4307,7 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, rootPath])
+  }, [appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshArchivedFiles, refreshGitState, refreshTree, requestConfirmation, rootPath])
 
   const deletePathTarget = useCallback(async (targetPath: string) => {
     if (!ensureWritableMode()) {
@@ -4578,7 +4318,13 @@ function App() {
       return
     }
 
-    const confirmed = window.confirm('Confirmer la suppression ?')
+    const confirmed = await requestConfirmation({
+      title: 'Supprimer',
+      message: 'Confirmer la suppression ?',
+      confirmLabel: 'Supprimer',
+      cancelLabel: 'Annuler',
+      intent: 'danger',
+    })
 
     if (!confirmed) {
       return
@@ -4605,7 +4351,7 @@ function App() {
     } catch (error) {
       window.alert((error as Error).message)
     }
-  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, rootPath])
+  }, [activeTabPath, appAuthor, autoCommitStructuralChange, ensureWritableMode, getHoloApi, refreshGitState, refreshTree, requestConfirmation, rootPath])
 
   const copyPathTarget = useCallback(async (targetPath: string) => {
     if (!ensureWritableMode()) {
@@ -4927,6 +4673,60 @@ function App() {
     }
   }, [getHoloApi, rootPath, shareGatewayBaseUrl])
 
+  // ── Editor callback helpers (used in JSX, extracted for stable references) ──
+
+  const onPullNow = useCallback(() => { void pullChanges() }, [pullChanges])
+
+  const onOpenLinkFromSelection = useCallback(() => {
+    const sel = window.getSelection()
+    const selectedText = sel?.toString() ?? ''
+    linkSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
+    setSelectionPopup(null)
+    setLinkDialog({ text: selectedText, url: 'https://', pageQuery: '' })
+  }, [setSelectionPopup, setLinkDialog])
+
+  const onOpenAiTransformFromSelection = useCallback(() => {
+    const sel = window.getSelection()
+    const selectedText = sel?.toString() ?? ''
+    aiSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
+    setSelectionPopup(null)
+    wysiwygEditorRef.current?.blur()
+    setAiDialog({ mode: 'transform', prompt: '', isLoading: false, selectedText })
+  }, [setSelectionPopup, setAiDialog])
+
+  const onCloseColumnTypePopup = useCallback(() => setColumnTypePopup(null), [setColumnTypePopup])
+
+  const onApplyCodeLanguage = useCallback((lang: string, codeEl: HTMLElement) => {
+    const toRemove = Array.from(codeEl.classList).filter((c) => c.startsWith('language-') || c === 'hljs')
+    toRemove.forEach((c) => codeEl.classList.remove(c))
+    codeEl.className = `language-${lang}`
+    setCodeBlockPopup(null)
+    setHoveredCodeBlock(null)
+    const editor = wysiwygEditorRef.current
+    if (editor) {
+      const md = turndownService.turndown(editor.innerHTML)
+      updateActiveTabBody(md)
+      syncWysiwygFromMarkdown(md)
+    }
+  }, [setCodeBlockPopup, setHoveredCodeBlock, turndownService, updateActiveTabBody, syncWysiwygFromMarkdown])
+
+  const onToggleCompactToc = useCallback(() => setShowCompactToc((prev) => !prev), [setShowCompactToc])
+
+  const onCompactTocItemClick = useCallback((headingIndex: number) => {
+    onTocItemClick(headingIndex)
+    setShowCompactToc(false)
+  }, [onTocItemClick, setShowCompactToc])
+
+  const onEditorSwitchRaw = useCallback(() => {
+    if (!readOnlyMode) setEditorMode('raw')
+  }, [readOnlyMode, setEditorMode])
+
+  const onEditorSwitchWysiwyg = useCallback(() => setEditorMode('wysiwyg'), [setEditorMode])
+
+  const onEditorExportPdf = useCallback(() => { void exportActiveFileToPdf() }, [exportActiveFileToPdf])
+
+  const onEditorSave = useCallback(() => { void saveCurrentFile() }, [saveCurrentFile])
+
   const onHeaderMouseDown = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0) {
       return
@@ -5180,114 +4980,32 @@ function App() {
     >
 
       {/* App header */}
-      <header ref={headerRef} className={`flex items-center ${isCompactLayout ? 'gap-2 px-2 pr-2' : 'pr-3'} min-w-0`} style={{ gridArea: 'appbar' }} onMouseDown={(event) => { void onHeaderMouseDown(event) }}>
-        {isCompactLayout && (
-          <button
-            className="no-drag size-9 shrink-0 rounded-lg border border-white/10 bg-white/5 text-white/75 hover:border-[#7B61FF]/50 hover:text-white"
-            onClick={() => setIsSidebarOpenOnCompact((previous) => !previous)}
-            title="Ouvrir le panneau latéral"
-          >
-            <i className="fa-solid fa-bars" />
-          </button>
-        )}
-        <div className="flex-1 drag user-select-none">
-          <div className={`flex items-end gap-2 min-w-0 ${isCompactLayout ? 'overflow-hidden' : ''}`}>
-            <img src="./logo.png" height={40} width={120} alt="logo" />
-            {showTypeRBadge && <span className="text-sm font-bold text-red-500">TypeR</span>}
-            {appVersion && <span className={`text-[10px] text-white/35 pb-3 ${isCompactLayout ? '' : '-ml-4'}`}>v{appVersion}</span>}
-          </div>
-        </div>
-        <div className={`flex gap-2 text-white/50 no-drag ${isCompactLayout ? 'shrink-0' : ''}`}>
-          <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white/70">
-            {!isCompactLayout && <span className="uppercase tracking-wide">Read-only</span>}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={readOnlyMode}
-              className={`relative h-5 w-9 rounded-full transition-colors ${readOnlyMode ? 'bg-[#7B61FF]' : 'bg-white/15'}`}
-              onClick={() => setReadOnlyMode((previous) => !previous)}
-              title={readOnlyMode ? 'Désactiver le mode lecture seule' : 'Activer le mode lecture seule'}
-            >
-              <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${readOnlyMode ? 'translate-x-4.5' : 'translate-x-0.5'}`}
-              />
-            </button>
-          </label>
-          <div className="relative">
-            <button
-              className="size-8 rounded-full border border-white/20 bg-white/5 text-[10px] font-bold text-white/80 hover:border-[#7B61FF]/60 hover:text-white"
-              onClick={() => setShowUserMenu((previous) => !previous)}
-              title={appAuthor ? `Utilisateur: ${appAuthor}` : 'Configurer utilisateur'}
-            >
-              {appAuthor.trim() ? appAuthor.trim().charAt(0).toUpperCase() : <i className="fa-regular fa-user" />}
-            </button>
-
-            {showUserMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                <div className="absolute right-0 z-50 mt-1 w-52 rounded-lg border border-white/10 bg-[#1a1b1c] p-1 shadow-2xl">
-                  <div className="px-2 py-1 text-[10px] text-white/50 truncate">{appAuthor.trim() || 'Aucun profil'}</div>
-                  <button
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/80 hover:bg-white/8 hover:text-white"
-                    onClick={() => {
-                      setAuthorModalMode('edit')
-                      setAuthorModalValue(appAuthor)
-                      setShowAuthorModal(true)
-                      setShowUserMenu(false)
-                    }}
-                  >
-                    <i className="fa-regular fa-pen-to-square" />
-                    Changer le nom
-                  </button>
-                  <button
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-500/15"
-                    onClick={logoutAuthorProfile}
-                  >
-                    <i className="fa-solid fa-right-from-bracket" />
-                    Déconnexion
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-          <button
-            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
-            onClick={() => {
-              void toggleDevTools()
-            }}
-            title="DevTools"
-          >
-            <i className="fa-regular fa-code" />
-          </button>
-          <button
-            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
-            onClick={() => {
-              void minimizeWindow()
-            }}
-            title="Minimiser"
-          >
-            <i className="fa-jelly-duo fa-regular fa-minus" />
-          </button>
-          <button
-            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
-            onClick={() => {
-              void toggleMaximizeWindow()
-            }}
-            title="Agrandir / Restaurer"
-          >
-            <i className="fa-jelly-duo fa-regular fa-square" />
-          </button>
-          <button
-            className="size-8 text-white/50 hover:text-[#7B61FF] cursor-pointer"
-            onClick={() => {
-              void closeWindow()
-            }}
-            title="Fermer"
-          >
-            <i className="fa-jelly-duo fa-regular fa-xmark" />
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        headerRef={headerRef}
+        isCompactLayout={isCompactLayout}
+        appVersion={appVersion}
+        showTypeRBadge={showTypeRBadge}
+        readOnlyMode={readOnlyMode}
+        appAuthor={appAuthor}
+        showUserMenu={showUserMenu}
+        isSidebarOpenOnCompact={isSidebarOpenOnCompact}
+        onHeaderMouseDown={onHeaderMouseDown}
+        onToggleSidebar={() => setIsSidebarOpenOnCompact((previous) => !previous)}
+        onToggleReadOnly={() => setReadOnlyMode((previous) => !previous)}
+        onToggleUserMenu={() => setShowUserMenu((previous) => !previous)}
+        onEditAuthor={() => {
+          setAuthorModalMode('edit')
+          setAuthorModalValue(appAuthor)
+          setShowAuthorModal(true)
+          setShowUserMenu(false)
+        }}
+        onLogout={logoutAuthorProfile}
+        onDevTools={toggleDevTools}
+        onMinimize={minimizeWindow}
+        onMaximize={toggleMaximizeWindow}
+        onClose={closeWindow}
+        onCloseUserMenuBackdrop={() => setShowUserMenu(false)}
+      />
 
       {isCompactLayout && isSidebarOpenOnCompact && (
         <div
@@ -5296,92 +5014,18 @@ function App() {
         />
       )}
 
-      <aside
-        className={`${isCompactLayout
-          ? `fixed left-0 top-[64px] bottom-0 z-40 ${isSidebarOpenOnCompact ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-200`
-          : 'flex gap-2 z-10 pl-2'} font-quicksand`}
-        style={isCompactLayout ? undefined : { gridArea: 'sidebar' }}
+      <AppSidebar
+        isCompactLayout={isCompactLayout}
+        isSidebarOpenOnCompact={isSidebarOpenOnCompact}
+        activeSidebar={activeSidebar}
+        showSettings={showSettings}
+        hasActiveTab={Boolean(activeTab)}
+        gitIncoming={gitState.incoming}
+        gitOutgoing={gitState.outgoing}
+        onSelectSidebar={selectSidebar}
+        onToggleSearch={() => selectSidebar(activeSidebar === 'search' ? 'files' : 'search')}
+        onToggleSettings={() => setShowSettings((v) => !v)}
       >
-
-        {/* Icônes de navigation principale */}
-        <nav className={`flex flex-col gap-4 pt-4 ${isCompactLayout ? 'bg-[#242527] px-2 pb-4' : ''}`}>
-
-          {/* Bouton Fichiers */}
-          <div
-            className={`relative size-12 rounded-full flex items-center justify-center cursor-pointer ${
-              activeSidebar === 'files'
-                ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
-                : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
-            }`}
-            onClick={() => selectSidebar('files')}
-          >
-            <i className="fa-jelly-duo fa-regular fa-folder text-2xl" />
-            {activeTab && (
-              <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-[#242527] border-2 border-[#7B61FF]/70 text-[10px] font-bold text-white flex items-center justify-center">
-                1
-              </div>
-            )}
-          </div>
-
-          {/* Bouton Git — badges incoming/outgoing juste en dessous */}
-          <div className="relative flex flex-col items-center gap-1">
-            <div
-              className={`relative size-12 rounded-full flex items-center justify-center cursor-pointer ${
-                activeSidebar === 'git'
-                  ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
-                  : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
-              }`}
-              onClick={() => selectSidebar('git')}
-            >
-              <i className="fa-brands fa-git-alt text-2xl" />
-            </div>
-
-            {/* Badges incoming / outgoing — visibles seulement si valeur > 0 */}
-            <div className="flex flex-col gap-1 items-center pointer-events-none">
-              {gitState.incoming > 0 && (
-                <div className="bg-[#7B61FF]/50 rounded-full flex items-center justify-center pl-1 pr-2 border-2 border-[#242527] text-xs text-white gap-0.5">
-                  <i className="fa-solid fa-arrow-down text-[10px]" />
-                  <span className="font-bold">{gitState.incoming}</span>
-                </div>
-              )}
-              {gitState.outgoing > 0 && (
-                <div className="bg-[#7B61FF]/50 rounded-full flex items-center justify-center pl-1 pr-2 border-2 border-[#242527] text-xs text-white gap-0.5">
-                  <i className="fa-solid fa-arrow-up text-[10px]" />
-                  <span className="font-bold">{gitState.outgoing}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Bouton Recherche */}
-          <div
-            className={`relative size-12 rounded-full flex items-center justify-center cursor-pointer ${
-              activeSidebar === 'search'
-                ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
-                : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
-            }`}
-            onClick={() => selectSidebar(activeSidebar === 'search' ? 'files' : 'search')}
-            title="Rechercher"
-          >
-            <i className="fa-solid fa-magnifying-glass text-xl" />
-          </div>
-
-          {/* Bouton Settings — en bas */}
-          <div className="mt-auto pb-4">
-            <div
-              className={`size-12 rounded-full flex items-center justify-center cursor-pointer ${
-                showSettings
-                  ? 'border-2 border-[#7B61FF]/50 text-[#7B61FF]'
-                  : 'border border-white/5 hover:border-[#7B61FF]/30 text-white/30 hover:text-[#7B61FF]/50'
-              }`}
-              onClick={() => setShowSettings((v) => !v)}
-              title="Paramètres"
-            >
-              <i className="fa-solid fa-gear text-xl" />
-            </div>
-          </div>
-
-        </nav>
 
         {/* Panel Fichiers */}
         {activeSidebar === 'files' && (
@@ -5922,7 +5566,7 @@ function App() {
           </nav>
         )}
 
-      </aside>
+      </AppSidebar>
 
       {/* Zone d'édition principale */}
       <section className="flex min-w-0 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
@@ -5931,809 +5575,128 @@ function App() {
             <div className="flex-1 min-w-0 flex flex-col">
             {activeTab ? (
               <>
-                {/* Barre de contrôles fine */}
-                <div className={`flex shrink-0 items-center border-b border-white/5 ${isCompactLayout ? 'flex-wrap gap-2 px-3 py-2' : 'justify-between px-6 py-2'}`}>
-                  <span className={`text-[10px] text-white/25 ${isCompactLayout ? 'w-full' : ''}`}>
-                    {activeTab.isDirty ? '● non sauvegardé' : ''}
-                  </span>
-                  <div className={`flex items-center gap-2 ${isCompactLayout ? 'w-full flex-wrap' : ''}`}>
-                    {readOnlyMode && (
-                      <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-200">
-                        Lecture seule
-                      </span>
-                    )}
-                    <div className="flex items-center rounded border border-white/10 bg-[#1f2021] p-0.5">
-                      <button
-                        className={`rounded px-2 py-1 text-[10px] font-medium ${effectiveEditorMode === 'raw' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'} ${readOnlyMode ? 'cursor-not-allowed opacity-40' : ''}`}
-                        onClick={() => {
-                          if (!readOnlyMode) {
-                            setEditorMode('raw')
-                          }
-                        }}
-                        disabled={readOnlyMode}
-                        title="Mode RAW"
-                      >
-                        RAW
-                      </button>
-                      <button
-                        className={`rounded px-2 py-1 text-[10px] font-medium ${effectiveEditorMode === 'wysiwyg' ? 'bg-[#7B61FF] text-white' : 'text-white/70 hover:text-white'}`}
-                        onClick={() => setEditorMode('wysiwyg')}
-                        title="Mode WYSIWYG"
-                      >
-                        WYSIWYG
-                      </button>
-                    </div>
-                    {saveStatus === 'synced' && (
-                      <span className="flex items-center gap-1 text-[10px] text-emerald-400">
-                        <i className="fa-solid fa-cloud-arrow-up" />
-                        Synchronisé
-                      </span>
-                    )}
-                    {saveStatus === 'local' && (
-                      <span className="flex items-center gap-1 text-[10px] text-amber-400">
-                        <i className="fa-solid fa-floppy-disk" />
-                        Sauvegardé
-                      </span>
-                    )}
-                    {copyLinkStatus === 'copied' && (
-                      <span className="flex items-center gap-1 text-[10px] text-sky-400">
-                        <i className="fa-solid fa-link" />
-                        Lien copié
-                      </span>
-                    )}
-                    {isCompactLayout && tocItems.length > 0 && (
-                      <div ref={compactTocRef} className="relative">
-                        <button
-                          className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
-                          onClick={() => setShowCompactToc((prev) => !prev)}
-                          title="Afficher la table des matières"
-                        >
-                          <i className="fa-solid fa-list-ul mr-1" />Plan
-                        </button>
-                        {showCompactToc && (
-                          <div className="absolute right-0 top-[calc(100%+8px)] z-40 w-[min(280px,calc(100vw-24px))] rounded-xl border border-white/10 bg-[#1a1b1c] p-2 shadow-2xl backdrop-blur-sm">
-                            <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">
-                              Table des matières
-                            </p>
-                            <nav className="max-h-72 space-y-0.5 overflow-y-auto">
-                              {tocItems.map((item) => (
-                                <button
-                                  key={`compact-${item.headingIndex}-${item.text}`}
-                                  className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-white/60 transition-colors hover:bg-white/8 hover:text-white/95"
-                                  style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
-                                  onClick={() => {
-                                    onTocItemClick(item.headingIndex)
-                                    setShowCompactToc(false)
-                                  }}
-                                  title={item.text}
-                                >
-                                  {item.text}
-                                </button>
-                              ))}
-                            </nav>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <button
-                      className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                      onClick={() => void exportActiveFileToPdf()}
-                      disabled={!activeTab}
-                      title="Exporter le fichier actif en PDF"
-                    >
-                      <i className="fa-solid fa-file-pdf mr-1" />Exporter en PDF
-                    </button>
-                    <button
-                      className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
-                      onClick={() => void copyHoloLink(activeTab.path)}
-                      title="Copier le lien holo:// du fichier"
-                    >
-                      <i className="fa-solid fa-link mr-1" />Copier le lien
-                    </button>
-                    <button
-                      className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
-                      onClick={() => void saveCurrentFile()}
-                      disabled={readOnlyMode || !activeTab.isDirty || saveStatus === 'saving'}
-                      title="Sauvegarder (Ctrl+S)"
-                    >
-                      {saveStatus === 'saving' ? (
-                        <><i className="fa-solid fa-spinner fa-spin mr-1" />Sync…</>
-                      ) : (
-                        <><i className="fa-solid fa-floppy-disk mr-1" />Sauvegarder</>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Zone de page unifiée — tout scrolle ensemble */}
-                <div
-                  className="flex-1 min-h-0 overflow-auto"
-                  onMouseMove={(e) => {
-                    if (codeBlockLeaveTimerRef.current) {
-                      clearTimeout(codeBlockLeaveTimerRef.current)
-                      codeBlockLeaveTimerRef.current = null
-                    }
-                    const pre = (e.target as HTMLElement).closest?.('pre')
-                    if (pre) {
-                      const codeEl = pre.querySelector('code') as HTMLElement | null
-                      if (codeEl) {
-                        const rect = pre.getBoundingClientRect()
-                        setHoveredCodeBlock((prev) =>
-                          prev?.codeEl === codeEl ? prev : { x: rect.right, y: rect.top, codeEl }
-                        )
-                      }
-                    } else {
-                      setHoveredCodeBlock(null)
-                    }
-                  }}
-                  onMouseLeave={() => {
-                    codeBlockLeaveTimerRef.current = setTimeout(() => setHoveredCodeBlock(null), 200)
-                  }}
-                >
-                  <div className="flex min-h-full">
-                    <div className={`flex-1 min-w-0 ${isCompactLayout ? 'px-4 pt-6 pb-24 sm:px-6' : 'px-10 pt-12 pb-40 xl:px-14'}`}>
-                    <div className={`mx-auto ${isCompactLayout ? 'max-w-full' : 'max-w-272'}`}>
-
-                    {/* Bouton icône au-dessus du titre */}
-                    <div className="mb-3">
-                      <div className="relative mb-2">
-                        <button
-                          className={`flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-colors ${
-                            editableHeader.icon
-                              ? 'hover:bg-white/8'
-                              : 'opacity-0 hover:opacity-100 hover:bg-white/8 focus:opacity-100'
-                          } group-hover:opacity-100`}
-                          disabled={isEditorReadOnly}
-                          onClick={() => setShowEmojiPicker((v) => !v)}
-                          title="Ajouter une icône"
-                        >
-                          {editableHeader.icon ? (
-                            <span>{editableHeader.icon}</span>
-                          ) : (
-                            <i className="fa-regular fa-face-smile text-lg text-white/25" />
-                          )}
-                        </button>
-
-                        {showEmojiPicker && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-40"
-                              onClick={() => setShowEmojiPicker(false)}
-                            />
-                            <div className="absolute left-0 top-12 z-50 rounded-xl border border-white/10 bg-[#1a1b1c] p-2 shadow-2xl">
-                              <div className="mb-2 flex items-center justify-between">
-                                <span className="text-xs font-medium text-white/50">Choisir une icône</span>
-                                {editableHeader.icon && (
-                                  <button
-                                    className="rounded px-2 py-0.5 text-xs text-white/40 hover:bg-white/8 hover:text-white/70"
-                                    onClick={() => { updateEditableHeader('icon', ''); setShowEmojiPicker(false) }}
-                                  >
-                                    Supprimer
-                                  </button>
-                                )}
-                              </div>
-                              <EmojiPicker
-                                width={320}
-                                height={380}
-                                theme={Theme.DARK}
-                                searchDisabled={false}
-                                skinTonesDisabled
-                                previewConfig={{ showPreview: false }}
-                                onEmojiClick={(emojiData) => {
-                                  updateEditableHeader('icon', emojiData.emoji)
-                                  setShowEmojiPicker(false)
-                                }}
-                              />
-                            </div>
-                          </>
-                        )}
-                      </div>
-
-                      <input
-                        ref={titleInputRef}
-                        className={`w-full bg-transparent font-bold leading-tight text-white outline-none placeholder:text-white/20 ${isCompactLayout ? 'text-[1.8rem]' : 'text-[2.15rem]'}`}
-                        value={editableHeader.title}
-                        readOnly={isEditorReadOnly}
-                        onChange={(event) => updateEditableHeader('title', event.target.value)}
-                        placeholder="Sans titre"
-                      />
-                    </div>
-
-                    {/* Description */}
-                    <textarea
-                      className="mb-5 w-full resize-none bg-transparent text-sm leading-7 text-white/55 outline-none placeholder:text-white/20"
-                      rows={2}
-                      value={editableHeader.description}
-                      readOnly={isEditorReadOnly}
-                      onChange={(event) => updateEditableHeader('description', event.target.value)}
-                      placeholder="Ajouter une description…"
-                    />
-
-                    {/* Ligne de méta */}
-                    <div className="mb-10 flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-white/8 pb-6 text-xs text-white/30">
-                      <span className="flex items-center gap-1">
-                        <i className="fa-regular fa-user text-[10px]" />
-                        <input
-                          className="bg-transparent outline-none placeholder:text-white/20 hover:text-white/60 focus:text-white/80"
-                          value={editableHeader.author}
-                          readOnly={isEditorReadOnly}
-                          onChange={(event) => updateEditableHeader('author', event.target.value)}
-                          placeholder="Auteur"
-                          size={Math.max(editableHeader.author.length, 6)}
-                        />
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <i className="fa-regular fa-calendar text-[10px]" />
-                        {formatReadonlyDate(activePathStats?.createdAt)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <i className="fa-regular fa-clock text-[10px]" />
-                        {formatReadonlyDate(activePathStats?.modifiedAt)}
-                      </span>
-                    </div>
-
-                    {/* Tags */}
-                    <div className="mb-8 flex flex-wrap items-center gap-1.5">
-                      {editableHeader.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="group flex items-center gap-1 rounded-full border border-[#7B61FF]/30 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff]"
-                        >
-                          {tag}
-                          <button
-                            className="ml-0.5 text-[#9d8bff]/50 hover:text-[#9d8bff] transition-colors"
-                            disabled={isEditorReadOnly}
-                            onClick={() => updateTags(editableHeader.tags.filter((t) => t !== tag))}
-                            title="Supprimer ce tag"
-                          >
-                            <i className="fa-solid fa-xmark text-[9px]" />
-                          </button>
-                        </span>
-                      ))}
-                      {showTagInput ? (
-                        <input
-                          autoFocus
-                          className="rounded-full border border-[#7B61FF]/40 bg-[#7B61FF]/10 px-2.5 py-0.5 text-xs text-[#9d8bff] outline-none placeholder:text-[#9d8bff]/30 w-24"
-                          placeholder="Tag…"
-                          value={tagInput}
-                          readOnly={isEditorReadOnly}
-                          onChange={(e) => setTagInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ',') {
-                              e.preventDefault()
-                              const val = tagInput.trim().replace(/,/g, '')
-                              if (val && !editableHeader.tags.includes(val)) {
-                                updateTags([...editableHeader.tags, val])
-                              }
-                              setTagInput('')
-                              setShowTagInput(false)
-                            }
-                            if (e.key === 'Escape') {
-                              setTagInput('')
-                              setShowTagInput(false)
-                            }
-                          }}
-                          onBlur={() => {
-                            const val = tagInput.trim()
-                            if (val && !editableHeader.tags.includes(val)) {
-                              updateTags([...editableHeader.tags, val])
-                            }
-                            setTagInput('')
-                            setShowTagInput(false)
-                          }}
-                        />
-                      ) : (
-                        <button
-                          className="flex items-center gap-1 rounded-full border border-dashed border-white/15 px-2.5 py-0.5 text-xs text-white/25 hover:border-[#7B61FF]/40 hover:text-[#9d8bff] transition-colors"
-                          disabled={isEditorReadOnly}
-                          onClick={() => setShowTagInput(true)}
-                        >
-                          <i className="fa-solid fa-plus text-[9px]" />
-                          Ajouter un tag
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Corps du document */}
-                    <div className="relative">
-                    {effectiveEditorMode === 'raw' ? (
-                      <textarea
-                        ref={rawEditorRef}
-                        className="w-full min-h-[400px] resize-none bg-transparent font-mono text-sm leading-7 text-white/85 outline-none placeholder:text-white/25 select-text"
-                        value={activeTabBody}
-                        readOnly={isEditorReadOnly}
-                        onChange={(event) => updateActiveTabBody(event.target.value)}
-                        onKeyDown={onRawKeyDown}
-                        onDrop={onRawDrop}
-                        onDragEnter={onEditorDragEnter}
-                        onDragOver={onEditorDragOver}
-                        onDragLeave={onEditorDragLeave}
-                        placeholder="Édite ton fichier ici…"
-                      />
-                    ) : (
-                      <>
-                        <div
-                          ref={wysiwygEditorRef}
-                          className="wysiwyg-editor min-h-[400px] select-text text-sm text-white/90 outline-none [&_h1]:text-4xl [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-4 [&_h1]:text-white [&_h1]:tracking-tight [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-white [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-white [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-white/60 [&_h4]:uppercase [&_h4]:tracking-widest [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1.5 [&_ul.task-list]:list-none [&_ul.task-list]:pl-0 [&_ul.task-list_li]:list-none [&_li.task-item]:flex [&_li.task-item]:items-start [&_li.task-item]:gap-2 [&_li.task-item]:my-1 [&_.task-label]:flex-1 [&_.task-label]:min-w-0 [&_.task-label]:outline-none [&_.task-label]:transition-all [&_.task-label]:duration-150 [&_.task-item-checked_.task-label]:text-white/40 [&_.task-item-checked_.task-label]:line-through [&_input.task-checkbox]:mt-1 [&_input.task-checkbox]:w-4 [&_input.task-checkbox]:h-4 [&_input.task-checkbox]:shrink-0 [&_input.task-checkbox]:cursor-pointer [&_input.task-checkbox]:appearance-none [&_input.task-checkbox]:rounded-full [&_input.task-checkbox]:border [&_input.task-checkbox]:border-white/35 [&_input.task-checkbox]:bg-transparent [&_input.task-checkbox]:shadow-[0_0_0_0_rgba(123,97,255,0.0)] [&_input.task-checkbox]:transition-all [&_input.task-checkbox]:duration-150 [&_input.task-checkbox:checked]:bg-[#7B61FF] [&_input.task-checkbox:checked]:border-[#7B61FF] [&_input.task-checkbox:checked]:shadow-[0_0_0_3px_rgba(123,97,255,0.15)] [&_a]:text-[#9d8bff] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#7B61FF]/50 [&_blockquote]:pl-4 [&_blockquote]:text-white/60 [&_blockquote]:my-2 [&_pre]:my-2 [&_pre]:font-mono [&_code]:text-[#9d8bff] [&_table]:table-fixed [&_table]:border-collapse [&_table]:my-4 [&_table]:w-full [&_table]:text-sm [&_table]:rounded-lg [&_table]:border [&_table]:border-white/10 [&_tbody_tr:hover]:bg-white/5 [&_th]:border-b [&_th]:border-white/15 [&_th]:p-4 [&_th]:bg-gradient-to-r [&_th]:from-[#7B61FF]/15 [&_th]:to-[#9d8bff]/10 [&_th]:text-white [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-normal [&_th]:break-words [&_th[data-table-drag-type='column']]:cursor-grab [&_td]:border-b [&_td]:border-white/10 [&_td]:p-4 [&_td]:break-words [&_tr]:transition-colors [&_.table-drag-source]:bg-[#7B61FF]/18 [&_.table-drag-source]:ring-1 [&_.table-drag-source]:ring-[#9d8bff]/40 [&_.table-drag-target]:bg-[#7B61FF]/12 [&_.table-drag-target]:ring-1 [&_.table-drag-target]:ring-[#9d8bff]/30 [&_.table-row-index-badge]:mr-2 [&_.table-row-index-badge]:inline-flex [&_.table-row-index-badge]:h-4 [&_.table-row-index-badge]:min-w-4 [&_.table-row-index-badge]:items-center [&_.table-row-index-badge]:justify-center [&_.table-row-index-badge]:rounded [&_.table-row-index-badge]:bg-white/10 [&_.table-row-index-badge]:px-1 [&_.table-row-index-badge]:text-[10px] [&_.table-row-index-badge]:text-white/45 [&_.table-row-index-badge]:font-medium [&_.table-row-index-badge]:cursor-grab [&_.table-scroll-wrapper]:overflow-x-auto [&_.table-scroll-wrapper]:rounded-lg [&_.table-scroll-wrapper]:border [&_.table-scroll-wrapper]:border-white/10 [&_.table-add-row-btn]:block [&_.table-add-row-btn]:w-full [&_.table-add-row-btn]:cursor-pointer [&_.table-add-row-btn]:rounded-b-lg [&_.table-add-row-btn]:border [&_.table-add-row-btn]:border-t-0 [&_.table-add-row-btn]:border-white/10 [&_.table-add-row-btn]:py-1.5 [&_.table-add-row-btn]:text-center [&_.table-add-row-btn]:text-[11px] [&_.table-add-row-btn]:text-white/35 [&_.table-add-row-btn:hover]:bg-white/5 [&_.table-add-row-btn:hover]:text-white/60 [&_img]:max-w-full [&_img]:rounded [&_img]:my-2 [&_hr]:my-10 [&_hr]:border-none [&_hr]:h-px [&_hr]:bg-white/30 empty:before:content-['Écris_ici,_ou_tape_/_pour_les_commandes…'] empty:before:text-white/25 empty:before:pointer-events-none"
-                          contentEditable={!isEditorReadOnly}
-                          suppressContentEditableWarning
-                          spellCheck
-                          onInput={onWysiwygInput}
-                          onKeyDown={onWysiwygKeyDown}
-                          onPaste={(e) => {
-                            e.preventDefault()
-                            const text = e.clipboardData?.getData('text/plain') ?? ''
-                            const sanitized = text.replace(/<[^>]*>/g, '')
-
-                            // If pasting inside a code block → insert plain text with newlines
-                            const anchorEl = window.getSelection()?.anchorNode
-                            const anchorElement = anchorEl instanceof Element ? anchorEl : anchorEl?.parentElement
-                            const pre = anchorElement?.closest('pre')
-                            const editorEl = wysiwygEditorRef.current
-                            if (pre && editorEl?.contains(pre)) {
-                              document.execCommand('insertText', false, sanitized)
-                              const md = turndownService.turndown(editorEl.innerHTML)
-                              updateActiveTabBody(md)
-                              setTimeout(() => syncWysiwygFromMarkdown(md), 0)
-                              return
-                            }
-
-                            // Strip HTML tags to prevent injection, then render as markdown
-                            const isMarkdown = /^#{1,6}\s|^\*\*|^__|\*[^*]|^[-*+]\s|\d+\.\s|^>\s|^```|\[.+\]\(.+\)/.test(sanitized)
-                            if (isMarkdown) {
-                              const html = markdownToHtml(sanitized)
-                              document.execCommand('insertHTML', false, html)
-                              const editor = wysiwygEditorRef.current
-                              if (editor) {
-                                const md = turndownService.turndown(editor.innerHTML)
-                                updateActiveTabBody(md)
-                              }
-                            } else {
-                              document.execCommand('insertText', false, sanitized)
-                            }
-                          }}
-                          onDrop={onWysiwygDrop}
-                          onDragStart={onWysiwygDragStart}
-                          onDragEnd={onWysiwygDragEnd}
-                          onDragEnter={onEditorDragEnter}
-                          onDragOver={onWysiwygDragOver}
-                          onDragLeave={onEditorDragLeave}
-                          onClick={(e) => {
-                            const linkEl = (e.target as HTMLElement).closest('a') as HTMLAnchorElement | null
-                            if (linkEl) {
-                              const href = linkEl.getAttribute('href')?.trim()
-                              if (href && (e.ctrlKey || e.metaKey)) {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                void openEditorLink(href)
-                              }
-                              return
-                            }
-
-                            // + Nouveau button below tables
-                            if ((e.target as HTMLElement).classList.contains('table-add-row-btn')) {
-                              e.preventDefault()
-                              const btn = e.target as HTMLElement
-                              const wrapper = btn.previousElementSibling as HTMLElement | null
-                              const table = wrapper?.querySelector('table') as HTMLTableElement | null
-                              if (table) {
-                                const tbody = table.querySelector('tbody')
-                                if (tbody) {
-                                  const lastRow = tbody.lastElementChild as HTMLTableRowElement | null
-                                  const columnCount = lastRow ? lastRow.cells.length : 1
-                                  const newRow = document.createElement('tr')
-                                  for (let i = 0; i < columnCount; i++) {
-                                    const td = document.createElement('td')
-                                    td.innerHTML = i === 0 ? '\u200B' : ''
-                                    newRow.appendChild(td)
-                                  }
-                                  tbody.appendChild(newRow)
-                                  const firstCell = newRow.cells[0]
-                                  if (firstCell) {
-                                    const range = document.createRange()
-                                    range.selectNodeContents(firstCell)
-                                    range.collapse(true)
-                                    window.getSelection()?.removeAllRanges()
-                                    window.getSelection()?.addRange(range)
-                                    firstCell.focus()
-                                  }
-                                  const editor = wysiwygEditorRef.current
-                                  if (editor) {
-                                    refreshTableSummaries()
-                                    const md = turndownService.turndown(editor.innerHTML)
-                                    updateActiveTabBody(md)
-                                  }
-                                }
-                              }
-                              return
-                            }
-                            const target = e.target as HTMLInputElement
-                            if (target.type === 'checkbox') {
-                              const taskItem = target.closest('.task-item')
-                              if (taskItem) {
-                              taskItem?.classList.toggle('task-item-checked', target.checked)
-                              // Sync the HTML attribute so innerHTML reflects the checked state
-                              if (target.checked) {
-                                target.setAttribute('checked', '')
-                              } else {
-                                target.removeAttribute('checked')
-                              }
-                              // Sync after checkbox toggle
-                              setTimeout(() => {
-                                const editor = wysiwygEditorRef.current
-                                if (editor) {
-                                  const markdown = turndownService.turndown(editor.innerHTML)
-                                  updateActiveTabBody(markdown)
-                                }
-                              }, 0)
-                              }
-                              // Table column checkbox toggle
-                              const colCell = target.closest('.col-checkbox-cell') as HTMLElement | null
-                              if (colCell) {
-                                colCell.dataset.checked = String(target.checked)
-                                if (target.checked) target.setAttribute('checked', '')
-                                else target.removeAttribute('checked')
-                                setTimeout(() => {
-                                  const editor = wysiwygEditorRef.current
-                                  if (editor) {
-                                    const markdown = turndownService.turndown(editor.innerHTML)
-                                    updateActiveTabBody(markdown)
-                                  }
-                                }, 0)
-                              }
-                            }
-                            // Column type popup on th header click
-                            const thEl = (e.target as HTMLElement).closest('th') as HTMLElement | null
-                            if (thEl) {
-                              const rect = thEl.getBoundingClientRect()
-                              setColumnTypePopup({ x: rect.left, y: rect.bottom + 4, thEl })
-                            } else {
-                              setColumnTypePopup(null)
-                            }
-                            // Code block language popup — handled via onMouseOver
-                          }}
-                        />
-                        <div className="mt-5 text-right text-[9px] text-white/15 pointer-events-none select-none">
-                          <kbd>/</kbd> commandes · <kbd>#</kbd> titre · <kbd>-</kbd> liste · glisse une image
-                        </div>
-                        {remoteEditBlock.isBlocked && (
-                          <div className="absolute inset-0 z-20 flex items-center justify-center rounded-md border border-amber-400/40 bg-[#111213]/85 px-4">
-                            <div className="max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-4 text-center">
-                              <p className="text-sm text-amber-200">{remoteEditBlock.message}</p>
-                              <button
-                                className="mt-3 rounded-md bg-[#7B61FF] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#6950f0]"
-                                onClick={() => {
-                                  void pullChanges()
-                                }}
-                              >
-                                Pull maintenant
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                      {isImageDragOverEditor && (
-                        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border border-dashed border-[#7B61FF]/70 bg-[#111213]/75 px-4 text-sm font-medium text-white/90">
-                          Déposez une image pour l’insérer
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                    </div>{/* end max-w-272 */}
-                    </div>{/* end flex-1 content col */}
-
-                    {/* Table des matières supprimée de ici — rendue au niveau éditeur */}
-                  </div>{/* end flex min-h-full */}
-                
-                {selectionPopup && editorMode === 'wysiwyg' && (
-                  <div
-                    className="fixed z-50 flex items-center gap-0.5 rounded-lg border border-white/15 bg-[#18191a] shadow-2xl px-1 py-1"
-                    style={{ left: selectionPopup.x, top: selectionPopup.y, transform: 'translate(-50%, -100%)' }}
-                    onMouseDown={(e) => e.preventDefault()}
-                  >
-                    <button className="rounded px-2 py-1 text-xs font-bold text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('bold')} title="Gras">B</button>
-                    <button className="rounded px-2 py-1 text-xs italic text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('italic')} title="Italique">I</button>
-                    <button className="rounded px-2 py-1 text-xs underline text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('underline')} title="Souligné">U</button>
-                    <button className="rounded px-2 py-1 text-xs line-through text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('strikeThrough')} title="Barré">S</button>
-                    <div className="w-px h-4 bg-white/15 mx-0.5" />
-                    <button className="rounded px-2 py-1 text-xs text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('formatBlock', '<h1>')} title="H1">H1</button>
-                    <button className="rounded px-2 py-1 text-xs text-white/80 hover:bg-white/10" onClick={() => runWysiwygCommand('formatBlock', '<h2>')} title="H2">H2</button>
-                    <div className="w-px h-4 bg-white/15 mx-0.5" />
-                    <button
-                      className="rounded px-2 py-1 text-xs text-[#9d8bff] hover:bg-[#7B61FF]/20"
-                      onClick={() => {
-                        const sel = window.getSelection()
-                        const selectedText = sel?.toString() ?? ''
-                        linkSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
-                        setSelectionPopup(null)
-                        setLinkDialog({ text: selectedText, url: 'https://', pageQuery: '' })
-                      }}
-                      title="Lien"
-                    >
-                      <i className="fa-solid fa-link text-[10px]" />
-                    </button>
-                    {hasAiProviderConfigured && (
-                      <>
-                        <div className="w-px h-4 bg-white/15 mx-0.5" />
-                        <button
-                          className="rounded px-2 py-1 text-xs text-[#9d8bff] hover:bg-[#7B61FF]/20"
-                        onMouseDown={(e) => {e.preventDefault()}}
-                          onClick={() => {
-                            const sel = window.getSelection()
-                            const selectedText = sel?.toString() ?? ''
-                            aiSavedRangeRef.current = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null
-                            setSelectionPopup(null)
-                            wysiwygEditorRef.current?.blur()
-                            setAiDialog({ mode: 'transform', prompt: '', isLoading: false, selectedText })
-                          }}
-                          title="Transformer avec l'IA"
-                        >
-                          <i className="fa-solid fa-wand-magic-sparkles text-[10px]" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                <TableControlsOverlay
-                  editorMode={editorMode}
-                  tablePopup={tablePopup}
-                  columnTypePopup={columnTypePopup}
-                  columnTypes={COLUMN_TYPES}
-                  typeEmojis={TYPE_EMOJIS}
-                  onInsertTableRow={insertTableRow}
-                  onInsertTableColumn={insertTableColumn}
-                  onSortAsc={() => sortTableByCurrentColumn('asc')}
-                  onSortDesc={() => sortTableByCurrentColumn('desc')}
-                  onOpenCurrentColumnTypePicker={openCurrentColumnTypePicker}
-                  onDeleteTableRow={deleteTableRow}
-                  onDeleteTableColumn={deleteTableColumn}
-                  onSetCurrentColumnType={setCurrentColumnType}
-                  onCloseColumnTypePopup={() => setColumnTypePopup(null)}
+                <EditorTopBar
+                  isCompactLayout={isCompactLayout}
+                  activeTabIsDirty={activeTab.isDirty}
+                  readOnlyMode={readOnlyMode}
+                  effectiveEditorMode={effectiveEditorMode}
+                  saveStatus={saveStatus}
+                  copyLinkStatus={copyLinkStatus}
+                  tocItems={tocItems}
+                  showCompactToc={showCompactToc}
+                  compactTocRef={compactTocRef}
+                  onToggleCompactToc={onToggleCompactToc}
+                  onCompactTocItemClick={onCompactTocItemClick}
+                  onSwitchRaw={onEditorSwitchRaw}
+                  onSwitchWysiwyg={onEditorSwitchWysiwyg}
+                  onExportPdf={onEditorExportPdf}
+                  onCopyLink={() => { void copyHoloLink(activeTab.path) }}
+                  onSave={onEditorSave}
                 />
 
-                {/* Code block language badge — shows when cursor is inside a pre */}
-                {hoveredCodeBlock && editorMode === 'wysiwyg' && !codeBlockPopup && (
-                  <div
-                    className="code-block-popup fixed z-50 flex items-center gap-1"
-                    style={{ left: hoveredCodeBlock.x, top: hoveredCodeBlock.y, transform: 'translate(-100%, 8px)' }}
-                    onMouseEnter={() => {
-                      if (codeBlockLeaveTimerRef.current) {
-                        clearTimeout(codeBlockLeaveTimerRef.current)
-                        codeBlockLeaveTimerRef.current = null
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      codeBlockLeaveTimerRef.current = setTimeout(() => setHoveredCodeBlock(null), 200)
-                    }}
-                  >
-                    {/* Copy button */}
-                    <button
-                      className="font-mono text-[10px] text-white/30 hover:text-white/70 transition-colors px-1"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        const text = (hoveredCodeBlock.codeEl.textContent ?? '').replace(/\u200B/g, '').trim()
-                        void navigator.clipboard.writeText(text)
-                      }}
-                      title="Copier"
-                    >
-                      <i className="fa-regular fa-copy text-[9px]" />
-                    </button>
-                    <button
-                      className="font-mono text-[10px] text-white/30 hover:text-white/70 transition-colors px-1"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        void formatCodeBlock(hoveredCodeBlock.codeEl)
-                      }}
-                      title="Formater le code"
-                    >
-                      <i className="fa-solid fa-wand-magic-sparkles text-[9px]" />
-                    </button>
-                    {/* Language selector */}
-                    <button
-                      className="font-mono text-[10px] text-[#7B61FF]/70 hover:text-[#9d8bff] transition-colors px-1"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        const rect = hoveredCodeBlock.codeEl.closest('pre')?.getBoundingClientRect()
-                        if (rect) {
-                          setCodeBlockPopup({ x: rect.left, y: rect.bottom, codeEl: hoveredCodeBlock.codeEl })
-                        }
-                      }}
-                    >
-                      {(() => {
-                        const lang = Array.from(hoveredCodeBlock.codeEl.classList)
-                          .find((c) => c.startsWith('language-'))
-                          ?.replace('language-', '') ?? 'plaintext'
-                        return lang === 'plaintext' ? 'texte ▾' : `${lang} ▾`
-                      })()}
-                    </button>
-                  </div>
-                )}
-
-                {/* Code block language picker */}
-                {codeBlockPopup && editorMode === 'wysiwyg' && (() => {
-                  const LANGUAGES = ['plaintext', 'javascript', 'typescript', 'python', 'sql', 'bash', 'html', 'css', 'json', 'markdown', 'rust', 'java', 'go', 'csharp', 'cpp']
-                  const activeLang = Array.from(codeBlockPopup.codeEl.classList)
-                    .find((c) => c.startsWith('language-'))
-                    ?.replace('language-', '') ?? 'plaintext'
-                  return (
-                    <div
-                      className="code-block-popup fixed z-[100] flex flex-wrap gap-1 rounded-lg border border-white/25 bg-[#111] px-2 py-2 shadow-2xl ring-1 ring-[#7B61FF]/20"
-                      style={{ left: codeBlockPopup.x, top: codeBlockPopup.y, transform: 'translate(0, 4px)', maxWidth: 320 }}
-                      onMouseDown={(e) => e.preventDefault()}
-                    >
-                      {LANGUAGES.map((lang) => (
-                        <button
-                          key={lang}
-                          className={`rounded px-2 py-0.5 font-mono text-[11px] transition-colors ${
-                            activeLang === lang
-                              ? 'bg-[#7B61FF] text-white'
-                              : 'text-white/60 hover:bg-white/10 hover:text-white'
-                          }`}
-                          onClick={() => {
-                            const codeEl = codeBlockPopup.codeEl
-                            const toRemove = Array.from(codeEl.classList).filter((c) => c.startsWith('language-') || c === 'hljs')
-                            toRemove.forEach((c) => codeEl.classList.remove(c))
-                            codeEl.className = `language-${lang}`
-                            setCodeBlockPopup(null)
-                            setHoveredCodeBlock(null)
-                            const editor = wysiwygEditorRef.current
-                            if (editor) {
-                              const md = turndownService.turndown(editor.innerHTML)
-                              updateActiveTabBody(md)
-                              // Sync immediately so hljs re-highlights with the new language
-                              syncWysiwygFromMarkdown(md)
-                            }
-                          }}
-                        >
-                          {lang}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })()}
-
-                {/* Slash command menu */}
-                {slashMenu && editorMode === 'wysiwyg' && (() => {
-                  const filtered = SLASH_COMMANDS.filter((c) => (!c.requiresApiKey || hasAiProviderConfigured) && matchesSlashQuery(c, slashMenu.query))
-                  return filtered.length > 0 ? (
-                    <div
-                      className="fixed z-50 min-w-[200px] rounded-lg border border-white/15 bg-[#18191a] shadow-2xl p-1"
-                      style={{ left: slashMenu.x, top: slashMenu.y }}
-                      onMouseDown={(e) => e.preventDefault()}
-                    >
-                      {slashMenu.query === '' && (
-                        <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-white/35">Insérer un bloc</p>
-                      )}
-                      <div ref={slashMenuListRef} className="max-h-[102px] overflow-y-auto pr-0.5">
-                        {filtered.map((cmd, idx) => (
-                          <button
-                            key={cmd.id}
-                            data-slash-index={idx}
-                            className={`flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-xs ${idx === slashMenuIndex ? 'bg-[#7B61FF]/25 text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}
-                            onClick={() => executeSlashCommand(cmd)}
-                          >
-                            <span className="w-5 text-center text-[11px] text-[#9d8bff]">
-                              <i className={cmd.icon} />
-                            </span>
-                            <span className="flex-1 font-medium">{cmd.label}</span>
-                            <span className="text-[10px] text-white/30">{cmd.hint}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null
-                })()}
+                <EditorCanvas
+                  isCompactLayout={isCompactLayout}
+                  effectiveEditorMode={effectiveEditorMode}
+                  isEditorReadOnly={isEditorReadOnly}
+                  activeTabBody={activeTabBody}
+                  rawEditorRef={rawEditorRef}
+                  wysiwygEditorRef={wysiwygEditorRef}
+                  onRawChange={updateActiveTabBody}
+                  onRawKeyDown={onRawKeyDown}
+                  onRawDrop={onRawDrop}
+                  onEditorDragEnter={onEditorDragEnter}
+                  onEditorDragOver={onEditorDragOver}
+                  onEditorDragLeave={onEditorDragLeave}
+                  onWysiwygInput={onWysiwygInput}
+                  onWysiwygKeyDown={onWysiwygKeyDown}
+                  onWysiwygDrop={onWysiwygDrop}
+                  onWysiwygDragStart={onWysiwygDragStart}
+                  onWysiwygDragEnd={onWysiwygDragEnd}
+                  onWysiwygDragOver={onWysiwygDragOver}
+                  openEditorLink={openEditorLink}
+                  updateActiveTabBody={updateActiveTabBody}
+                  syncWysiwygFromMarkdown={syncWysiwygFromMarkdown}
+                  markdownToHtml={markdownToHtml}
+                  refreshTableSummaries={refreshTableSummaries}
+                  setColumnTypePopup={setColumnTypePopup}
+                  isImageDragOverEditor={isImageDragOverEditor}
+                  remoteEditBlock={remoteEditBlock}
+                  onPullNow={onPullNow}
+                  codeBlockLeaveTimerRef={codeBlockLeaveTimerRef}
+                  setHoveredCodeBlock={setHoveredCodeBlock}
+                  documentHeaderProps={{
+                    isCompactLayout,
+                    editableHeader,
+                    isEditorReadOnly,
+                    showEmojiPicker,
+                    setShowEmojiPicker,
+                    titleInputRef,
+                    activePathStats,
+                    formatReadonlyDate,
+                    updateEditableHeader,
+                    updateTags,
+                    showTagInput,
+                    setShowTagInput,
+                    tagInput,
+                    setTagInput,
+                  }}
+                />
+                
+                <EditorOverlays
+                  editorMode={editorMode}
+                  selectionPopup={selectionPopup}
+                  runWysiwygCommand={runWysiwygCommand}
+                  onOpenLinkFromSelection={onOpenLinkFromSelection}
+                  hasAiProviderConfigured={hasAiProviderConfigured}
+                  onOpenAiTransformFromSelection={onOpenAiTransformFromSelection}
+                  tablePopup={tablePopup}
+                  columnTypePopup={columnTypePopup}
+                  insertTableRow={insertTableRow}
+                  insertTableColumn={insertTableColumn}
+                  sortTableByCurrentColumn={sortTableByCurrentColumn}
+                  openCurrentColumnTypePicker={openCurrentColumnTypePicker}
+                  deleteTableRow={deleteTableRow}
+                  deleteTableColumn={deleteTableColumn}
+                  setCurrentColumnType={setCurrentColumnType}
+                  onCloseColumnTypePopup={onCloseColumnTypePopup}
+                  hoveredCodeBlock={hoveredCodeBlock}
+                  codeBlockPopup={codeBlockPopup}
+                  codeBlockLeaveTimerRef={codeBlockLeaveTimerRef}
+                  setHoveredCodeBlock={setHoveredCodeBlock}
+                  setCodeBlockPopup={setCodeBlockPopup}
+                  formatCodeBlock={formatCodeBlock}
+                  onApplyCodeLanguage={onApplyCodeLanguage}
+                  slashMenu={slashMenu}
+                  slashMenuListRef={slashMenuListRef}
+                  slashMenuIndex={slashMenuIndex}
+                  slashCommands={SLASH_COMMANDS}
+                  matchesSlashQuery={matchesSlashQuery}
+                  executeSlashCommand={executeSlashCommand}
+                />
 
               </>
-            ) : (
-              <div className="flex flex-1 flex-col justify-center mx-auto max-w-272">
-                <p className="block text-center text-sm text-white/40">
-                  Clique sur un fichier pour commencer l'édition
-                </p>
-
-
-                {/*
-                <div className=''>
-                  <NewTable />
-                </div>
-                
-                */}
-              </div>
-            )}
+            ) : <EditorEmptyState />}
             </div>{/* end flex-1 min-w-0 content area */}
 
             {/* Table des matières — colonne droite séparée */}
-            {editorMode === 'wysiwyg' && tocItems.length > 0 && (
-              <aside className="hidden xl:flex xl:w-52 shrink-0 flex-col overflow-y-auto border-l border-white/5 pt-12 pr-4 pl-4">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/30">
-                  Table des matières
-                </p>
-                <nav className="space-y-0.5">
-                  {tocItems.map((item) => (
-                    <button
-                      key={`${item.headingIndex}-${item.text}`}
-                      className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-white/50 hover:bg-white/8 hover:text-white/90 transition-colors"
-                      style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
-                      onClick={() => onTocItemClick(item.headingIndex)}
-                      title={item.text}
-                    >
-                      {item.text}
-                    </button>
-                  ))}
-                </nav>
-              </aside>
-            )}
+            <EditorRightToc
+              editorMode={editorMode}
+              tocItems={tocItems}
+              onTocItemClick={onTocItemClick}
+            />
           </div>{/* end flex-1 min-h-0 flex row */}
       </section>
 
-      {/* IA Dialog */}
-      {aiDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
-              <div className="flex items-center gap-2">
-                <i className="fa-solid fa-wand-magic-sparkles text-[#9d8bff]" />
-                <span className="text-sm font-semibold text-white">
-                  {aiDialog.mode === 'transform' ? 'Transformer avec l\'IA' : 'Générer avec l\'IA'}
-                </span>
-              </div>
-              <button
-                className="rounded p-1 text-white/40 hover:text-white/80 hover:bg-white/8"
-                onClick={() => { setAiDialog(null); aiSavedRangeRef.current = null }}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            </div>
-            <div className="p-5 flex flex-col gap-4">
-              {aiDialog.mode === 'transform' && aiDialog.selectedText && (
-                <div className="rounded-lg bg-white/5 border border-white/8 px-3 py-2 text-xs text-white/50 max-h-24 overflow-y-auto italic">
-                  «&nbsp;{aiDialog.selectedText.slice(0, 300)}{aiDialog.selectedText.length > 300 ? '…' : ''}&nbsp;»
-                </div>
-              )}
-              <textarea
-                ref={aiTextareaRef}
-                className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#7B61FF]/50"
-                rows={3}
-                placeholder={aiDialog.mode === 'transform' ? 'Ex : Résume ce texte en 3 points clés' : 'Ex : Explique les avantages de Docker'}
-                value={aiDialog.prompt}
-                onChange={(e) => setAiDialog((prev) => prev ? { ...prev, prompt: e.target.value, error: undefined } : null)}
-                onKeyDown={(e) => {
-                  e.stopPropagation()
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submitAiDialog() }
-                  if (e.key === 'Escape') { setAiDialog(null); aiSavedRangeRef.current = null }
-                }}
-              />
-              {aiDialog.error && (
-                <p className="text-xs text-red-400 flex items-center gap-1.5">
-                  <i className="fa-solid fa-triangle-exclamation" />
-                  {aiDialog.error}
-                </p>
-              )}
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  className="rounded px-3 py-1.5 text-xs text-white/50 hover:text-white/80 hover:bg-white/8"
-                  onClick={() => { setAiDialog(null); aiSavedRangeRef.current = null }}
-                >
-                  Annuler
-                </button>
-                <button
-                  className="flex items-center gap-2 rounded-lg bg-[#7B61FF] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
-                  disabled={!aiDialog.prompt.trim() || aiDialog.isLoading}
-                  onClick={() => void submitAiDialog()}
-                >
-                  {aiDialog.isLoading ? (
-                    <><i className="fa-solid fa-spinner fa-spin" />Génération…</>
-                  ) : (
-                    <><i className="fa-solid fa-wand-magic-sparkles" />{aiDialog.mode === 'transform' ? 'Transformer' : 'Générer'}</>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <AiDialogModal
+        aiDialog={aiDialog}
+        aiTextareaRef={aiTextareaRef}
+        onSetAiDialog={setAiDialog}
+        onSubmitAiDialog={() => { void submitAiDialog() }}
+        onClose={() => {
+          setAiDialog(null)
+          aiSavedRangeRef.current = null
+        }}
+      />
 
       {contextMenu && (
         <div
@@ -6808,7 +5771,7 @@ function App() {
                   onClick={() => runContextAction(() => {
                     void toggleTemplateStatus(
                       contextMenu.node.path,
-                      !Boolean(fileMetaByPath[contextMenu.node.path]?.isTemplate),
+                      !fileMetaByPath[contextMenu.node.path]?.isTemplate,
                     )
                   })}
                 >
@@ -6947,925 +5910,124 @@ function App() {
         </div>
       )}
 
-      {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
-            {/* En-tête */}
-            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
-                <i className="fa-solid fa-gear text-[#7B61FF]" />
-                Paramètres
-              </h2>
-              <button
-                className="text-white/40 hover:text-white transition-colors"
-                onClick={() => setShowSettings(false)}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            </div>
 
-            <div className="p-6 flex flex-col gap-6 overflow-y-auto max-h-[70vh]">
-
-              {/* Section Identité */}
-              <section>
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Identité</h3>
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Nom affiché</label>
-                    <input
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                      placeholder="Ton prénom ou pseudo"
-                      value={appAuthor}
-                      onChange={(e) => setAppAuthor(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Email Git</label>
-                    <input
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                      placeholder="toi@example.com"
-                      type="email"
-                      value={gitEmail}
-                      onChange={(e) => setGitEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {rootPath && (
-                <section>
-                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Stockage d'images (par dépôt)</h3>
-                  <div className="flex flex-col gap-3">
-                    <p className="text-xs leading-relaxed text-white/45">
-                      Le mode est sauvegardé dans <span className="font-mono text-white/70">.holo.json</span>. Les clés restent stockées localement sur cette machine.
-                    </p>
-                    <div>
-                      <label className="mb-1 block text-xs text-white/50">Stockage des images pour ce dépôt</label>
-                      <select
-                        className="w-full rounded-lg border border-white/10 bg-[#232427] px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
-                        style={{ colorScheme: 'dark' }}
-                        value={repoImageStorageMode}
-                        onChange={(e) => setRepoImageStorageMode(e.target.value as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive')}
-                      >
-                        <option value="local">Intégrer au dépôt Git (local)</option>
-                        <option value="azure">Azure Blob Storage (SAS)</option>
-                        <option value="s3">Amazon S3</option>
-                        <option value="dropbox">Dropbox</option>
-                        <option value="gdrive">Google Drive</option>
-                      </select>
-                    </div>
-                    {repoImageStorageMode === 'azure' && (
-                      <>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Azure container URL</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="https://account.blob.core.windows.net/container"
-                            value={azureBlobContainerUrl}
-                            onChange={(e) => setAzureBlobContainerUrl(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Azure SAS token</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                            placeholder="sv=...&se=...&sig=..."
-                            type="password"
-                            value={azureBlobSasToken}
-                            onChange={(e) => setAzureBlobSasToken(e.target.value)}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {repoImageStorageMode === 's3' && (
-                      <>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">S3 Region</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="eu-west-3"
-                            value={s3Region}
-                            onChange={(e) => setS3Region(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">S3 Bucket</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="my-doc-images"
-                            value={s3Bucket}
-                            onChange={(e) => setS3Bucket(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Access Key ID</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                            placeholder="AKIA..."
-                            value={s3AccessKeyId}
-                            onChange={(e) => setS3AccessKeyId(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Secret Access Key</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                            placeholder="..."
-                            type="password"
-                            value={s3SecretAccessKey}
-                            onChange={(e) => setS3SecretAccessKey(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Endpoint (optionnel)</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="https://s3.eu-west-3.amazonaws.com"
-                            value={s3Endpoint}
-                            onChange={(e) => setS3Endpoint(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Public base URL (optionnel)</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="https://cdn.example.com"
-                            value={s3PublicBaseUrl}
-                            onChange={(e) => setS3PublicBaseUrl(e.target.value)}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {repoImageStorageMode === 'dropbox' && (
-                      <>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Dropbox access token</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                            placeholder="sl.B..."
-                            type="password"
-                            value={dropboxAccessToken}
-                            onChange={(e) => setDropboxAccessToken(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Dropbox dossier (optionnel)</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="/holo-images"
-                            value={dropboxFolderPath}
-                            onChange={(e) => setDropboxFolderPath(e.target.value)}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {repoImageStorageMode === 'gdrive' && (
-                      <>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Google Drive access token</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                            placeholder="ya29...."
-                            type="password"
-                            value={gdriveAccessToken}
-                            onChange={(e) => setGdriveAccessToken(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-white/50">Google Drive folder ID (optionnel)</label>
-                          <input
-                            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                            placeholder="1AbCdEf..."
-                            value={gdriveFolderId}
-                            onChange={(e) => setGdriveFolderId(e.target.value)}
-                          />
-                        </div>
-                      </>
-                    )}
-                    <button
-                      className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
-                      onClick={() => {
-                        void saveRepoImageConfig()
-                      }}
-                    >
-                      Enregistrer configuration
-                    </button>
-                    {repoImageModeReady && (
-                      <p className="text-xs text-emerald-400">✓ Configuration sauvegardée dans .holo.json</p>
-                    )}
-                  </div>
-                </section>
-              )}
-
-              {/* Section IA */}
-              <section>
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Intelligence artificielle</h3>
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Provider IA</label>
-                    <select
-                      className="w-full rounded-lg border border-white/10 bg-[#232427] px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50"
-                      style={{ colorScheme: 'dark' }}
-                      value={aiProvider}
-                      onChange={(e) => setAiProvider(e.target.value as 'auto' | 'openai' | 'gemini')}
-                    >
-                      <option value="auto">Auto (Gemini puis OpenAI)</option>
-                      <option value="gemini">Gemini</option>
-                      <option value="openai">OpenAI</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Clé API Gemini</label>
-                    <input
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                      placeholder="AIza…"
-                      type="password"
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Clé API OpenAI</label>
-                    <input
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 font-mono"
-                      placeholder="sk-…"
-                      type="password"
-                      value={openaiApiKey}
-                      onChange={(e) => setOpenaiApiKey(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-white/50">Prompt système</label>
-                    <textarea
-                      rows={5}
-                      className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20 leading-relaxed"
-                      value={openaiPrompt}
-                      onChange={(e) => setOpenaiPrompt(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Application — mises à jour */}
-              <section>
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">Application</h3>
-                <div className="rounded-xl border border-white/8 bg-white/4 p-4 flex flex-col gap-3">
-                  <div className="border-b border-white/8 pb-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-white/80">Changelog</span>
-                      {appVersion && currentVersionChangelog && seenChangelogVersion !== appVersion && (
-                        <span className="rounded-full border border-[#7B61FF]/35 bg-[#7B61FF]/15 px-2 py-0.5 text-[10px] font-semibold text-[#c8b8ff]">
-                          Nouveau
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      {CHANGELOG_ENTRIES.map((entry) => (
-                        <button
-                          key={entry.version}
-                          type="button"
-                          className="flex items-center justify-between rounded-lg border border-white/8 bg-white/4 px-3 py-2 text-left text-xs text-white/70 hover:bg-white/8 hover:text-white"
-                          onClick={() => {
-                            setSelectedChangelogVersion(entry.version)
-                            setShowChangelogModal(true)
-                          }}
-                        >
-                          <span className="font-medium">v{entry.version}</span>
-                          <span className="text-white/45">{entry.releasedAt}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium text-white/80">Vérifier les mises à jour</span>
-                      {updateReady
-                        ? <span className="text-xs text-[#7B61FF]">Une mise à jour est prête à installer.</span>
-                        : updateAvailable
-                          ? <span className="text-xs text-white/50">Téléchargement en cours…</span>
-                          : <span className="text-xs text-white/40">Holo est à jour.</span>
-                      }
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      {updateReady
-                        ? (
-                            <button
-                              className="rounded-lg bg-[#7B61FF] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#9d8bff] transition-colors"
-                              onClick={() => window.holo?.installUpdate()}
-                            >
-                              Redémarrer et installer
-                            </button>
-                          )
-                        : (
-                            <button
-                              className="rounded-lg border border-white/12 px-3 py-1.5 text-xs font-medium text-white/70 hover:bg-white/8 transition-colors"
-                              onClick={() => void window.holo?.checkForUpdates()}
-                            >
-                              Vérifier
-                            </button>
-                          )
-                      }
-                    </div>
-                  </div>
-                  <div className="border-t border-white/8 pt-3">
-                    <label className="mb-1 block text-xs text-white/50">Passerelle lien HTTPS (Teams)</label>
-                    <input
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                      placeholder="https://holo-link-gateway-git-main-romanedonnet-8817s-projects.vercel.app"
-                      value={shareGatewayBaseUrl}
-                      onChange={(e) => setShareGatewayBaseUrl(e.target.value)}
-                    />
-                    <p className="mt-1 text-xs text-white/35">
-                      Si vide, Holo copie un lien direct <span className="font-mono">holo://</span>.
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-            </div>
-
-            {/* Pied */}
-            <div className="flex justify-end border-t border-white/8 px-6 py-4">
-              <button
-                className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
-                onClick={() => setShowSettings(false)}
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAuthorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
-                <i className="fa-regular fa-user text-[#7B61FF]" />
-                {authorModalMode === 'startup' ? 'Ton profil' : 'Modifier le profil'}
-              </h2>
-              {authorModalMode !== 'startup' && (
-                <button
-                  className="text-white/40 hover:text-white transition-colors"
-                  onClick={() => setShowAuthorModal(false)}
-                >
-                  <i className="fa-solid fa-xmark" />
-                </button>
-              )}
-            </div>
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-white/70">
-                {authorModalMode === 'startup'
-                  ? 'Choisis ton nom pour identifier tes contributions dans l’app.'
-                  : 'Mets à jour ton nom affiché.'}
-              </p>
-              <div>
-                <label className="mb-1 block text-xs text-white/50">Nom affiché</label>
-                <input
-                  autoFocus
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/20"
-                  placeholder="Ex: Romane"
-                  value={authorModalValue}
-                  onChange={(e) => setAuthorModalValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      submitAuthorProfile()
-                    }
-                    if (e.key === 'Escape' && authorModalMode !== 'startup') {
-                      setShowAuthorModal(false)
-                    }
-                  }}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                {authorModalMode !== 'startup' && (
-                  <button
-                    className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
-                    onClick={() => setShowAuthorModal(false)}
-                  >
-                    Annuler
-                  </button>
-                )}
-                <button
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff] disabled:opacity-50"
-                  disabled={!authorModalValue.trim()}
-                  onClick={submitAuthorProfile}
-                >
-                  Valider
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showChangelogModal && selectedChangelogEntry && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
-                <i className="fa-solid fa-sparkles text-[#7B61FF]" />
-                Nouveautés v{selectedChangelogEntry.version}
-              </h2>
-              <button
-                className="text-white/40 hover:text-white transition-colors"
-                onClick={() => {
-                  if (selectedChangelogEntry.version === appVersion) {
-                    setSeenChangelogVersion(appVersion)
-                  }
-                  setShowChangelogModal(false)
-                }}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            </div>
-
-            <div className="px-6 py-5">
-              <p className="mb-3 text-xs text-white/45">Publié le {selectedChangelogEntry.releasedAt}</p>
-              <ul className="space-y-2 text-sm text-white/80">
-                {selectedChangelogEntry.items.map((item) => (
-                  <li key={item} className="flex items-start gap-2">
-                    <span className="mt-1 text-[#7B61FF]">•</span>
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="flex justify-end border-t border-white/8 px-6 py-4">
-              <button
-                className="rounded-lg bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#9d8bff] transition-colors"
-                onClick={() => {
-                  if (selectedChangelogEntry.version === appVersion) {
-                    setSeenChangelogVersion(appVersion)
-                  }
-                  setShowChangelogModal(false)
-                }}
-              >
-                Compris
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {linkDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
-            <h2 className="mb-4 text-base font-semibold text-white">Insérer un lien</h2>
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-white/50">Texte affiché</label>
-                <input
-                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
-                  placeholder="Mon lien"
-                  autoFocus
-                  value={linkDialog.text}
-                  onChange={(e) => setLinkDialog({ ...linkDialog, text: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === 'Escape') setLinkDialog(null) }}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-white/50">URL</label>
-                <input
-                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
-                  placeholder="https://…"
-                  value={linkDialog.url}
-                  onChange={(e) => setLinkDialog({ ...linkDialog, url: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') { setLinkDialog(null); linkSavedRangeRef.current = null; return }
-                    if (e.key === 'Enter') {
-                      const text = linkDialog.text.trim() || linkDialog.url.trim()
-                      const url = linkDialog.url.trim()
-                      if (!url) { setLinkDialog(null); linkSavedRangeRef.current = null; return }
-                      insertLinkIntoEditor(text, url)
-                      setLinkDialog(null)
-                    }
-                  }}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-white/50">Page du projet (lien relatif)</label>
-                <input
-                  className="w-full rounded border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/60"
-                  placeholder="Rechercher un fichier .md"
-                  value={linkDialog.pageQuery ?? ''}
-                  onChange={(e) => setLinkDialog({ ...linkDialog, pageQuery: e.target.value })}
-                />
-                {linkPageSuggestions.length > 0 && (
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded border border-white/10 bg-white/5 p-1">
-                    {linkPageSuggestions.map((filePath) => {
-                      const relativePath = getRelativeLinkPath(activeTabPath, filePath, rootPath)
-                      const label = getBaseName(filePath).replace(/\.md$/i, '')
-
-                      return (
-                        <button
-                          key={filePath}
-                          type="button"
-                          className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs text-white/80 hover:bg-white/10"
-                          onClick={() => {
-                            setLinkDialog({
-                              ...linkDialog,
-                              url: relativePath,
-                              text: linkDialog.text.trim() ? linkDialog.text : label,
-                              pageQuery: getBaseName(filePath),
-                            })
-                          }}
-                        >
-                          <span className="truncate pr-2">{label}</span>
-                          <span className="truncate text-[10px] text-white/45">{relativePath}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
-                  onClick={() => {
-                    setLinkDialog(null)
-                    linkSavedRangeRef.current = null
-                  }}
-                >Annuler</button>
-                <button
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff]"
-                  onClick={() => {
-                    const text = linkDialog.text.trim() || linkDialog.url.trim()
-                    const url = linkDialog.url.trim()
-                    if (!url) { setLinkDialog(null); linkSavedRangeRef.current = null; return }
-                    insertLinkIntoEditor(text, url)
-                    setLinkDialog(null)
-                  }}
-                >Insérer</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showGitAuthHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-xl border border-white/10 bg-[#1a1b1c] shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
-                <i className="fa-solid fa-key text-amber-300" />
-                Connexion Git
-              </h2>
-              <button
-                className="text-white/40 hover:text-white transition-colors"
-                onClick={() => setShowGitAuthHelp(false)}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 text-sm text-white/80">
-              <p>
-                Holo n’enregistre pas de login/mot de passe Git. Les accès distants sont gérés par Git lui-même.
-              </p>
-              <div className="rounded border border-white/10 bg-white/5 p-3 text-xs text-white/75 space-y-1">
-                <p className="font-semibold text-white/85">Où sont stockés les identifiants ?</p>
-                <p>- SSH: dans ta clé privée locale (`~/.ssh`) + clé publique enregistrée côté forge.</p>
-                <p>- HTTPS: dans le credential manager du système (ou helper Git configuré).</p>
-              </div>
-              <div className="rounded border border-white/10 bg-white/5 p-3 text-xs text-white/75 space-y-1">
-                <p className="font-semibold text-white/85">Quand les saisir ?</p>
-                <p>- Au premier `fetch/pull/push` en HTTPS (invite système Git), puis mémorisation par le helper.</p>
-                <p>- En SSH, aucune saisie récurrente si la clé est déjà configurée.</p>
-              </div>
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  className="rounded px-3 py-1.5 text-sm text-white/60 hover:text-white"
-                  onClick={() => {
-                    setShowGitAuthHelp(false)
-                    setShowSettings(true)
-                  }}
-                >
-                  Paramètres
-                </button>
-                <button
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm text-white hover:bg-[#9d8bff]"
-                  onClick={() => {
-                    setShowGitAuthHelp(false)
-                    void fetchChanges()
-                  }}
-                >
-                  Retenter Fetch
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {nameDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
-            <h2 className="text-base font-semibold text-white">
-              {nameDialog!.mode === 'create-file'
-                ? 'Créer un fichier'
-                : nameDialog!.mode === 'create-directory'
-                  ? 'Créer un dossier'
-                  : 'Renommer'}
-            </h2>
-
-            <form
-              className="mt-4"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void submitNameDialog()
-              }}
-            >
-              <input
-                autoFocus
-                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                value={nameDialog!.value}
-                onChange={(event) =>
-                  setNameDialog((previous) =>
-                    previous
-                      ? {
-                        ...previous,
-                        value: event.target.value,
-                      }
-                      : previous,
-                  )
-                }
-                placeholder="Nom"
-              />
-
-              {nameDialog.mode === 'create-file' && (
-                <div className="mt-3 space-y-1.5">
-                  <label className="block text-xs font-medium text-white/60">Modèle</label>
-                  <select
-                    className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors focus:border-[#7B61FF] focus:bg-white/10"
-                    value={nameDialog.selectedTemplatePath ?? ''}
-                    onChange={(event) =>
-                      setNameDialog((previous) =>
-                        previous && previous.mode === 'create-file'
-                          ? {
-                            ...previous,
-                            selectedTemplatePath: event.target.value || null,
-                          }
-                          : previous,
-                      )
-                    }
-                  >
-                    <option value="">Aucun modèle</option>
-                    {templateOptions.map((template) => (
-                      <option key={template.path} value={template.path}>
-                        {template.label}{template.description ? ` — ${template.description}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="mt-5 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                  onClick={() => setNameDialog(null)}
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
-                >
-                  Valider
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {cloneDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
-            <h2 className="text-base font-semibold text-white">Cloner un dépôt Git</h2>
-
-            <form
-              className="mt-4 space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void submitCloneDialog()
-              }}
-            >
-              <input
-                autoFocus
-                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                value={cloneDialog.repoUrl}
-                onChange={(event) =>
-                  setCloneDialog((previous) =>
-                    previous
-                      ? {
-                        ...previous,
-                        repoUrl: event.target.value,
-                      }
-                      : previous,
-                  )
-                }
-                placeholder="https://git.example.com/group/project.git"
-              />
-
-              <div className="flex items-center gap-2">
-                <input
-                  className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white/80 outline-none placeholder:text-white/35"
-                  value={cloneDialog.destinationPath}
-                  onChange={(event) =>
-                    setCloneDialog((previous) =>
-                      previous
-                        ? {
-                          ...previous,
-                          destinationPath: event.target.value,
-                        }
-                        : previous,
-                    )
-                  }
-                  placeholder="Dossier de destination"
-                />
-                <button
-                  type="button"
-                  className="shrink-0 rounded border border-white/20 px-3 py-2 text-xs text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                  onClick={() => {
-                    void pickCloneDirectory()
-                  }}
-                >
-                  Choisir
-                </button>
-              </div>
-
-              <input
-                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                value={cloneDialog.username}
-                onChange={(event) =>
-                  setCloneDialog((previous) =>
-                    previous
-                      ? {
-                        ...previous,
-                        username: event.target.value,
-                      }
-                      : previous,
-                  )
-                }
-                placeholder="Nom d'utilisateur (optionnel)"
-              />
-
-              <input
-                type="password"
-                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                value={cloneDialog.password}
-                onChange={(event) =>
-                  setCloneDialog((previous) =>
-                    previous
-                      ? {
-                        ...previous,
-                        password: event.target.value,
-                      }
-                      : previous,
-                  )
-                }
-                placeholder="Mot de passe (optionnel)"
-              />
-
-              <div className="mt-5 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                  onClick={() => setCloneDialog(null)}
-                  disabled={cloneDialog.isSubmitting}
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8] disabled:opacity-50"
-                  disabled={cloneDialog.isSubmitting}
-                >
-                  {cloneDialog.isSubmitting ? 'Clonage...' : 'Cloner et ouvrir'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {gitDialog && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-5 shadow-2xl">
-            <h2 className="text-base font-semibold text-white">
-              {gitDialog!.mode === 'commit' ? 'Nouveau commit' : 'Merge une branche'}
-            </h2>
-
-            <form
-              className="mt-4"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void submitGitDialog()
-              }}
-            >
-              <input
-                autoFocus
-                className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/40 focus:border-[#7B61FF] focus:bg-white/10"
-                value={gitDialog!.value}
-                onChange={(event) =>
-                  setGitDialog((previous) =>
-                    previous
-                      ? {
-                        ...previous,
-                        value: event.target.value,
-                      }
-                      : previous,
-                  )
-                }
-                placeholder={gitDialog!.mode === 'commit' ? 'Message de commit' : 'Nom de branche'}
-              />
-
-              <div className="mt-5 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                  onClick={() => setGitDialog(null)}
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="rounded bg-[#7B61FF] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
-                >
-                  Valider
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {updateAvailable && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#1a1b1c] p-6 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <i className="fa-regular fa-cloud-arrow-down text-[#7B61FF] text-2xl" />
-              <h2 className="text-lg font-semibold text-white">Mise à jour disponible</h2>
-            </div>
-
-            <p className="mt-4 text-sm text-white/70">
-              Une nouvelle version de Holo est disponible et est en train d'être téléchargée.
-            </p>
-
-            {updateReady ? (
-              <>
-                <p className="mt-4 text-sm text-white/70">
-                  Téléchargement terminé. Redémarrez pour installer.
-                </p>
-                <div className="mt-6 flex gap-2">
-                  <button
-                    className="flex-1 rounded border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/5"
-                    onClick={() => setUpdateAvailable(false)}
-                  >
-                    Plus tard
-                  </button>
-                  <button
-                    className="flex-1 rounded bg-[#7B61FF] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#6D4FD8]"
-                    onClick={() => {
-                      const holo = window.holo as any
-                      if (holo) {
-                        void holo.installUpdate()
-                      }
-                    }}
-                  >
-                    Redémarrer et installer
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="mt-4">
-                  <div className="h-2 w-full rounded-full bg-white/10">
-                    <div
-                      className="h-2 rounded-full bg-[#7B61FF] transition-all"
-                      style={{ width: `${updateProgress}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-xs text-white/50">{updateProgress}%</p>
-                </div>
-                <div className="mt-6">
-                  <button
-                    className="w-full rounded border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/5"
-                    onClick={() => setUpdateAvailable(false)}
-                  >
-                    En arrière-plan
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <SettingsModal
+        showSettings={showSettings}
+        onClose={() => setShowSettings(false)}
+        appAuthor={appAuthor}
+        onSetAppAuthor={setAppAuthor}
+        gitEmail={gitEmail}
+        onSetGitEmail={setGitEmail}
+        rootPath={rootPath}
+        repoImageStorageMode={repoImageStorageMode}
+        onSetRepoImageStorageMode={setRepoImageStorageMode}
+        azureBlobContainerUrl={azureBlobContainerUrl}
+        onSetAzureBlobContainerUrl={setAzureBlobContainerUrl}
+        azureBlobSasToken={azureBlobSasToken}
+        onSetAzureBlobSasToken={setAzureBlobSasToken}
+        s3Region={s3Region}
+        onSetS3Region={setS3Region}
+        s3Bucket={s3Bucket}
+        onSetS3Bucket={setS3Bucket}
+        s3AccessKeyId={s3AccessKeyId}
+        onSetS3AccessKeyId={setS3AccessKeyId}
+        s3SecretAccessKey={s3SecretAccessKey}
+        onSetS3SecretAccessKey={setS3SecretAccessKey}
+        s3Endpoint={s3Endpoint}
+        onSetS3Endpoint={setS3Endpoint}
+        s3PublicBaseUrl={s3PublicBaseUrl}
+        onSetS3PublicBaseUrl={setS3PublicBaseUrl}
+        dropboxAccessToken={dropboxAccessToken}
+        onSetDropboxAccessToken={setDropboxAccessToken}
+        dropboxFolderPath={dropboxFolderPath}
+        onSetDropboxFolderPath={setDropboxFolderPath}
+        gdriveAccessToken={gdriveAccessToken}
+        onSetGdriveAccessToken={setGdriveAccessToken}
+        gdriveFolderId={gdriveFolderId}
+        onSetGdriveFolderId={setGdriveFolderId}
+        repoImageModeReady={repoImageModeReady}
+        onSaveRepoImageConfig={() => { void saveRepoImageConfig() }}
+        aiProvider={aiProvider}
+        onSetAiProvider={setAiProvider}
+        geminiApiKey={geminiApiKey}
+        onSetGeminiApiKey={setGeminiApiKey}
+        openaiApiKey={openaiApiKey}
+        onSetOpenaiApiKey={setOpenaiApiKey}
+        openaiPrompt={openaiPrompt}
+        onSetOpenaiPrompt={setOpenaiPrompt}
+        appVersion={appVersion}
+        currentVersionChangelog={currentVersionChangelog}
+        seenChangelogVersion={seenChangelogVersion}
+        changelogEntries={CHANGELOG_ENTRIES}
+        onOpenChangelog={(version) => {
+          setSelectedChangelogVersion(version)
+          setShowChangelogModal(true)
+        }}
+        updateAvailable={updateAvailable}
+        updateReady={updateReady}
+        onCheckForUpdates={() => { void window.holo?.checkForUpdates() }}
+        onInstallUpdate={() => { void window.holo?.installUpdate() }}
+        shareGatewayBaseUrl={shareGatewayBaseUrl}
+        onSetShareGatewayBaseUrl={setShareGatewayBaseUrl}
+        showAuthorModal={showAuthorModal}
+        authorModalMode={authorModalMode}
+        authorModalValue={authorModalValue}
+        onSetAuthorModalValue={setAuthorModalValue}
+        onCloseAuthorModal={() => setShowAuthorModal(false)}
+        onSubmitAuthorProfile={submitAuthorProfile}
+      />
+      <AppModals
+        showChangelogModal={showChangelogModal}
+        selectedChangelogEntry={selectedChangelogEntry ?? null}
+        appVersion={appVersion}
+        onCloseChangelog={() => setShowChangelogModal(false)}
+        onMarkChangelogSeen={markCurrentVersionChangelogAsSeen}
+        showUnsavedChangesModal={showUnsavedChangesModal}
+        onCancelUnsaved={cancelDiscardAndSwitchFile}
+        onConfirmUnsaved={() => { void confirmDiscardAndSwitchFile() }}
+        confirmDialog={confirmDialog}
+        onResolveConfirm={resolveConfirmationDialog}
+        linkDialog={linkDialog}
+        linkPageSuggestions={linkPageSuggestions}
+        onSetLinkDialog={setLinkDialog}
+        onClearLinkSavedRange={() => { linkSavedRangeRef.current = null }}
+        onInsertLink={insertLinkIntoEditor}
+        onLinkSuggestionClick={(filePath) => {
+          if (!linkDialog) return
+          const relativePath = getRelativeLinkPath(activeTabPath, filePath, rootPath)
+          const label = getBaseName(filePath).replace(/\.md$/i, '')
+          setLinkDialog({
+            ...linkDialog,
+            url: relativePath,
+            text: linkDialog.text.trim() ? linkDialog.text : label,
+            pageQuery: getBaseName(filePath),
+          })
+        }}
+        activeTabPath={activeTabPath}
+        rootPath={rootPath}
+        getRelativeLinkPath={getRelativeLinkPath}
+        getBaseName={getBaseName}
+        showGitAuthHelp={showGitAuthHelp}
+        onCloseGitAuthHelp={() => setShowGitAuthHelp(false)}
+        onGitAuthOpenSettings={() => { setShowGitAuthHelp(false); setShowSettings(true) }}
+        onGitAuthRetryFetch={() => { setShowGitAuthHelp(false); void fetchChanges() }}
+        nameDialog={nameDialog}
+        templateOptions={templateOptions}
+        onSetNameDialog={setNameDialog}
+        onSubmitNameDialog={() => { void submitNameDialog() }}
+        cloneDialog={cloneDialog}
+        onSetCloneDialog={setCloneDialog}
+        onSubmitCloneDialog={() => { void submitCloneDialog() }}
+        onPickCloneDirectory={() => { void pickCloneDirectory() }}
+        gitDialog={gitDialog}
+        onSetGitDialog={setGitDialog}
+        onSubmitGitDialog={() => { void submitGitDialog() }}
+        updateAvailable={updateAvailable}
+        updateReady={updateReady}
+        updateProgress={updateProgress}
+        onDismissUpdate={() => setUpdateAvailable(false)}
+        onInstallUpdate={() => { void window.holo?.installUpdate() }}
+      />
     </main>
   )
 }

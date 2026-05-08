@@ -565,11 +565,45 @@ Recherche dans la doc (directement sur qdrant?)
 
 
 ### 08.05.26
-- Refonte complète
-  - séparer tout en composant (ui)
-  - faire un document pour l'ia afin de se retrouver dans le projet
-  - séparer aussi les fonctionnalité markdown en composant standardisé (editor et markdown result)
-  - nettoyer / structuré
-  - grosse QA globale planifié avec un document pour revalider TOUTES les fonctionnalités. je prendrais point par point et noterai mes tests et feedback
-- Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app)
-- Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champs
+- 🎯 Prochaine tâche prioritaire : Refonte complète (avant version mobile)
+
+#### Plan d'exécution (ordre recommandé)
+1) Stabilisation bloquants édition
+  - Corriger définitivement le bug "popup/alert => impossible d'écrire"
+  - Vérifier les scénarios : changement de fichier avec modifications non sauvegardées, alertes successives, annuler/valider
+  - Critère de fin : impossible de reproduire le blocage sur Linux + Windows
+
+2) Découpage UI en composants (sans changer le comportement)
+  - Extraire progressivement depuis App.tsx : header, toolbar fichier, sidebar, panneaux/dialogs, éditeur
+  - Garder les mêmes props/états (refacto structurelle uniquement)
+  - Critère de fin : build OK + UX identique
+
+3) Standardiser le moteur Markdown
+  - Créer une couche unique de transformation/rendu markdown
+  - Exposer 3 modes : rendu éditeur (jsx), rendu export PDF, conversion markdown
+  - Critère de fin : un seul point de vérité pour la logique markdown
+
+4) Documentation IA + architecture
+  - Ajouter un document de repérage : dossiers, flux de données, fonctions clés, conventions
+  - Ajouter la stratégie de contribution (où coder quoi)
+  - Critère de fin : onboarding dev/IA faisable en < 15 min
+
+5) Nettoyage + QA globale
+  - Créer une checklist de non-régression complète (fichiers, git, templates, export, responsive, liens)
+  - Exécuter la QA point par point et consigner résultat/feedback
+  - Critère de fin : check-list complète validée avant démarrage mobile
+
+- Version mobile (Pas distribué via les store), apk pour android et ios (je sais pas mais si on peut éviter les signature d'app) [à lancer après la refonte + QA]
+- ✅ Possibilité de mettre des variables dans les template $DATE et quand on crée un nouveau document cela demande de remplir ces champsd
+- En faite j'ai l'impression que quand y'a une alert c'est plus possible d'écrire. j'ai eu cette erreur dans la console a ce moment [dev:electron] [19969:0508/130720.906912:ERROR:content/browser/browser_main_loop.cc:290] GLib-GObject: ../../../gobject/gsignal.c:2685: instance '0xc340143fc10' has no handler with id '8213'
+- 🔧 Correctif appliqué : remplacement du confirm natif par une modale interne pour le switch de fichier avec modifs non sauvegardées (à valider QA Linux/Windows)
+- ✅ Remplacement des derniers `window.confirm` (pull/archiver/récupérer/supprimer) par modale interne unifiée
+- ✅ Le changelog ne doit plus s'afficher à chaque ouverture : flag version lue persisté de façon robuste (config + localStorage)
+- ✅ Phase 2 (refonte UI) en cours : extraction `AppHeader`, `AppSidebar`, `AppModals`, `SettingsModal`
+- ✅ Sous-partie éditeur extraite : `EditorTopBar`, `EditorDocumentHeader`, `EditorRightToc`, `EditorEmptyState`
+- ✅ Overlays éditeur extraits : `EditorOverlays` (popup sélection, contrôles tableau, langage code, menu slash)
+- ✅ Canvas éditeur extrait : `EditorCanvas` (zone scroll principale, rendu RAW/WYSIWYG, interactions de base)
+- ✅ Phase 2 UI : découpage structurel principal terminé (comportement conservé)
+- ✅ Phase 3 Markdown : moteur unifié dans `src/lib/markdown.ts` (front-matter + html↔markdown + post-processing)
+- ✅ Phase 4 Documentation IA/architecture : guide onboarding ajouté `docs/ARCHITECTURE_IA_ONBOARDING.md`
+- 🔄 Phase 5 QA globale : checklist de non-régression consolidée dans `QA_PHASE_1.md` + pré-validation technique OK (`build` vert, plus de `window.confirm`, `App.tsx` nettoyé côté erreurs lint, dette lint résiduelle documentée hors périmètre principal)
