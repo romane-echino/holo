@@ -173,3 +173,279 @@ body,
   font-size: 0.85em;
   font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
 }
+
+
+
+
+
+/*
+  Holo UI Theme — Tailwind CSS v4
+  Concept: calm Git-native WYSIWYG markdown editor
+  Usage: import this file after installing Tailwind v4.
+*/
+
+@theme {
+  /* Fonts */
+  --font-sans: "Inter", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-editor: "IBM Plex Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Core backgrounds */
+  --color-holo-bg: #070A0F;
+  --color-holo-bg-soft: #0B0F16;
+  --color-holo-bg-elevated: #101620;
+  --color-holo-surface: #141A24;
+  --color-holo-surface-soft: #19202B;
+  --color-holo-surface-hover: #202838;
+
+  /* Glass surfaces */
+  --color-holo-glass: rgb(255 255 255 / 0.035);
+  --color-holo-glass-hover: rgb(255 255 255 / 0.06);
+  --color-holo-glass-strong: rgb(255 255 255 / 0.09);
+
+  /* Borders */
+  --color-holo-border: rgb(255 255 255 / 0.08);
+  --color-holo-border-soft: rgb(255 255 255 / 0.05);
+  --color-holo-border-strong: rgb(255 255 255 / 0.14);
+
+  /* Text */
+  --color-holo-text: #F4F6FB;
+  --color-holo-text-soft: #C8CEDA;
+  --color-holo-text-muted: #8D96A8;
+  --color-holo-text-faint: #5F687A;
+
+  /* Accent */
+  --color-holo-primary: #7B61FF;
+  --color-holo-primary-soft: #927CFF;
+  --color-holo-primary-muted: #B9ACFF;
+  --color-holo-primary-glow: rgb(123 97 255 / 0.28);
+  --color-holo-primary-surface: rgb(123 97 255 / 0.14);
+
+  /* Semantic */
+  --color-holo-success: #43D69B;
+  --color-holo-warning: #F5B94C;
+  --color-holo-danger: #FF5F7E;
+  --color-holo-info: #58A6FF;
+
+  /* Secondary accents for diagrams/tags */
+  --color-holo-blue: #58A6FF;
+  --color-holo-cyan: #4FD1C5;
+  --color-holo-green: #43D69B;
+  --color-holo-yellow: #F5B94C;
+  --color-holo-orange: #FF9F43;
+  --color-holo-pink: #E879F9;
+
+  /* Font sizes */
+  --text-holo-xs: 0.6875rem;
+  --text-holo-xs--line-height: 1rem;
+
+  --text-holo-sm: 0.8125rem;
+  --text-holo-sm--line-height: 1.25rem;
+
+  --text-holo-base: 0.9375rem;
+  --text-holo-base--line-height: 1.5rem;
+
+  --text-holo-editor: 1.0625rem;
+  --text-holo-editor--line-height: 1.9rem;
+
+  --text-holo-h4: 1.125rem;
+  --text-holo-h4--line-height: 1.55rem;
+
+  --text-holo-h3: 1.375rem;
+  --text-holo-h3--line-height: 1.9rem;
+
+  --text-holo-h2: 2rem;
+  --text-holo-h2--line-height: 2.45rem;
+
+  --text-holo-h1: 3rem;
+  --text-holo-h1--line-height: 3.15rem;
+
+  --text-holo-title: 3.5rem;
+  --text-holo-title--line-height: 3.65rem;
+
+  /* Radius */
+  --radius-holo-xs: 0.375rem;
+  --radius-holo-sm: 0.5rem;
+  --radius-holo-md: 0.75rem;
+  --radius-holo-lg: 1rem;
+  --radius-holo-xl: 1.25rem;
+  --radius-holo-2xl: 1.5rem;
+  --radius-holo-pill: 999px;
+
+  /* Spacing */
+  --spacing-holo-sidebar: 17.5rem;
+  --spacing-holo-panel: 22rem;
+  --spacing-holo-editor: 48rem;
+  --spacing-holo-editor-wide: 52rem;
+
+  /* Shadows */
+  --shadow-holo-sm: 0 4px 18px rgb(0 0 0 / 0.24);
+  --shadow-holo-md: 0 16px 48px rgb(0 0 0 / 0.32);
+  --shadow-holo-lg: 0 28px 90px rgb(0 0 0 / 0.45);
+  --shadow-holo-glow: 0 0 42px rgb(123 97 255 / 0.16);
+  --shadow-holo-inner: inset 0 1px 0 rgb(255 255 255 / 0.05);
+
+  /* Blur */
+  --blur-holo: 24px;
+}
+
+/* Optional base layer for the Holo app */
+@layer base {
+  html {
+    background: #070A0F;
+    color: #F4F6FB;
+    font-family: var(--font-sans);
+  }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 25% 0%, rgb(123 97 255 / 0.12), transparent 34rem),
+      radial-gradient(circle at 80% 20%, rgb(88 166 255 / 0.08), transparent 32rem),
+      linear-gradient(180deg, #0B0F16 0%, #070A0F 100%);
+    color: var(--color-holo-text);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: geometricPrecision;
+  }
+
+  ::selection {
+    background: rgb(123 97 255 / 0.34);
+    color: #fff;
+  }
+}
+
+/* Reusable Holo component primitives */
+@layer components {
+  .holo-app-shell {
+    @apply min-h-screen bg-holo-bg text-holo-text font-sans;
+  }
+
+  .holo-panel {
+    @apply rounded-holo-xl bg-holo-glass border border-holo-border shadow-holo-md backdrop-blur-holo;
+  }
+
+  .holo-sidebar-item {
+    @apply flex items-center gap-3 rounded-holo-md px-3 py-2 text-holo-sm text-holo-text-muted transition-all duration-150;
+  }
+
+  .holo-sidebar-item:hover {
+    @apply bg-holo-glass-hover text-holo-text;
+    transform: translateX(1px);
+  }
+
+  .holo-sidebar-item-active {
+    @apply bg-holo-primary-surface text-holo-primary-muted;
+    box-shadow: inset 0 0 0 1px rgb(123 97 255 / 0.18);
+  }
+
+  .holo-button-primary {
+    @apply rounded-holo-md bg-holo-primary px-4 py-2 text-holo-sm font-medium text-white shadow-holo-glow transition-all duration-150;
+  }
+
+  .holo-button-primary:hover {
+    @apply bg-holo-primary-soft;
+    transform: translateY(-1px);
+  }
+
+  .holo-button-ghost {
+    @apply rounded-holo-md px-3 py-2 text-holo-sm text-holo-text-muted transition-all duration-150 hover:bg-holo-glass-hover hover:text-holo-text;
+  }
+
+  .holo-editor {
+    @apply mx-auto max-w-holo-editor px-8 py-14 font-editor text-holo-editor text-holo-text-soft;
+  }
+
+  .holo-editor h1 {
+    @apply mb-5 mt-8 text-holo-h1 font-semibold tracking-[-0.045em] text-holo-text;
+  }
+
+  .holo-editor h2 {
+    @apply mb-4 mt-12 text-holo-h2 font-semibold tracking-[-0.035em] text-holo-text;
+  }
+
+  .holo-editor h3 {
+    @apply mb-3 mt-8 text-holo-h3 font-semibold tracking-[-0.025em] text-holo-text;
+  }
+
+  .holo-editor p {
+    @apply my-4 leading-[1.9] text-holo-text-soft;
+  }
+
+  .holo-editor a {
+    @apply text-holo-primary-muted underline decoration-holo-primary/40 underline-offset-4 transition-colors hover:text-holo-primary-soft;
+  }
+
+  .holo-editor blockquote {
+    @apply my-6 rounded-holo-lg border-l-2 border-holo-primary bg-holo-primary-surface px-5 py-3 text-holo-text-soft;
+  }
+
+  .holo-editor code {
+    @apply rounded-holo-sm bg-holo-glass-strong px-1.5 py-0.5 font-mono text-[0.9em] text-holo-primary-muted;
+  }
+
+  .holo-editor pre {
+    @apply my-6 overflow-hidden rounded-holo-xl border border-holo-border bg-holo-bg-elevated p-5 shadow-holo-sm;
+  }
+
+  .holo-editor pre code {
+    @apply bg-transparent p-0 text-holo-sm text-holo-text-soft;
+  }
+
+  .holo-editor ul,
+  .holo-editor ol {
+    @apply my-5 pl-6 leading-[1.9] text-holo-text-soft;
+  }
+
+  .holo-editor li {
+    @apply my-1.5;
+  }
+
+  .holo-editor hr {
+    @apply my-10 border-holo-border-soft;
+  }
+
+  .holo-floating-toolbar {
+    @apply holo-glass inline-flex items-center gap-1 rounded-holo-xl px-2 py-1.5;
+  }
+
+  .holo-command-menu {
+    @apply holo-glass w-[22rem] rounded-holo-2xl p-2;
+  }
+
+  .holo-status-bar {
+    @apply holo-glass fixed bottom-4 left-4 right-4 flex items-center justify-between rounded-holo-xl px-5 py-3 text-holo-sm text-holo-text-muted;
+  }
+
+  .holo-tag {
+    @apply inline-flex items-center rounded-holo-pill border border-holo-border bg-holo-glass px-2.5 py-1 text-holo-xs text-holo-text-muted;
+  }
+
+  .holo-tag-primary {
+    @apply border-holo-primary/30 bg-holo-primary-surface text-holo-primary-muted;
+  }
+}
+
+/* Useful app-specific utilities */
+@utility holo-glass {
+  background: rgb(255 255 255 / 0.035);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: var(--shadow-holo-md), var(--shadow-holo-inner);
+  backdrop-filter: blur(24px);
+}
+
+@utility holo-fade-edge {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+@utility holo-document-bg {
+  background:
+    radial-gradient(circle at 50% 0%, rgb(123 97 255 / 0.08), transparent 36rem),
+    linear-gradient(180deg, rgb(255 255 255 / 0.018), transparent 18rem);
+}
+
+@utility holo-subtle-grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
