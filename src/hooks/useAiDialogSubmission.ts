@@ -1,34 +1,20 @@
 import { useCallback } from 'react'
-
-type AiDialogState = {
-  mode: 'generate' | 'transform'
-  prompt: string
-  isLoading: boolean
-  selectedText: string
-  error?: string
-}
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type UseAiDialogSubmissionParams = {
-  aiDialog: AiDialogState | null
-  setAiDialog: React.Dispatch<React.SetStateAction<AiDialogState | null>>
   askAi: (userMessage: string) => Promise<string>
   markdownToHtml: (markdown: string) => string
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
-  aiSavedRangeRef: React.RefObject<Range | null>
   turndownService: { turndown: (html: string) => string }
   updateActiveTabBody: (value: string) => void
 }
 
 export function useAiDialogSubmission({
-  aiDialog,
-  setAiDialog,
   askAi,
   markdownToHtml,
-  wysiwygEditorRef,
-  aiSavedRangeRef,
   turndownService,
   updateActiveTabBody,
 }: UseAiDialogSubmissionParams) {
+  const { aiDialog, setAiDialog, wysiwygEditorRef, aiSavedRangeRef } = useEditorOverlay()
   return useCallback(async () => {
     if (!aiDialog) return
 

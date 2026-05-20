@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react'
 import { getBaseName } from '../lib/appUtils'
 import type { FilePathStats } from '../types/editor'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 interface OpenTab {
   path: string
@@ -19,7 +20,6 @@ interface UseOpenFileParams {
   setPathStatsByPath: Dispatch<SetStateAction<Record<string, FilePathStats>>>
   setActiveTabPath: (path: string) => void
   setRecentFilePaths: Dispatch<SetStateAction<string[]>>
-  setShowCompactToc: (show: boolean) => void
   focusActiveEditorSoon: () => void
 }
 
@@ -33,9 +33,9 @@ export function useOpenFile({
   setPathStatsByPath,
   setActiveTabPath,
   setRecentFilePaths,
-  setShowCompactToc,
   focusActiveEditorSoon,
 }: UseOpenFileParams) {
+  const { setShowCompactToc } = useEditorOverlay()
   const openFile = useCallback(
     async (filePath: string) => {
       const holo = getHoloApi()

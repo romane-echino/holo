@@ -1,13 +1,10 @@
 import { useCallback } from 'react'
 import { useEditor } from '../contexts/EditorContext'
 import { useUI } from '../contexts/UIContext'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 export function useEditorUiCallbacks({
   pullChanges,
-  linkSavedRangeRef,
-  aiSavedRangeRef,
-  wysiwygEditorRef,
-  setAiDialog,
   turndownService,
   updateActiveTabBody,
   syncWysiwygFromMarkdown,
@@ -16,10 +13,6 @@ export function useEditorUiCallbacks({
   saveCurrentFile,
 }: {
   pullChanges: () => Promise<void>
-  linkSavedRangeRef: React.RefObject<Range | null>
-  aiSavedRangeRef: React.RefObject<Range | null>
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
-  setAiDialog: React.Dispatch<React.SetStateAction<any>>
   turndownService: { turndown: (html: string) => string }
   updateActiveTabBody: (content: string) => void
   syncWysiwygFromMarkdown: (markdown: string) => void
@@ -27,12 +20,13 @@ export function useEditorUiCallbacks({
   exportActiveFileToPdf: () => Promise<void>
   saveCurrentFile: () => Promise<void>
 }) {
-  const {
-    readOnlyMode, setEditorMode,
-    setSelectionPopup, setColumnTypePopup, setCodeBlockPopup,
-    setHoveredCodeBlock, setShowCompactToc,
-  } = useEditor()
+  const { readOnlyMode, setEditorMode } = useEditor()
   const { setLinkDialog } = useUI()
+  const {
+    linkSavedRangeRef, aiSavedRangeRef, wysiwygEditorRef, setAiDialog,
+    setSelectionPopup, setColumnTypePopup, setCodeBlockPopup, setHoveredCodeBlock, setShowCompactToc,
+  } = useEditorOverlay()
+
   const onPullNow = useCallback(() => {
     void pullChanges()
   }, [pullChanges])

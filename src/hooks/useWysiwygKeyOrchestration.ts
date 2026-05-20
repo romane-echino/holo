@@ -1,7 +1,7 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback } from 'react'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 interface UseWysiwygKeyOrchestrationParams {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
   handleWysiwygKeyGuards: (event: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean
   handleSlashMenuKeyboard: (event: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean
   handleWysiwygTabNavigation: (event: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean
@@ -9,12 +9,13 @@ interface UseWysiwygKeyOrchestrationParams {
 }
 
 export function useWysiwygKeyOrchestration({
-  wysiwygEditorRef,
   handleWysiwygKeyGuards,
   handleSlashMenuKeyboard,
   handleWysiwygTabNavigation,
   handleWysiwygStructuralKeys,
 }: UseWysiwygKeyOrchestrationParams) {
+  const { wysiwygEditorRef } = useEditorOverlay()
+
   const onWysiwygKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const editor = wysiwygEditorRef.current

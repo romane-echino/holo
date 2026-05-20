@@ -1,34 +1,27 @@
-import { useCallback, type MutableRefObject, type RefObject } from 'react'
+import { useCallback } from 'react'
 import type { SlashCommand } from '../types/editor'
 import { useConfig } from '../contexts/ConfigContext'
 import { useUI } from '../contexts/UIContext'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type TurndownLike = {
   turndown: (input: string) => string
 }
 
 export function useSlashCommandExecutor({
-  wysiwygEditorRef,
-  linkSavedRangeRef,
-  aiSavedRangeRef,
   getBlockTextBeforeCursor,
   deleteCurrentBlockContents,
   turndownService,
   updateActiveTabBody,
   getHoloApi,
   closeSlashMenu,
-  setAiDialog,
 }: {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
-  linkSavedRangeRef: MutableRefObject<Range | null>
-  aiSavedRangeRef: MutableRefObject<Range | null>
   getBlockTextBeforeCursor: () => { text: string; block: Element | null }
   deleteCurrentBlockContents: () => void
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
   getHoloApi: () => Window['holo'] | null
   closeSlashMenu: () => void
-  setAiDialog: React.Dispatch<React.SetStateAction<any>>
 }) {
   const {
     repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken,
@@ -37,6 +30,7 @@ export function useSlashCommandExecutor({
     gdriveAccessToken, gdriveFolderId,
   } = useConfig()
   const { setLinkDialog, setShowSettings } = useUI()
+  const { wysiwygEditorRef, linkSavedRangeRef, aiSavedRangeRef, setAiDialog } = useEditorOverlay()
   const imageConfig = {
     mode: repoImageStorageMode,
     azureBlobContainerUrl, azureBlobSasToken,

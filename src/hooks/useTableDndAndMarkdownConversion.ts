@@ -1,13 +1,9 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback } from 'react'
 import { parseMarkdownToHtml } from '../lib/markdown'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
-interface UseTableDndAndMarkdownConversionParams {
-  tableDndCounterRef: RefObject<number>
-}
-
-export function useTableDndAndMarkdownConversion({
-  tableDndCounterRef,
-}: UseTableDndAndMarkdownConversionParams) {
+export function useTableDndAndMarkdownConversion() {
+  const { tableDndCounterRef } = useEditorOverlay()
   const getNextTableDndId = useCallback(() => {
     const next = tableDndCounterRef.current
     tableDndCounterRef.current += 1

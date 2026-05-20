@@ -11,6 +11,7 @@ import { useUI } from '../contexts/UIContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useEditor } from '../contexts/EditorContext'
 import { useConfig } from '../contexts/ConfigContext'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 export function useNameDialogSubmission({
   ensureWritableMode,
@@ -18,19 +19,18 @@ export function useNameDialogSubmission({
   refreshTree,
   refreshGitState,
   autoCommitStructuralChange,
-  setPendingTitleFocusPath,
 }: {
   ensureWritableMode: () => boolean
   getHoloApi: () => Window['holo'] | null
   refreshTree: () => Promise<void>
   refreshGitState: (silent?: boolean) => Promise<void>
   autoCommitStructuralChange: (commitMessage: string) => Promise<void>
-  setPendingTitleFocusPath: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   const { nameDialog, setNameDialog } = useUI()
   const { rootPath, selectedPath, setSelectedPath } = useWorkspace()
   const { activeTabPath, setActiveTab, setActiveTabPath } = useEditor()
   const { appAuthor } = useConfig()
+  const { setPendingTitleFocusPath } = useEditorOverlay()
   const submitNameDialog = useCallback(async () => {
     if (!nameDialog || !rootPath) {
       return

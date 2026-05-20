@@ -1,4 +1,4 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback } from 'react'
 import * as prettier from 'prettier/standalone'
 import * as prettierPluginBabel from 'prettier/plugins/babel'
 import * as prettierPluginEstree from 'prettier/plugins/estree'
@@ -6,24 +6,25 @@ import * as prettierPluginTypescript from 'prettier/plugins/typescript'
 import * as prettierPluginPostcss from 'prettier/plugins/postcss'
 import * as prettierPluginHtml from 'prettier/plugins/html'
 import * as prettierPluginMarkdown from 'prettier/plugins/markdown'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type TurndownLike = {
   turndown: (input: string) => string
 }
 
 type UseCodeBlockFormatterParams = {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
   syncWysiwygFromMarkdown: (markdown: string) => void
 }
 
 export function useCodeBlockFormatter({
-  wysiwygEditorRef,
   turndownService,
   updateActiveTabBody,
   syncWysiwygFromMarkdown,
 }: UseCodeBlockFormatterParams) {
+  const { wysiwygEditorRef } = useEditorOverlay()
+
   const formatCodeBlock = useCallback(
     async (codeEl: HTMLElement) => {
       const editor = wysiwygEditorRef.current

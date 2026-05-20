@@ -3,7 +3,9 @@ import { EditorContext } from './EditorContext'
 import { WorkspaceContext } from './WorkspaceContext'
 import { UIContext } from './UIContext'
 import { ConfigContext } from './ConfigContext'
+import { EditorOverlayContext } from './EditorOverlayContext'
 import { useAppState } from '../hooks/useAppState'
+import { useEditorOverlayState } from '../hooks/useEditorOverlayState'
 
 interface AppStateProviderProps {
   children: ReactNode
@@ -16,13 +18,16 @@ interface AppStateProviderProps {
  */
 export function AppStateProvider({ children }: AppStateProviderProps) {
   const { editorContext, workspaceContext, uiContext, configContext } = useAppState()
+  const editorOverlayState = useEditorOverlayState()
 
   return (
     <EditorContext.Provider value={editorContext}>
       <WorkspaceContext.Provider value={workspaceContext}>
         <UIContext.Provider value={uiContext}>
           <ConfigContext.Provider value={configContext}>
-            {children}
+            <EditorOverlayContext.Provider value={editorOverlayState}>
+              {children}
+            </EditorOverlayContext.Provider>
           </ConfigContext.Provider>
         </UIContext.Provider>
       </WorkspaceContext.Provider>

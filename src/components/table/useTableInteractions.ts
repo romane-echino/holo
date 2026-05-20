@@ -1,14 +1,13 @@
 import { useCallback, useRef } from 'react'
 import { ensureTableInteractiveMarkers, refreshEditorTableSummaries, setHeaderColumnType } from './tableEngine'
+import { useEditor } from '../../contexts/EditorContext'
+import { useEditorOverlay } from '../../contexts/EditorOverlayContext'
 
 type TurndownLike = {
   turndown: (html: string) => string
 }
 
 type UseTableInteractionsParams = {
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
-  imageDragDepthRef: React.RefObject<number>
-  setIsImageDragOverEditor: React.Dispatch<React.SetStateAction<boolean>>
   getNextTableDndId: () => string
   onEditorDragOver: (event: React.DragEvent<HTMLDivElement>) => void
   handleImageFiles: (
@@ -19,22 +18,19 @@ type UseTableInteractionsParams = {
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
   syncWysiwygFromMarkdown: (markdown: string) => void
-  setColumnTypePopup: React.Dispatch<React.SetStateAction<{ x: number; y: number; thEl: HTMLElement } | null>>
 }
 
 export function useTableInteractions({
-  wysiwygEditorRef,
   getNextTableDndId,
-  imageDragDepthRef,
-  setIsImageDragOverEditor,
   onEditorDragOver,
   handleImageFiles,
   isImageFile,
   turndownService,
   updateActiveTabBody,
   syncWysiwygFromMarkdown,
-  setColumnTypePopup,
 }: UseTableInteractionsParams) {
+  const { setIsImageDragOverEditor } = useEditor()
+  const { wysiwygEditorRef, imageDragDepthRef, setColumnTypePopup } = useEditorOverlay()
   const tableDragStateRef = useRef<{ type: 'row' | 'column'; tableId: string; fromIndex: number } | null>(null)
 
   const ensureTableInteractiveMarkersLocal = useCallback((table: HTMLTableElement) => {

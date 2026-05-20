@@ -1,19 +1,20 @@
 import { useCallback } from 'react'
 import type { WysiwygCommand } from '../types/editor'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type UseEditorUIHelpersParams = {
   editorMode: 'raw' | 'wysiwyg'
   onWysiwygInput: () => void
   setEditorMode: (mode: 'raw' | 'wysiwyg') => void
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
 }
 
 export function useEditorUIHelpers({
   editorMode,
   onWysiwygInput,
   setEditorMode,
-  wysiwygEditorRef,
 }: UseEditorUIHelpersParams) {
+  const { wysiwygEditorRef } = useEditorOverlay()
+
   const runWysiwygCommand = useCallback(
     (command: WysiwygCommand, value?: string) => {
       const editor = wysiwygEditorRef.current

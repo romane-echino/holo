@@ -1,10 +1,8 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback } from 'react'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
-type UseWysiwygBlockHelpersParams = {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
-}
-
-export function useWysiwygBlockHelpers({ wysiwygEditorRef }: UseWysiwygBlockHelpersParams) {
+export function useWysiwygBlockHelpers() {
+  const { wysiwygEditorRef } = useEditorOverlay()
   const findCurrentEditorBlockNode = useCallback((selection: Selection, editor: HTMLDivElement): Node | null => {
     const BLOCK_TAGS = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE']
 

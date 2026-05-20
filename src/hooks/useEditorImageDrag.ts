@@ -1,16 +1,15 @@
-import { useCallback, type DragEvent, type MutableRefObject } from 'react'
+import { useCallback, type DragEvent } from 'react'
+import { useEditor } from '../contexts/EditorContext'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type UseEditorImageDragParams = {
   isEditorReadOnly: boolean
-  imageDragDepthRef: MutableRefObject<number>
-  setIsImageDragOverEditor: (value: boolean) => void
 }
 
-export function useEditorImageDrag({
-  isEditorReadOnly,
-  imageDragDepthRef,
-  setIsImageDragOverEditor,
-}: UseEditorImageDragParams) {
+export function useEditorImageDrag({ isEditorReadOnly }: UseEditorImageDragParams) {
+  const { setIsImageDragOverEditor } = useEditor()
+  const { imageDragDepthRef } = useEditorOverlay()
+
   const isImageFile = useCallback((file: File) => {
     if (file.type.startsWith('image/')) {
       return true

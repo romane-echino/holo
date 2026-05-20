@@ -1,9 +1,9 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback } from 'react'
+import { useEditor } from '../contexts/EditorContext'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 interface UseRawEditorDropParams {
   isEditorReadOnly: boolean
-  imageDragDepthRef: RefObject<number>
-  setIsImageDragOverEditor: (isOver: boolean) => void
   isImageFile: (file: File) => boolean
   handleImageFiles: (files: File[], callback: (mdImage: string) => void) => void
   updateActiveTabBody: (nextBody: string) => void
@@ -11,12 +11,13 @@ interface UseRawEditorDropParams {
 
 export function useRawEditorDrop({
   isEditorReadOnly,
-  imageDragDepthRef,
-  setIsImageDragOverEditor,
   isImageFile,
   handleImageFiles,
   updateActiveTabBody,
 }: UseRawEditorDropParams) {
+  const { setIsImageDragOverEditor } = useEditor()
+  const { imageDragDepthRef } = useEditorOverlay()
+
   const onRawDrop = useCallback(
     (event: React.DragEvent<HTMLTextAreaElement>) => {
       if (isEditorReadOnly) {

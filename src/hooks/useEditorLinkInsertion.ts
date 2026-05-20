@@ -1,22 +1,21 @@
-import { useCallback, type MutableRefObject, type RefObject } from 'react'
+import { useCallback } from 'react'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 type TurndownLike = {
   turndown: (input: string) => string
 }
 
 type UseEditorLinkInsertionParams = {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
-  linkSavedRangeRef: MutableRefObject<Range | null>
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
 }
 
 export function useEditorLinkInsertion({
-  wysiwygEditorRef,
-  linkSavedRangeRef,
   turndownService,
   updateActiveTabBody,
 }: UseEditorLinkInsertionParams) {
+  const { wysiwygEditorRef, linkSavedRangeRef } = useEditorOverlay()
+
   const clearLinkSavedRange = useCallback(() => {
     linkSavedRangeRef.current = null
   }, [linkSavedRangeRef])
