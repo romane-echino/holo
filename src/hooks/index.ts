@@ -96,3 +96,7 @@ export { useToggleDirectory } from './useToggleDirectory'
 export { useFocusActiveEditor } from './useFocusActiveEditor'
 export { useDiscardTransientEditorState } from './useDiscardTransientEditorState'
 export { useTableDndAndMarkdownConversion } from './useTableDndAndMarkdownConversion'
+
+export { useTocItems } from './useTocItems'
+export { useEditorImageLoader } from './useEditorImageLoader'
+export { useStartupNavigation } from './useStartupNavigation'

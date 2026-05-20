@@ -1,0 +1,16 @@
+
+> holo@0.2.8 build
+> tsc -b && vite build
+
+src/App.tsx(66,58): error TS6133: 'setFolderIconByPath' is declared but its value is never read.
+src/App.tsx(74,5): error TS6133: 'showUnsavedChangesModal' is declared but its value is never read.
+src/App.tsx(87,56): error TS6133: 'setSyncFeedback' is declared but its value is never read.
+src/App.tsx(134,5): error TS6133: 'confirmDialog' is declared but its value is never read.
+src/App.tsx(935,27): error TS2304: Cannot find name 'setShowGitAuthHelp'.
+src/components/AppModalsWrapper.tsx(7,15): error TS2305: Module '"../types/app"' has no exported member 'TemplateOption'.
+src/components/AppModalsWrapper.tsx(57,30): error TS2339: Property 'confirmDialog' does not exist on type 'UIContextType'.
+src/hooks/useGitDialogActions.ts(30,7): error TS2304: Cannot find name 'gitStateIsRepo'.
+src/hooks/useGitWorkflow.ts(58,20): error TS2304: Cannot find name 'GitState'.
+src/hooks/useGitWorkflow.ts(77,22): error TS2304: Cannot find name 'GitState'.
+src/hooks/useGitWorkflow.ts(340,15): error TS2304: Cannot find name 'SyncFeedback'.
+src/hooks/useWorkspaceFolders.ts(3,33): error TS6196: 'TreeNode' is declared but never used.

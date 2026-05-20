@@ -1,62 +1,38 @@
 import { useCallback } from 'react'
-
-type AiDialogState = {
-  mode: 'generate' | 'transform'
-  prompt: string
-  isLoading: boolean
-  selectedText: string
-  error?: string
-}
-
-type LinkDialogState = {
-  text: string
-  url: string
-  pageQuery?: string
-}
-
-type UseEditorUiCallbacksParams = {
-  pullChanges: () => Promise<void>
-  linkSavedRangeRef: React.RefObject<Range | null>
-  aiSavedRangeRef: React.RefObject<Range | null>
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
-  setSelectionPopup: React.Dispatch<React.SetStateAction<{ x: number; y: number } | null>>
-  setLinkDialog: React.Dispatch<React.SetStateAction<LinkDialogState | null>>
-  setAiDialog: React.Dispatch<React.SetStateAction<AiDialogState | null>>
-  setColumnTypePopup: React.Dispatch<React.SetStateAction<{ x: number; y: number; thEl: HTMLElement } | null>>
-  setCodeBlockPopup: React.Dispatch<React.SetStateAction<{ x: number; y: number; codeEl: HTMLElement } | null>>
-  setHoveredCodeBlock: React.Dispatch<React.SetStateAction<{ x: number; y: number; codeEl: HTMLElement } | null>>
-  turndownService: { turndown: (html: string) => string }
-  updateActiveTabBody: (content: string) => void
-  syncWysiwygFromMarkdown: (markdown: string) => void
-  setShowCompactToc: React.Dispatch<React.SetStateAction<boolean>>
-  onTocItemClick: (headingIndex: number) => void
-  readOnlyMode: boolean
-  setEditorMode: React.Dispatch<React.SetStateAction<'raw' | 'wysiwyg'>>
-  exportActiveFileToPdf: () => Promise<void>
-  saveCurrentFile: () => Promise<void>
-}
+import { useEditor } from '../contexts/EditorContext'
+import { useUI } from '../contexts/UIContext'
 
 export function useEditorUiCallbacks({
   pullChanges,
   linkSavedRangeRef,
   aiSavedRangeRef,
   wysiwygEditorRef,
-  setSelectionPopup,
-  setLinkDialog,
   setAiDialog,
-  setColumnTypePopup,
-  setCodeBlockPopup,
-  setHoveredCodeBlock,
   turndownService,
   updateActiveTabBody,
   syncWysiwygFromMarkdown,
-  setShowCompactToc,
   onTocItemClick,
-  readOnlyMode,
-  setEditorMode,
   exportActiveFileToPdf,
   saveCurrentFile,
-}: UseEditorUiCallbacksParams) {
+}: {
+  pullChanges: () => Promise<void>
+  linkSavedRangeRef: React.RefObject<Range | null>
+  aiSavedRangeRef: React.RefObject<Range | null>
+  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
+  setAiDialog: React.Dispatch<React.SetStateAction<any>>
+  turndownService: { turndown: (html: string) => string }
+  updateActiveTabBody: (content: string) => void
+  syncWysiwygFromMarkdown: (markdown: string) => void
+  onTocItemClick: (headingIndex: number) => void
+  exportActiveFileToPdf: () => Promise<void>
+  saveCurrentFile: () => Promise<void>
+}) {
+  const {
+    readOnlyMode, setEditorMode,
+    setSelectionPopup, setColumnTypePopup, setCodeBlockPopup,
+    setHoveredCodeBlock, setShowCompactToc,
+  } = useEditor()
+  const { setLinkDialog } = useUI()
   const onPullNow = useCallback(() => {
     void pullChanges()
   }, [pullChanges])

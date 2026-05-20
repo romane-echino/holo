@@ -1,107 +1,26 @@
 import { useCallback, useEffect } from 'react'
 import { normalizeVersionLabel } from '../lib/appUtils'
+import { useConfig } from '../contexts/ConfigContext'
+import { useUI } from '../contexts/UIContext'
 
-type GlobalConfigValues = {
-  globalConfigReady: boolean
-  appAuthor: string
-  readOnlyMode: boolean
-  seenChangelogVersion: string
-  gitEmail: string
-  azureBlobContainerUrl: string
-  azureBlobSasToken: string
-  s3Region: string
-  s3Bucket: string
-  s3AccessKeyId: string
-  s3SecretAccessKey: string
-  s3Endpoint: string
-  s3PublicBaseUrl: string
-  dropboxAccessToken: string
-  dropboxFolderPath: string
-  gdriveAccessToken: string
-  gdriveFolderId: string
-  openaiApiKey: string
-  geminiApiKey: string
-  aiProvider: 'auto' | 'openai' | 'gemini'
-  openaiPrompt: string
-  shareGatewayBaseUrl: string
-}
+export function useGlobalConfig({ getHoloApi }: { getHoloApi: () => Window['holo'] | null }) {
+  const {
+    appAuthor, readOnlyMode, gitEmail,
+    azureBlobContainerUrl, azureBlobSasToken, s3Region, s3Bucket,
+    s3AccessKeyId, s3SecretAccessKey, s3Endpoint, s3PublicBaseUrl,
+    dropboxAccessToken, dropboxFolderPath, gdriveAccessToken, gdriveFolderId,
+    openaiApiKey, geminiApiKey, aiProvider, openaiPrompt, shareGatewayBaseUrl,
+    setAppAuthor, setReadOnlyMode, setGitEmail,
+    setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket,
+    setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl,
+    setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId,
+    setOpenaiApiKey, setGeminiApiKey, setAiProvider, setOpenaiPrompt, setShareGatewayBaseUrl,
+  } = useConfig()
+  const {
+    globalConfigReady, seenChangelogVersion, setSeenChangelogVersion, setGlobalConfigReady,
+    setAuthorModalMode, setAuthorModalValue, setShowAuthorModal,
+  } = useUI()
 
-type UseGlobalConfigParams = {
-  getHoloApi: () => Window['holo'] | null
-  initialOpenaiPrompt: string
-  initialShareGatewayBaseUrl: string
-  values: GlobalConfigValues
-  setAppAuthor: (value: string) => void
-  setReadOnlyMode: (value: boolean) => void
-  setSeenChangelogVersion: (value: string) => void
-  setGitEmail: (value: string) => void
-  setAzureBlobContainerUrl: (value: string) => void
-  setAzureBlobSasToken: (value: string) => void
-  setS3Region: (value: string) => void
-  setS3Bucket: (value: string) => void
-  setS3AccessKeyId: (value: string) => void
-  setS3SecretAccessKey: (value: string) => void
-  setS3Endpoint: (value: string) => void
-  setS3PublicBaseUrl: (value: string) => void
-  setDropboxAccessToken: (value: string) => void
-  setDropboxFolderPath: (value: string) => void
-  setGdriveAccessToken: (value: string) => void
-  setGdriveFolderId: (value: string) => void
-  setOpenaiApiKey: (value: string) => void
-  setGeminiApiKey: (value: string) => void
-  setAiProvider: (value: 'auto' | 'openai' | 'gemini') => void
-  setOpenaiPrompt: (value: string) => void
-  setShareGatewayBaseUrl: (value: string) => void
-  setAuthorModalMode: (mode: 'startup' | 'edit') => void
-  setAuthorModalValue: (value: string) => void
-  setShowAuthorModal: (show: boolean) => void
-  setGlobalConfigReady: (ready: boolean) => void
-}
-
-function usePersistedConfigValue(
-  ready: boolean,
-  key: string,
-  value: unknown,
-  persistConfigValue: (key: string, value: unknown) => Promise<void>,
-) {
-  useEffect(() => {
-    if (ready) {
-      void persistConfigValue(key, value)
-    }
-  }, [key, persistConfigValue, ready, value])
-}
-
-export function useGlobalConfig({
-  getHoloApi,
-  initialOpenaiPrompt,
-  initialShareGatewayBaseUrl,
-  values,
-  setAppAuthor,
-  setReadOnlyMode,
-  setSeenChangelogVersion,
-  setGitEmail,
-  setAzureBlobContainerUrl,
-  setAzureBlobSasToken,
-  setS3Region,
-  setS3Bucket,
-  setS3AccessKeyId,
-  setS3SecretAccessKey,
-  setS3Endpoint,
-  setS3PublicBaseUrl,
-  setDropboxAccessToken,
-  setDropboxFolderPath,
-  setGdriveAccessToken,
-  setGdriveFolderId,
-  setOpenaiApiKey,
-  setGeminiApiKey,
-  setAiProvider,
-  setOpenaiPrompt,
-  setShareGatewayBaseUrl,
-  setAuthorModalMode,
-  setAuthorModalValue,
-  setShowAuthorModal,
-  setGlobalConfigReady,
-}: UseGlobalConfigParams) {
   const persistConfigValue = useCallback(
     async (key: string, value: unknown) => {
       const holo = getHoloApi()
@@ -174,8 +93,8 @@ export function useGlobalConfig({
       const openaiKey = fromConfigOrLocal('openai-api-key', 'holo-openai-key', '')
       const geminiKey = fromConfigOrLocal('gemini-api-key', 'holo-gemini-key', '')
       const providerRaw = fromConfigOrLocal('ai-provider', 'holo-ai-provider', 'auto')
-      const prompt = fromConfigOrLocal('openai-prompt', 'holo-openai-prompt', initialOpenaiPrompt)
-      const gatewayBaseUrl = fromConfigOrLocal('share-gateway-base-url', 'holo-share-gateway-url', initialShareGatewayBaseUrl)
+      const prompt = fromConfigOrLocal('openai-prompt', 'holo-openai-prompt', openaiPrompt)
+      const gatewayBaseUrl = fromConfigOrLocal('share-gateway-base-url', 'holo-share-gateway-url', shareGatewayBaseUrl)
 
       if (cancelled) {
         return
@@ -220,27 +139,29 @@ export function useGlobalConfig({
     return () => {
       cancelled = true
     }
-  }, [getHoloApi, initialOpenaiPrompt, initialShareGatewayBaseUrl, setAppAuthor, setReadOnlyMode, setSeenChangelogVersion, setGitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setOpenaiApiKey, setGeminiApiKey, setAiProvider, setOpenaiPrompt, setShareGatewayBaseUrl, setAuthorModalMode, setAuthorModalValue, setShowAuthorModal, setGlobalConfigReady])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getHoloApi])
 
-  usePersistedConfigValue(values.globalConfigReady, 'app-author', values.appAuthor, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'app-read-only', values.readOnlyMode, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'seen-changelog-version', values.seenChangelogVersion, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'git-email', values.gitEmail, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'azure-container-url', values.azureBlobContainerUrl, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'azure-sas-token', values.azureBlobSasToken, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-region', values.s3Region, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-bucket', values.s3Bucket, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-access-key-id', values.s3AccessKeyId, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-secret-access-key', values.s3SecretAccessKey, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-endpoint', values.s3Endpoint, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 's3-public-base-url', values.s3PublicBaseUrl, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'dropbox-access-token', values.dropboxAccessToken, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'dropbox-folder-path', values.dropboxFolderPath, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'gdrive-access-token', values.gdriveAccessToken, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'gdrive-folder-id', values.gdriveFolderId, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'openai-api-key', values.openaiApiKey, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'gemini-api-key', values.geminiApiKey, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'ai-provider', values.aiProvider, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'openai-prompt', values.openaiPrompt, persistConfigValue)
-  usePersistedConfigValue(values.globalConfigReady, 'share-gateway-base-url', values.shareGatewayBaseUrl, persistConfigValue)
+  // Persist each config value when it changes
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('app-author', appAuthor) }, [globalConfigReady, appAuthor, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('app-read-only', readOnlyMode) }, [globalConfigReady, readOnlyMode, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('seen-changelog-version', seenChangelogVersion) }, [globalConfigReady, seenChangelogVersion, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('git-email', gitEmail) }, [globalConfigReady, gitEmail, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('azure-container-url', azureBlobContainerUrl) }, [globalConfigReady, azureBlobContainerUrl, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('azure-sas-token', azureBlobSasToken) }, [globalConfigReady, azureBlobSasToken, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-region', s3Region) }, [globalConfigReady, s3Region, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-bucket', s3Bucket) }, [globalConfigReady, s3Bucket, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-access-key-id', s3AccessKeyId) }, [globalConfigReady, s3AccessKeyId, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-secret-access-key', s3SecretAccessKey) }, [globalConfigReady, s3SecretAccessKey, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-endpoint', s3Endpoint) }, [globalConfigReady, s3Endpoint, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('s3-public-base-url', s3PublicBaseUrl) }, [globalConfigReady, s3PublicBaseUrl, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('dropbox-access-token', dropboxAccessToken) }, [globalConfigReady, dropboxAccessToken, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('dropbox-folder-path', dropboxFolderPath) }, [globalConfigReady, dropboxFolderPath, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('gdrive-access-token', gdriveAccessToken) }, [globalConfigReady, gdriveAccessToken, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('gdrive-folder-id', gdriveFolderId) }, [globalConfigReady, gdriveFolderId, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('openai-api-key', openaiApiKey) }, [globalConfigReady, openaiApiKey, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('gemini-api-key', geminiApiKey) }, [globalConfigReady, geminiApiKey, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('ai-provider', aiProvider) }, [globalConfigReady, aiProvider, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('openai-prompt', openaiPrompt) }, [globalConfigReady, openaiPrompt, persistConfigValue])
+  useEffect(() => { if (globalConfigReady) void persistConfigValue('share-gateway-base-url', shareGatewayBaseUrl) }, [globalConfigReady, shareGatewayBaseUrl, persistConfigValue])
 }

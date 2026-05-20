@@ -1,45 +1,21 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { DEFAULT_GIT_STATE, normalizeGitState } from '../lib/gitUtils'
-import type { OpenFolderResult, TreeNode } from '../types/app'
-import type { GitState } from '../types/git'
-import type { NodeType } from '../types/app'
-
-type OpenTab = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseWorkspaceFoldersParams = {
-  getHoloApi: () => Window['holo'] | null
-  setRootPath: React.Dispatch<React.SetStateAction<string | null>>
-  setTree: React.Dispatch<React.SetStateAction<TreeNode | null>>
-  setSelectedPath: React.Dispatch<React.SetStateAction<string | null>>
-  setSelectedType: React.Dispatch<React.SetStateAction<NodeType | null>>
-  setExpandedDirectories: React.Dispatch<React.SetStateAction<Set<string>>>
-  setArchivedFiles: React.Dispatch<React.SetStateAction<Array<{ archivedPath: string; originalPath: string; name: string }>>>
-  setFolderIconByPath: React.Dispatch<React.SetStateAction<Record<string, string>>>
-  setActiveTab: React.Dispatch<React.SetStateAction<OpenTab | null>>
-  setActiveTabPath: React.Dispatch<React.SetStateAction<string | null>>
-  setGitState: React.Dispatch<React.SetStateAction<GitState>>
-  setRecentFolders: React.Dispatch<React.SetStateAction<string[]>>
-}
+import type { OpenFolderResult } from '../types/app'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useWorkspaceFolders({
   getHoloApi,
-  setRootPath,
-  setTree,
-  setSelectedPath,
-  setSelectedType,
-  setExpandedDirectories,
-  setArchivedFiles,
-  setFolderIconByPath,
-  setActiveTab,
-  setActiveTabPath,
-  setGitState,
-  setRecentFolders,
-}: UseWorkspaceFoldersParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+}) {
+  const {
+    setRootPath, setTree, setSelectedPath, setSelectedType,
+    setExpandedDirectories, setArchivedFiles, setFolderIconByPath, setRecentFolders,
+  } = useWorkspace()
+  const { setActiveTab, setActiveTabPath } = useEditor()
+  const { setGitState } = useConfig()
   const refreshTree = useCallback(async () => {
     const holo = window.holo
 
@@ -184,6 +160,10 @@ export function useWorkspaceFolders({
     },
     [getHoloApi, refreshRecentFolders],
   )
+
+  useEffect(() => {
+    void refreshRecentFolders()
+  }, [refreshRecentFolders])
 
   return {
     refreshTree,

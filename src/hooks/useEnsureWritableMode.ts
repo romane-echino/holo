@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
+import { useEditor } from '../contexts/EditorContext'
 
 interface UseEnsureWritableModeParams {
   readOnlyMode: boolean
@@ -7,6 +8,7 @@ interface UseEnsureWritableModeParams {
 export function useEnsureWritableMode({
   readOnlyMode,
 }: UseEnsureWritableModeParams) {
+  const { setEditorMode } = useEditor()
   const ensureWritableMode = useCallback(() => {
     if (!readOnlyMode) {
       return true
@@ -15,6 +17,12 @@ export function useEnsureWritableMode({
     window.alert('Le mode lecture seule est activé. Désactive-le pour modifier ce contenu.')
     return false
   }, [readOnlyMode])
+
+  useEffect(() => {
+    if (readOnlyMode) {
+      setEditorMode('wysiwyg')
+    }
+  }, [readOnlyMode, setEditorMode])
 
   return {
     ensureWritableMode,

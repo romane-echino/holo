@@ -1,46 +1,24 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import { buildAutoCommitMessage, getCommitTargetPath, isSameOrChildPath } from '../lib/appUtils'
-
-type OpenTabLike = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseMoveNodeParams = {
-  appAuthor: string
-  rootPath: string | null
-  selectedPath: string | null
-  activeTabPath: string | null
-  gitRepoEnabled: boolean
-  ensureWritableMode: () => boolean
-  getHoloApi: () => Window['holo'] | null
-  refreshTree: () => Promise<void>
-  refreshGitState: (silent?: boolean) => Promise<void>
-  setActiveTab: Dispatch<SetStateAction<OpenTabLike | null>>
-  setSelectedPath: Dispatch<SetStateAction<string | null>>
-  setActiveTabPath: Dispatch<SetStateAction<string | null>>
-  setDraggedPath: Dispatch<SetStateAction<string | null>>
-  setDropTargetPath: Dispatch<SetStateAction<string | null>>
-}
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useMoveNode({
-  appAuthor,
-  rootPath,
-  selectedPath,
-  activeTabPath,
-  gitRepoEnabled,
   ensureWritableMode,
   getHoloApi,
   refreshTree,
   refreshGitState,
-  setActiveTab,
-  setSelectedPath,
-  setActiveTabPath,
-  setDraggedPath,
-  setDropTargetPath,
-}: UseMoveNodeParams) {
+}: {
+  ensureWritableMode: () => boolean
+  getHoloApi: () => Window['holo'] | null
+  refreshTree: () => Promise<void>
+  refreshGitState: (silent?: boolean) => Promise<void>
+}) {
+  const { rootPath, selectedPath, setSelectedPath, setDraggedPath, setDropTargetPath } = useWorkspace()
+  const { activeTabPath, setActiveTab, setActiveTabPath } = useEditor()
+  const { appAuthor, gitState } = useConfig()
+  const gitRepoEnabled = gitState.isRepo
   const autoCommitStructuralChange = useCallback(
     async (commitMessage: string) => {
       if (!gitRepoEnabled || !window.holo) {

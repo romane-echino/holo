@@ -1,31 +1,26 @@
 import { useCallback } from 'react'
-import type { ImageStorageMode } from './useRepoImageSettings'
-
-type UseImageUploadHandlerParams = {
-  getHoloApi: () => Window['holo'] | null
-  ensureImageProviderReady: () => boolean
-  imageConfig: {
-    mode: ImageStorageMode
-    azureBlobContainerUrl: string
-    azureBlobSasToken: string
-    s3Region: string
-    s3Bucket: string
-    s3AccessKeyId: string
-    s3SecretAccessKey: string
-    s3Endpoint: string
-    s3PublicBaseUrl: string
-    dropboxAccessToken: string
-    dropboxFolderPath: string
-    gdriveAccessToken: string
-    gdriveFolderId: string
-  }
-}
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useImageUploadHandler({
   getHoloApi,
   ensureImageProviderReady,
-  imageConfig,
-}: UseImageUploadHandlerParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  ensureImageProviderReady: () => boolean
+}) {
+  const {
+    repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
+    s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath,
+    gdriveAccessToken, gdriveFolderId,
+  } = useConfig()
+  const imageConfig = {
+    mode: repoImageStorageMode,
+    azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
+    s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath,
+    gdriveAccessToken, gdriveFolderId,
+  }
   const handleImageFiles = useCallback(
     async (
       files: File[],

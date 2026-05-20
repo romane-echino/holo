@@ -1,7 +1,8 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, type Dispatch, type SetStateAction } from 'react'
 import { buildAutoCommitMessage } from '../lib/appUtils'
 import type { FilePathStats } from '../types/editor'
 import type { GitState } from '../types/git'
+import { useEditor } from '../contexts/EditorContext'
 
 type OpenTabLike = {
   path: string
@@ -37,6 +38,8 @@ export function useSaveCurrentFile({
   setPathStatsByPath,
   setSaveStatus,
 }: UseSaveCurrentFileParams) {
+  const { readOnlyMode } = useEditor()
+
   const saveCurrentFile = useCallback(async () => {
     if (!activeTab) {
       return
@@ -94,6 +97,17 @@ export function useSaveCurrentFile({
     setPathStatsByPath,
     setSaveStatus,
   ])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isSaveKey = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's'
+      if (!isSaveKey) return
+      event.preventDefault()
+      if (activeTab && !readOnlyMode) void saveCurrentFile()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [saveCurrentFile, activeTab, readOnlyMode])
 
   return { saveCurrentFile }
 }

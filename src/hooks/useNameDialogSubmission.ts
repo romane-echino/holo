@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import { updateMarkdownBooleanHeaderField } from '../lib/markdown'
 import {
   applyTemplateVariables,
@@ -7,50 +7,30 @@ import {
   getCommitTargetPath,
   isSameOrChildPath,
 } from '../lib/appUtils'
-import type { NameDialog } from '../types/shared'
-
-type OpenTabLike = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseNameDialogSubmissionParams = {
-  ensureWritableMode: () => boolean
-  getHoloApi: () => Window['holo'] | null
-  nameDialog: NameDialog | null
-  rootPath: string | null
-  selectedPath: string | null
-  activeTabPath: string | null
-  appAuthor: string
-  refreshTree: () => Promise<void>
-  refreshGitState: (silent?: boolean) => Promise<void>
-  autoCommitStructuralChange: (commitMessage: string) => Promise<void>
-  setNameDialog: Dispatch<SetStateAction<NameDialog | null>>
-  setActiveTab: Dispatch<SetStateAction<OpenTabLike | null>>
-  setActiveTabPath: Dispatch<SetStateAction<string | null>>
-  setPendingTitleFocusPath: Dispatch<SetStateAction<string | null>>
-  setSelectedPath: Dispatch<SetStateAction<string | null>>
-}
+import { useUI } from '../contexts/UIContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useNameDialogSubmission({
   ensureWritableMode,
   getHoloApi,
-  nameDialog,
-  rootPath,
-  selectedPath,
-  activeTabPath,
-  appAuthor,
   refreshTree,
   refreshGitState,
   autoCommitStructuralChange,
-  setNameDialog,
-  setActiveTab,
-  setActiveTabPath,
   setPendingTitleFocusPath,
-  setSelectedPath,
-}: UseNameDialogSubmissionParams) {
+}: {
+  ensureWritableMode: () => boolean
+  getHoloApi: () => Window['holo'] | null
+  refreshTree: () => Promise<void>
+  refreshGitState: (silent?: boolean) => Promise<void>
+  autoCommitStructuralChange: (commitMessage: string) => Promise<void>
+  setPendingTitleFocusPath: React.Dispatch<React.SetStateAction<string | null>>
+}) {
+  const { nameDialog, setNameDialog } = useUI()
+  const { rootPath, selectedPath, setSelectedPath } = useWorkspace()
+  const { activeTabPath, setActiveTab, setActiveTabPath } = useEditor()
+  const { appAuthor } = useConfig()
   const submitNameDialog = useCallback(async () => {
     if (!nameDialog || !rootPath) {
       return

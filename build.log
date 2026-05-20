@@ -1,0 +1,6 @@
+
+> holo@0.2.8 build
+> tsc -b && vite build
+
+src/App.tsx(1451,50): error TS1003: Identifier expected.
+src/App.tsx(1472,8): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?

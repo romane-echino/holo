@@ -16,6 +16,12 @@ export { SidebarSearchPanel } from './SidebarSearchPanel'
 export { SidebarGitPanel } from './SidebarGitPanel'
 export { ContextMenuPopup } from './ContextMenuPopup'
 export { FolderIconPickerModal } from './FolderIconPickerModal'
+export { AppSettingsModal } from './AppSettingsModal'
+export { AppModalsWrapper } from './AppModalsWrapper'
+export { SidebarFilesPanelWrapper } from './SidebarFilesPanelWrapper'
+export { SidebarGitPanelWrapper } from './SidebarGitPanelWrapper'
+export { ContextMenuWrapper } from './ContextMenuWrapper'
+export { FolderIconPickerWrapper } from './FolderIconPickerWrapper'
 
 // Table
 export { useTableInteractions } from './table/useTableInteractions'

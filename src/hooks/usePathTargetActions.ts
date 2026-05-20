@@ -1,47 +1,29 @@
 import { useCallback } from 'react'
 import { buildAutoCommitMessage, getCommitTargetPath, isSameOrChildPath } from '../lib/appUtils'
-
-type ConfirmDialogState = {
-  title: string
-  message: string
-  confirmLabel?: string
-  cancelLabel?: string
-  intent?: 'primary' | 'danger'
-}
-
-type UsePathTargetActionsParams = {
-  ensureWritableMode: () => boolean
-  getHoloApi: () => Window['holo'] | null
-  rootPath: string | null
-  activeTabPath: string | null
-  appAuthor: string
-  requestConfirmation: (dialog: ConfirmDialogState) => Promise<boolean>
-  refreshTree: () => Promise<void>
-  refreshArchivedFiles: () => Promise<void>
-  refreshGitState: (forceRemote: boolean) => Promise<void>
-  autoCommitStructuralChange: (commitMessage: string) => Promise<void>
-  setActiveTab: React.Dispatch<React.SetStateAction<{ path: string; name: string; content: string; isDirty: boolean } | null>>
-  setActiveTabPath: React.Dispatch<React.SetStateAction<string | null>>
-  setSelectedPath: React.Dispatch<React.SetStateAction<string | null>>
-  setSelectedType: React.Dispatch<React.SetStateAction<'file' | 'directory' | null>>
-}
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function usePathTargetActions({
   ensureWritableMode,
   getHoloApi,
-  rootPath,
-  activeTabPath,
-  appAuthor,
   requestConfirmation,
   refreshTree,
   refreshArchivedFiles,
   refreshGitState,
   autoCommitStructuralChange,
-  setActiveTab,
-  setActiveTabPath,
-  setSelectedPath,
-  setSelectedType,
-}: UsePathTargetActionsParams) {
+}: {
+  ensureWritableMode: () => boolean
+  getHoloApi: () => Window['holo'] | null
+  requestConfirmation: (dialog: { title: string; message: string; confirmLabel?: string; cancelLabel?: string; intent?: 'primary' | 'danger' }) => Promise<boolean>
+  refreshTree: () => Promise<void>
+  refreshArchivedFiles: () => Promise<void>
+  refreshGitState: (forceRemote: boolean) => Promise<void>
+  autoCommitStructuralChange: (commitMessage: string) => Promise<void>
+}) {
+  const { rootPath, setSelectedPath, setSelectedType } = useWorkspace()
+  const { activeTabPath, setActiveTab, setActiveTabPath } = useEditor()
+  const { appAuthor } = useConfig()
   const archivePathTarget = useCallback(
     async (targetPath: string) => {
       if (!ensureWritableMode()) {

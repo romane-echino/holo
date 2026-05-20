@@ -1,40 +1,33 @@
 import { useCallback } from 'react'
-import type { GitDialog } from '../types/shared'
-
-type UseGitDialogActionsParams = {
-  gitStateIsRepo: boolean
-  gitDialog: GitDialog | null
-  setGitDialog: React.Dispatch<React.SetStateAction<GitDialog | null>>
-  setIsGitBusy: React.Dispatch<React.SetStateAction<boolean>>
-  getHoloApi: () => Window['holo'] | null
-  refreshGitState: (forceRemote: boolean) => Promise<void>
-}
+import { useConfig } from '../contexts/ConfigContext'
+import { useUI } from '../contexts/UIContext'
 
 export function useGitDialogActions({
-  gitStateIsRepo,
-  gitDialog,
-  setGitDialog,
-  setIsGitBusy,
   getHoloApi,
   refreshGitState,
-}: UseGitDialogActionsParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  refreshGitState: (forceRemote: boolean) => Promise<void>
+}) {
+  const { gitState, setIsGitBusy } = useConfig()
+  const { gitDialog, setGitDialog } = useUI()
   const openCommitDialog = useCallback(() => {
-    if (!gitStateIsRepo) {
+    if (!gitState.isRepo) {
       window.alert('Le dossier ouvert n est pas un depot Git.')
       return
     }
 
     setGitDialog({ mode: 'commit', value: '' })
-  }, [gitStateIsRepo, setGitDialog])
+  }, [gitState.isRepo, setGitDialog])
 
   const openMergeDialog = useCallback(() => {
-    if (!gitStateIsRepo) {
+    if (!gitState.isRepo) {
       window.alert('Le dossier ouvert n est pas un depot Git.')
       return
     }
 
     setGitDialog({ mode: 'merge', value: '' })
-  }, [gitStateIsRepo, setGitDialog])
+  }, [gitState.isRepo, setGitDialog])
 
   const submitGitDialog = useCallback(async () => {
     if (!gitDialog) {

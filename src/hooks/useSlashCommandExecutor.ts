@@ -1,49 +1,10 @@
-import { useCallback, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react'
+import { useCallback, type MutableRefObject, type RefObject } from 'react'
 import type { SlashCommand } from '../types/editor'
-import type { ImageStorageMode } from './useRepoImageSettings'
-
-type LinkDialogState = { text: string; url: string; pageQuery?: string } | null
-
-type AiDialogState = {
-  mode: 'generate' | 'transform'
-  prompt: string
-  isLoading: boolean
-  selectedText: string
-  error?: string
-} | null
+import { useConfig } from '../contexts/ConfigContext'
+import { useUI } from '../contexts/UIContext'
 
 type TurndownLike = {
   turndown: (input: string) => string
-}
-
-type UseSlashCommandExecutorParams = {
-  wysiwygEditorRef: RefObject<HTMLDivElement | null>
-  linkSavedRangeRef: MutableRefObject<Range | null>
-  aiSavedRangeRef: MutableRefObject<Range | null>
-  getBlockTextBeforeCursor: () => { text: string; block: Element | null }
-  deleteCurrentBlockContents: () => void
-  turndownService: TurndownLike
-  updateActiveTabBody: (nextBody: string) => void
-  getHoloApi: () => Window['holo'] | null
-  closeSlashMenu: () => void
-  setLinkDialog: Dispatch<SetStateAction<LinkDialogState>>
-  setAiDialog: Dispatch<SetStateAction<AiDialogState>>
-  setShowSettings: Dispatch<SetStateAction<boolean>>
-  imageConfig: {
-    mode: ImageStorageMode
-    azureBlobContainerUrl: string
-    azureBlobSasToken: string
-    s3Region: string
-    s3Bucket: string
-    s3AccessKeyId: string
-    s3SecretAccessKey: string
-    s3Endpoint: string
-    s3PublicBaseUrl: string
-    dropboxAccessToken: string
-    dropboxFolderPath: string
-    gdriveAccessToken: string
-    gdriveFolderId: string
-  }
 }
 
 export function useSlashCommandExecutor({
@@ -56,11 +17,33 @@ export function useSlashCommandExecutor({
   updateActiveTabBody,
   getHoloApi,
   closeSlashMenu,
-  setLinkDialog,
   setAiDialog,
-  setShowSettings,
-  imageConfig,
-}: UseSlashCommandExecutorParams) {
+}: {
+  wysiwygEditorRef: RefObject<HTMLDivElement | null>
+  linkSavedRangeRef: MutableRefObject<Range | null>
+  aiSavedRangeRef: MutableRefObject<Range | null>
+  getBlockTextBeforeCursor: () => { text: string; block: Element | null }
+  deleteCurrentBlockContents: () => void
+  turndownService: TurndownLike
+  updateActiveTabBody: (nextBody: string) => void
+  getHoloApi: () => Window['holo'] | null
+  closeSlashMenu: () => void
+  setAiDialog: React.Dispatch<React.SetStateAction<any>>
+}) {
+  const {
+    repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
+    s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath,
+    gdriveAccessToken, gdriveFolderId,
+  } = useConfig()
+  const { setLinkDialog, setShowSettings } = useUI()
+  const imageConfig = {
+    mode: repoImageStorageMode,
+    azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
+    s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath,
+    gdriveAccessToken, gdriveFolderId,
+  }
   const executeSlashCommand = useCallback(
     (cmd: SlashCommand) => {
       const editor = wysiwygEditorRef.current

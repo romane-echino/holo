@@ -1,5 +1,4 @@
 import { useCallback, useEffect } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
 import { getBaseName } from '../lib/appUtils'
 import {
   DEFAULT_GIT_STATE,
@@ -7,8 +6,11 @@ import {
   getRemoteEditBlockFromGitState,
   normalizeGitState,
 } from '../lib/gitUtils'
-import type { GitState, RemoteEditBlock } from '../types/git'
+import type { GitState } from '../types/git'
 import type { ConfirmDialogState } from '../types/shared'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 type SyncFeedback = {
   status: 'idle' | 'success' | 'warning' | 'error'
@@ -24,37 +26,22 @@ export const DEFAULT_SYNC_FEEDBACK: SyncFeedback = {
 
 type GetHoloApi = () => Window['holo'] | null
 
-type UseGitWorkflowParams = {
-  rootPath: string | null
-  gitState: GitState
-  isGitBusy: boolean
-  activeTabPath: string | null
-  activeTabIsDirty: boolean
-  getHoloApi: GetHoloApi
-  refreshTree: () => Promise<void>
-  refreshActiveTabFromDisk: (holo: NonNullable<Window['holo']>) => Promise<void>
-  requestConfirmation: (dialog: ConfirmDialogState) => Promise<boolean>
-  setGitState: Dispatch<SetStateAction<GitState>>
-  setRemoteEditBlock: Dispatch<SetStateAction<RemoteEditBlock>>
-  setSyncFeedback: Dispatch<SetStateAction<SyncFeedback>>
-  setIsGitBusy: Dispatch<SetStateAction<boolean>>
-}
-
 export function useGitWorkflow({
-  rootPath,
-  gitState,
-  isGitBusy,
-  activeTabPath,
   activeTabIsDirty,
   getHoloApi,
   refreshTree,
   refreshActiveTabFromDisk,
   requestConfirmation,
-  setGitState,
-  setRemoteEditBlock,
-  setSyncFeedback,
-  setIsGitBusy,
-}: UseGitWorkflowParams) {
+}: {
+  activeTabIsDirty: boolean
+  getHoloApi: GetHoloApi
+  refreshTree: () => Promise<void>
+  refreshActiveTabFromDisk: (holo: NonNullable<Window['holo']>) => Promise<void>
+  requestConfirmation: (dialog: ConfirmDialogState) => Promise<boolean>
+}) {
+  const { rootPath } = useWorkspace()
+  const { activeTabPath } = useEditor()
+  const { gitState, isGitBusy, setGitState, setRemoteEditBlock, setSyncFeedback, setIsGitBusy } = useConfig()
   const refreshGitState = useCallback(
     async (fetchRemote = false) => {
       if (!rootPath) {
@@ -345,6 +332,12 @@ export function useGitWorkflow({
 
     return () => window.clearInterval(interval)
   }, [checkRemoteFreshnessAndGuardEditing, gitState.isRepo, rootPath])
+
+  useEffect(() => {
+    if (!activeTabPath) {
+      setRemoteEditBlock({ isBlocked: false, message: '' })
+    }
+  }, [activeTabPath, setRemoteEditBlock])
 
   return {
     refreshGitState,

@@ -1,64 +1,38 @@
 import { useCallback, useEffect } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
 import {
   buildAutoCommitMessage,
   getRepoConfigPath,
   getRepoRelativeFolderPath,
   resolveRepoRelativePath,
 } from '../lib/appUtils'
-import type { GitState } from '../types/git'
+import { useConfig } from '../contexts/ConfigContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useUI } from '../contexts/UIContext'
 
-type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
-
-type UseRepoImageSettingsParams = {
-  rootPath: string | null
-  globalConfigReady: boolean
-  appAuthor: string
-  gitState: GitState
-  repoImageStorageMode: ImageStorageMode
-  azureBlobContainerUrl: string
-  azureBlobSasToken: string
-  s3Region: string
-  s3Bucket: string
-  s3AccessKeyId: string
-  s3SecretAccessKey: string
-  dropboxAccessToken: string
-  gdriveAccessToken: string
-  getHoloApi: () => Window['holo'] | null
-  ensureWritableMode: () => boolean
-  refreshGitState: (fetchRemote?: boolean) => Promise<void>
-  setShowSettings: Dispatch<SetStateAction<boolean>>
-  setRepoImageStorageMode: Dispatch<SetStateAction<ImageStorageMode>>
-  setRepoImageModeReady: Dispatch<SetStateAction<boolean>>
-  setFolderIconByPath: Dispatch<SetStateAction<Record<string, string>>>
-}
+export type ImageStorageMode = 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
 
 type LoadRepoImageOptions = {
   silentNoRoot?: boolean
 }
 
 export function useRepoImageSettings({
-  rootPath,
-  globalConfigReady,
-  appAuthor,
-  gitState,
-  repoImageStorageMode,
-  azureBlobContainerUrl,
-  azureBlobSasToken,
-  s3Region,
-  s3Bucket,
-  s3AccessKeyId,
-  s3SecretAccessKey,
-  dropboxAccessToken,
-  gdriveAccessToken,
   getHoloApi,
   ensureWritableMode,
   refreshGitState,
-  setShowSettings,
-  setRepoImageStorageMode,
-  setRepoImageModeReady,
-  setFolderIconByPath,
-}: UseRepoImageSettingsParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  ensureWritableMode: () => boolean
+  refreshGitState: (fetchRemote?: boolean) => Promise<void>
+}) {
+  const {
+    appAuthor, gitState,
+    repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
+    dropboxAccessToken, gdriveAccessToken,
+    setRepoImageStorageMode, setRepoImageModeReady,
+  } = useConfig()
+  const { rootPath, setFolderIconByPath } = useWorkspace()
+  const { globalConfigReady, setShowSettings } = useUI()
   const autoCommitRepoConfigChange = useCallback(async () => {
     if (!gitState.isRepo || !window.holo || !rootPath) {
       return
@@ -332,5 +306,3 @@ export function useRepoImageSettings({
     saveFolderIconConfig,
   }
 }
-
-export type { ImageStorageMode }

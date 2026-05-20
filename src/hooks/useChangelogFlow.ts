@@ -1,35 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { normalizeVersionLabel } from '../lib/appUtils'
-import type { ChangelogEntry } from '../types/shared'
-
-type UseChangelogFlowParams = {
-  changelogEntries: ChangelogEntry[]
-  appVersion: string
-  globalConfigReady: boolean
-  seenChangelogVersion: string
-  setSeenChangelogVersion: React.Dispatch<React.SetStateAction<string>>
-  getHoloApi: () => Window['holo'] | null
-}
+import { CHANGELOG_ENTRIES } from '../constants/changelog'
+import { useUI } from '../contexts/UIContext'
 
 export function useChangelogFlow({
-  changelogEntries,
   appVersion,
-  globalConfigReady,
-  seenChangelogVersion,
-  setSeenChangelogVersion,
   getHoloApi,
-}: UseChangelogFlowParams) {
+}: {
+  appVersion: string
+  getHoloApi: () => Window['holo'] | null
+}) {
+  const { globalConfigReady, seenChangelogVersion, setSeenChangelogVersion } = useUI()
   const [showChangelogModal, setShowChangelogModal] = useState(false)
   const [selectedChangelogVersion, setSelectedChangelogVersion] = useState<string | null>(null)
 
   const selectedChangelogEntry = useMemo(
-    () => changelogEntries.find((entry) => entry.version === selectedChangelogVersion) ?? null,
-    [changelogEntries, selectedChangelogVersion],
+    () => CHANGELOG_ENTRIES.find((entry) => entry.version === selectedChangelogVersion) ?? null,
+    [selectedChangelogVersion],
   )
 
   const currentVersionChangelog = useMemo(
-    () => changelogEntries.find((entry) => entry.version === appVersion) ?? null,
-    [appVersion, changelogEntries],
+    () => CHANGELOG_ENTRIES.find((entry) => entry.version === appVersion) ?? null,
+    [appVersion],
   )
 
   const openChangelog = useCallback((version: string) => {

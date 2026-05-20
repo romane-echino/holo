@@ -1,26 +1,21 @@
 import { useCallback } from 'react'
 import { normalizeGitState } from '../lib/gitUtils'
 import type { CloneDialog } from '../types/shared'
-import type { GitState } from '../types/git'
 import type { OpenFolderResult } from '../types/app'
-
-type UseCloneWorkflowParams = {
-  cloneDialog: CloneDialog | null
-  setCloneDialog: React.Dispatch<React.SetStateAction<CloneDialog | null>>
-  setGitState: React.Dispatch<React.SetStateAction<GitState>>
-  getHoloApi: () => Window['holo'] | null
-  applyOpenedFolder: (openedFolder: OpenFolderResult) => void
-  refreshRecentFolders: () => Promise<void>
-}
+import { useUI } from '../contexts/UIContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useCloneWorkflow({
-  cloneDialog,
-  setCloneDialog,
-  setGitState,
   getHoloApi,
   applyOpenedFolder,
   refreshRecentFolders,
-}: UseCloneWorkflowParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  applyOpenedFolder: (openedFolder: OpenFolderResult) => void
+  refreshRecentFolders: () => Promise<void>
+}) {
+  const { cloneDialog, setCloneDialog } = useUI()
+  const { setGitState } = useConfig()
   const openCloneDialog = useCallback(() => {
     setCloneDialog({
       repoUrl: '',
@@ -45,7 +40,7 @@ export function useCloneWorkflow({
         return
       }
 
-      setCloneDialog((previous) =>
+      setCloneDialog((previous: CloneDialog | null) =>
         previous
           ? {
               ...previous,
@@ -80,7 +75,7 @@ export function useCloneWorkflow({
       return
     }
 
-    setCloneDialog((previous) =>
+    setCloneDialog((previous: CloneDialog | null) =>
       previous
         ? {
             ...previous,
@@ -104,7 +99,7 @@ export function useCloneWorkflow({
       setGitState(normalizeGitState(nextGitState))
     } catch (error) {
       window.alert((error as Error).message)
-      setCloneDialog((previous) =>
+      setCloneDialog((previous: CloneDialog | null) =>
         previous
           ? {
               ...previous,
