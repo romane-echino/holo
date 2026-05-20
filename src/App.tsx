@@ -86,6 +86,7 @@ import {
   getRelativeLinkPath,
   flatTreeFiles,
 } from './lib/appUtils'
+import { CHANGELOG_ENTRIES } from './constants/changelog'
 import { matchesSlashQuery, SLASH_COMMANDS } from './lib/editorSlash'
 
 type OpenTab = {
@@ -115,42 +116,6 @@ type TocItem = {
 }
 
 
-// ChangelogEntry imported from shared types
-
-const CHANGELOG_ENTRIES: ChangelogEntry[] = [
-  {
-    version: '0.2.8',
-    releasedAt: '2026-05-08',
-    items: [
-      'Export PDF : bouton déplacé à côté de « Copier le lien » sur le fichier actif.',
-      'Liens dans l’éditeur : indication « Ctrl+clic » et ouverture via Ctrl/Cmd+clic.',
-      'Stabilité édition : correctif du blocage après changement de fichier sans sauvegarde.',
-      'Responsive : accès à la table des matières en mode compact via le bouton « Plan ».',
-      'Fenêtre desktop : largeur minimale réduite à 400px.',
-      'Templates : variables ($DATE, $AUTHOR…) détectées et pré-remplies, saisies dans le dialog de création.',
-    ],
-  },
-  {
-    version: '0.2.7',
-    releasedAt: '2026-05-07',
-    items: [
-      'Templates : définir un fichier comme modèle et créer un document depuis un modèle.',
-      'Mode lecture seule : switch global près du profil et blocage des actions d’édition.',
-      'Recherche : prise en compte du titre, du nom de fichier et de la description.',
-      'Récents : correction de l’ouverture du bon fichier.',
-      'Navigation fichiers : ouverture plus rapide (suppression du fetch distant bloquant).',
-    ],
-  },
-  {
-    version: '0.2.6',
-    releasedAt: '2026-05-06',
-    items: [
-      'Migration de la configuration globale vers ~/.holo/holo-config.json.',
-      'Correction du lancement via lien holo:// (plus de re-saisie du profil et des clés).',
-      'Améliorations de stabilité sur les actions de fichiers.',
-    ],
-  },
-]
 
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null)

@@ -607,3 +607,61 @@ Recherche dans la doc (directement sur qdrant?)
 - ✅ Phase 3 Markdown : moteur unifié dans `src/lib/markdown.ts` (front-matter + html↔markdown + post-processing)
 - ✅ Phase 4 Documentation IA/architecture : guide onboarding ajouté `docs/ARCHITECTURE_IA_ONBOARDING.md`
 - 🔄 Phase 5 QA globale : checklist de non-régression consolidée dans `QA_PHASE_1.md` + pré-validation technique OK (`build` vert, plus de `window.confirm`, `App.tsx` nettoyé côté erreurs lint, dette lint résiduelle documentée hors périmètre principal)
+---
+
+## Phase 6 — Refactorisation Contextes & Architecture (20/05/2026)
+
+### Objectif
+Améliorer la clarté et la limpidité de App.tsx (2303 lignes) via une architecture Context-driven.
+Permettre une migration progressive sans refactorisation complète immédiate.
+
+### Résultat
+✅ **4 contextes créés** avec types TypeScript complets :
+- **EditorContext** - État d'édition (activeTab, editorMode, popups, menus)
+- **WorkspaceContext** - État arborescence (rootPath, tree, expanded, drag-drop)
+- **UIContext** - État UI général (modals, dialogs, statuts)
+- **ConfigContext** - Configurations (git, image storage, IA)
+
+✅ **Système d'intégration** :
+- `useAppState()` hook agrège tous les useState
+- `AppStateProvider` enveloppe l'app entière (root de React)
+- Exports centralisés via `src/contexts/index.ts`
+
+✅ **Documentation complète** :
+- `CONTEXT_ARCHITECTURE.md` - Guide d'utilisation + exemples
+- Migration progressive possible sans refactor App.tsx
+
+### Architecture
+```
+src/contexts/
+├── EditorContext.tsx      (éditeur)
+├── WorkspaceContext.tsx   (fichiers)
+├── UIContext.tsx          (modals/dialogs)
+├── ConfigContext.tsx      (config/secrets)
+├── AppStateProvider.tsx   (root provider)
+└── index.ts              (exports)
+
+src/hooks/
+└── useAppState.ts        (agrège tous les useState)
+
+src/main.tsx
+└── Enveloppé par <AppStateProvider>
+```
+
+### Avantages
+- ✅ Composants enfants peuvent utiliser `useEditor()`, `useWorkspace()`, `useUI()`, `useConfig()`
+- ✅ Élimine prop drilling profond
+- ✅ Type-safe avec interfaces TypeScript
+- ✅ Migration progressive (App.tsx reste inchangé pour le moment)
+- ✅ Build ✅ (975ms) | TypeScript 0 erreurs
+
+### Prochaines étapes (optionnelles)
+1. Commencer à utiliser les contextes dans les composants enfants
+2. Mesurer amélioration de prop drilling
+3. Si bénéfices confirmés → refactoriser App.tsx progressivement (Phase 7)
+
+### Fichiers créés/modifiés
+- **Créés** : 5 contextes + 1 hook + 1 provider + 1 guide
+- **Modifiés** : src/main.tsx (ajout AppStateProvider)
+- **Taille App.tsx** : Stable à 2303 lignes
+- **Build** : ✅ Succès (975ms)
