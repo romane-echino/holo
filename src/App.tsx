@@ -1,11 +1,11 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { useEditor } from './contexts/EditorContext'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useUI } from './contexts/UIContext'
 import { useConfig } from './contexts/ConfigContext'
 import { turndownService } from './lib/markdown'
 import {
-  AppHeader, AiDialogModalWrapper, AppModalsWrapper, AppSidebar,
+  AppHeaderWrapper, AiDialogModalWrapper, AppModalsWrapper, AppSidebar,
   EditorCanvasWrapper, EditorEmptyState, EditorOverlaysWrapper, EditorRightToc, EditorTopBarWrapper,
   AppSettingsModal, SidebarSearchPanel,
   SidebarFilesPanelWrapper, SidebarGitPanelWrapper,
@@ -13,23 +13,23 @@ import {
   useTableInteractions,
 } from './components'
 import {
-  useAppUpdates, useDesktopWindow, useGitWorkflow,
+  useAppUpdates, useGitWorkflow,
   useRepoImageSettings, useGlobalConfig, useFileMetadata, useMyFilePaths,
   useNavigationSuggestions, useTemplateVariables, useCompactToc, useCompactLayout,
   useChangelogFlow, useConfirmationDialog, useTemplateOptions,
-  useAiDialogSubmission, useNameDialogActions, usePathTargetActions, useWindowHeaderDrag,
+  useAiDialogSubmission, useNameDialogActions, usePathTargetActions,
   useCloneWorkflow, useGitDialogActions, useWorkspaceUiActions, useEditorUiCallbacks,
   useWorkspaceFolders, useSearchWorkflow, useAiProviderClient, useRecentFolderIcons,
-  useWysiwygBlockHelpers, useEditorImageDrag, useSlashCommandExecutor, useSlashMenuKeyboard,
+  useWysiwygBlockHelpers, useEditorImageDrag, useSlashCommandExecutor, useWysiwygKeyDown,
   useImageUploadHandler, useCodeBlockFormatter, useEditorLinkInsertion,
-  useWysiwygStructuralKeys, useWysiwygTabNavigation, useWysiwygKeyGuards, useWysiwygInputHandler,
+  useWysiwygInputHandler,
   useEditorSelectionPopup, useEditorOverlayEffects, useContextMenuDismiss, useMoveNode,
   useNameDialogSubmission,
   useGetHoloApi, useFocusActiveEditor, useEnsureWritableMode, useDiscardTransientEditorState,
   useRefreshActiveTabFromDisk, useToggleDirectory, useOpenFile, useOpenEditorLink,
   useFileNavigation, useSaveCurrentFile, useTabContentUpdates, useSlashMenuControl,
   useEditorBodyUpdate, useTableDndAndMarkdownConversion, useExportPdf, useSyncWysiwygFromMarkdown,
-  useRawEditorDrop, useRawEditorKeyDown, useWysiwygKeyOrchestration, useContextMenuActions,
+  useRawEditorDrop, useRawEditorKeyDown, useContextMenuActions,
   useReadonlyDateFormatter, useEditorUIHelpers, useToggleTemplateStatus,
   useTocItems, useEditorImageLoader, useStartupNavigation, usePendingTitleFocus,
 } from './hooks'
@@ -38,46 +38,29 @@ import { flatTreeFiles } from './lib/appUtils'
 function App() {
   // ── State from contexts ──────────────────────────────────────────────────────
   const {
-    activeTab, setActiveTab, activeTabPath, setActiveTabPath,
-    editorMode, setEditorMode,
-    readOnlyMode, setReadOnlyMode,
+    activeTab,
+    editorMode,
   } = useEditor()
 
   const {
-    rootPath, tree,
-    setExpandedDirectories,
-    selectedPath, setSelectedPath, selectedType, setSelectedType,
-    recentFolders, recentFilePaths, setRecentFilePaths,
-    setRecentFolderIconByPath,
-    setFileIconByPath,
-    fileMetaByPath, setFileMetaByPath, setPathStatsByPath,
-    archivedFiles, activeSidebar, setActiveSidebar,
-    contextMenu, setContextMenu,
+    tree,
+    fileMetaByPath,
+    activeSidebar,
+    contextMenu,
   } = useWorkspace()
 
   const {
     showSettings, setShowSettings,
-    setShowUnsavedChangesModal,
-    setShowAuthorModal, setAuthorModalMode,
-    setAuthorModalValue, showUserMenu, setShowUserMenu,
-    nameDialog, setNameDialog,
-    linkDialog,
-    setSaveStatus,
-    pendingFileSwitchPath, setPendingFileSwitchPath,
   } = useUI()
 
   const {
-    appAuthor,
     gitState,
-    remoteEditBlock, setRemoteEditBlock,
-    openaiApiKey, geminiApiKey, aiProvider, openaiPrompt,
   } = useConfig()
   const {
     confirmDialog,
     requestConfirmation,
     resolveConfirmationDialog,
   } = useConfirmationDialog()
-  const headerRef = useRef<HTMLElement | null>(null)
 
   const {
     appVersion,
@@ -92,21 +75,15 @@ function App() {
     isSidebarOpenOnCompact,
     setIsSidebarOpenOnCompact,
     selectSidebar,
-  } = useCompactLayout({
-    activeTabPath,
-    setActiveSidebar,
-  })
+  } = useCompactLayout()
 
   const templateOptions = useTemplateOptions(fileMetaByPath)
 
-  const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
-  const isEditorReadOnly = readOnlyMode || remoteEditBlock.isBlocked
-  const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
 
   const { focusActiveEditorSoon } = useFocusActiveEditor()
 
-  const { ensureWritableMode } = useEnsureWritableMode({ readOnlyMode })
+  const { ensureWritableMode } = useEnsureWritableMode()
 
   const { discardTransientEditorState } = useDiscardTransientEditorState()
 
@@ -124,25 +101,6 @@ function App() {
   } = useChangelogFlow({ appVersion, getHoloApi })
 
   const {
-    windowIsMaximized,
-    windowPlatform,
-    setWindowIsMaximized,
-    setWindowPlatform,
-    minimizeWindow,
-    toggleDevTools,
-    toggleMaximizeWindow,
-    closeWindow,
-  } = useDesktopWindow(getHoloApi)
-
-  const { onHeaderMouseDown } = useWindowHeaderDrag({
-    headerRef,
-    windowIsMaximized,
-    windowPlatform,
-    setWindowIsMaximized,
-    setWindowPlatform,
-  })
-
-  const {
     refreshTree,
     applyOpenedFolder,
     refreshRecentFolders,
@@ -152,7 +110,7 @@ function App() {
     removeRecentFolder,
   } = useWorkspaceFolders({ getHoloApi })
 
-  const { refreshActiveTabFromDisk } = useRefreshActiveTabFromDisk({ activeTabPath, setActiveTab })
+  const { refreshActiveTabFromDisk } = useRefreshActiveTabFromDisk()
 
   const {
     refreshGitState,
@@ -162,7 +120,6 @@ function App() {
     syncRepository,
     resolveConflictChoice,
   } = useGitWorkflow({
-    activeTabIsDirty: activeTab?.isDirty ?? false,
     getHoloApi,
     refreshTree,
     refreshActiveTabFromDisk,
@@ -175,71 +132,44 @@ function App() {
     saveFolderIconConfig,
   } = useRepoImageSettings({ getHoloApi, ensureWritableMode, refreshGitState })
 
-  useRecentFolderIcons({
-    recentFolders,
-    getHoloApi,
-    setRecentFolderIconByPath,
-  })
+  useRecentFolderIcons({ getHoloApi })
 
   useGlobalConfig({ getHoloApi })
 
-  useFileMetadata({
-    tree,
-    activeTabPath,
-    activeTabContent: activeTab?.content,
-    setFileIconByPath,
-    setFileMetaByPath,
-  })
+  useFileMetadata()
 
   const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
-  const { myFilePaths } = useMyFilePaths({ allFilePaths, appAuthor, getHoloApi })
-  const { visibleRecentFilePaths, linkPageSuggestions } = useNavigationSuggestions({
-    allFilePaths,
-    recentFilePaths,
-    activeTabPath,
-    pageQuery: linkDialog?.pageQuery ?? '',
-  })
+  const { myFilePaths } = useMyFilePaths({ allFilePaths, getHoloApi })
+  const { visibleRecentFilePaths, linkPageSuggestions } = useNavigationSuggestions({ allFilePaths })
 
   useCompactToc({
     isCompactLayout,
     tocItemsCount: tocItems.length,
   })
 
-  useTemplateVariables({
-    nameDialog,
-    appAuthor,
-    getHoloApi,
-    setNameDialog,
-  })
+  useTemplateVariables({ getHoloApi })
 
-  const { toggleDirectory } = useToggleDirectory({ setExpandedDirectories })
+  const { toggleDirectory } = useToggleDirectory()
 
   const { openFile } = useOpenFile({
-    getHoloApi, rootPath, gitState, applyRemoteEditBlockFromGitState,
-    setRemoteEditBlock, setActiveTab, setPathStatsByPath, setActiveTabPath,
-    setRecentFilePaths, focusActiveEditorSoon,
+    getHoloApi, applyRemoteEditBlockFromGitState, focusActiveEditorSoon,
   })
 
-  const { openEditorLink } = useOpenEditorLink({ activeTabPath, getHoloApi, openFile, rootPath })
+  const { openEditorLink } = useOpenEditorLink({ getHoloApi, openFile })
 
   useStartupNavigation({ openFile, openRecentFolder })
 
   const { onSelectNode, confirmDiscardAndSwitchFile, cancelDiscardAndSwitchFile } = useFileNavigation({
-    activeTab, activeTabPath, discardTransientEditorState, openFile,
-    pendingFileSwitchPath, setPendingFileSwitchPath, setSelectedPath,
-    setSelectedType, setShowUnsavedChangesModal,
+    discardTransientEditorState, openFile,
   })
 
   const { saveCurrentFile } = useSaveCurrentFile({
-    activeTab, appAuthor, ensureWritableMode, getHoloApi, gitState,
-    refreshGitState, refreshTree, rootPath, setActiveTab, setPathStatsByPath, setSaveStatus,
+    ensureWritableMode, getHoloApi, refreshGitState, refreshTree,
   })
 
-  const { updateActiveTabContent, updateEditableHeader, updateTags } = useTabContentUpdates({
-    activeTab, isEditorReadOnly, setActiveTab,
-  })
+  const { updateActiveTabContent, updateEditableHeader, updateTags } = useTabContentUpdates()
 
-  const { updateActiveTabBody } = useEditorBodyUpdate({ activeTab, updateActiveTabContent })
+  const { updateActiveTabBody } = useEditorBodyUpdate({ updateActiveTabContent })
 
   const { closeSlashMenu } = useSlashMenuControl()
 
@@ -252,16 +182,9 @@ function App() {
   } = useSearchWorkflow({
     getHoloApi,
     allFilePaths,
-    archivedFiles,
-    rootPath,
   })
 
-  const { askAi } = useAiProviderClient({
-    aiProvider,
-    openaiApiKey,
-    geminiApiKey,
-    openaiPrompt,
-  })
+  const { askAi } = useAiProviderClient()
 
   const {
     getBlockTextBeforeCursor,
@@ -273,9 +196,7 @@ function App() {
     onEditorDragOver,
     onEditorDragEnter,
     onEditorDragLeave,
-  } = useEditorImageDrag({
-    isEditorReadOnly,
-  })
+  } = useEditorImageDrag()
 
 
   const { executeSlashCommand } = useSlashCommandExecutor({
@@ -287,32 +208,19 @@ function App() {
     closeSlashMenu,
   })
 
-  const { handleSlashMenuKeyboard } = useSlashMenuKeyboard({
+  const { onWysiwygKeyDown } = useWysiwygKeyDown({
     executeSlashCommand,
     getBlockTextBeforeCursor,
-  })
-
-  const { handleWysiwygStructuralKeys } = useWysiwygStructuralKeys({
     deleteCurrentBlockContents,
-    getBlockTextBeforeCursor,
     turndownService,
     updateActiveTabBody,
-  })
-
-  const { handleWysiwygTabNavigation } = useWysiwygTabNavigation({
-    turndownService,
-    updateActiveTabBody,
-  })
-
-  const { handleWysiwygKeyGuards } = useWysiwygKeyGuards({
-    isEditorReadOnly,
   })
 
   const { getNextTableDndId, markdownToHtml } = useTableDndAndMarkdownConversion()
 
   const { handleImageFiles } = useImageUploadHandler({ getHoloApi, ensureImageProviderReady })
 
-  const { exportActiveFileToPdf } = useExportPdf({ activeTab, getHoloApi, markdownToHtml })
+  const { exportActiveFileToPdf } = useExportPdf({ getHoloApi, markdownToHtml })
 
   const { syncWysiwygFromMarkdown } = useSyncWysiwygFromMarkdown({ markdownToHtml })
 
@@ -323,7 +231,7 @@ function App() {
   })
 
   // Load images with data-src via IPC
-  useEditorImageLoader({ desktopApiAvailable, editorMode, activeTabPath, getHoloApi })
+  useEditorImageLoader({ desktopApiAvailable, getHoloApi })
   usePendingTitleFocus()
 
   const submitAiDialog = useAiDialogSubmission({
@@ -365,7 +273,6 @@ function App() {
   })
 
   const { onWysiwygInput } = useWysiwygInputHandler({
-    isEditorReadOnly,
     getBlockTextBeforeCursor,
     turndownService,
     updateActiveTabBody,
@@ -373,20 +280,14 @@ function App() {
   })
 
   const { onRawDrop } = useRawEditorDrop({
-    isEditorReadOnly,
     isImageFile, handleImageFiles, updateActiveTabBody,
   })
 
-  const { onRawKeyDown } = useRawEditorKeyDown({ isEditorReadOnly, updateActiveTabBody })
+  const { onRawKeyDown } = useRawEditorKeyDown({ updateActiveTabBody })
 
-  const { onWysiwygKeyDown } = useWysiwygKeyOrchestration({
-    handleWysiwygKeyGuards, handleSlashMenuKeyboard,
-    handleWysiwygTabNavigation, handleWysiwygStructuralKeys,
-  })
 
-  const { closeContextMenu, openTreeContextMenu, runContextAction } = useContextMenuActions({
-    setContextMenu, setSelectedPath, setSelectedType,
-  })
+
+  const { closeContextMenu, openTreeContextMenu, runContextAction } = useContextMenuActions()
 
   useContextMenuDismiss({
     contextMenuOpen: contextMenu !== null,
@@ -406,21 +307,13 @@ function App() {
 
   const { formatReadonlyDate } = useReadonlyDateFormatter()
 
-  const { runWysiwygCommand, onTocItemClick } = useEditorUIHelpers({
-    editorMode, onWysiwygInput, setEditorMode,
-  })
+  const { runWysiwygCommand, onTocItemClick } = useEditorUIHelpers({ onWysiwygInput })
 
   const {
     openCreateFileDialog,
     openCreateDirectoryDialog,
     openRenameDialog,
-  } = useNameDialogActions({
-    ensureWritableMode,
-    rootPath,
-    selectedPath,
-    selectedType,
-    setNameDialog,
-  })
+  } = useNameDialogActions({ ensureWritableMode })
 
   const { submitNameDialog } = useNameDialogSubmission({
     ensureWritableMode,
@@ -431,8 +324,7 @@ function App() {
   })
 
   const { toggleTemplateStatus } = useToggleTemplateStatus({
-    activeTabPath, ensureWritableMode, getHoloApi, refreshTree, refreshGitState,
-    setActiveTab, setFileMetaByPath, setPathStatsByPath,
+    ensureWritableMode, getHoloApi, refreshTree, refreshGitState,
   })
 
   const {
@@ -514,31 +406,12 @@ function App() {
     >
 
       {/* App header */}
-      <AppHeader
-        headerRef={headerRef}
+      <AppHeaderWrapper
         isCompactLayout={isCompactLayout}
         appVersion={appVersion}
-        showTypeRBadge={showTypeRBadge}
-        readOnlyMode={readOnlyMode}
-        appAuthor={appAuthor}
-        showUserMenu={showUserMenu}
         isSidebarOpenOnCompact={isSidebarOpenOnCompact}
-        onHeaderMouseDown={onHeaderMouseDown}
         onToggleSidebar={() => setIsSidebarOpenOnCompact((previous) => !previous)}
-        onToggleReadOnly={() => setReadOnlyMode((previous) => !previous)}
-        onToggleUserMenu={() => setShowUserMenu((previous) => !previous)}
-        onEditAuthor={() => {
-          setAuthorModalMode('edit')
-          setAuthorModalValue(appAuthor)
-          setShowAuthorModal(true)
-          setShowUserMenu(false)
-        }}
         onLogout={logoutAuthorProfile}
-        onDevTools={toggleDevTools}
-        onMinimize={minimizeWindow}
-        onMaximize={toggleMaximizeWindow}
-        onClose={closeWindow}
-        onCloseUserMenuBackdrop={() => setShowUserMenu(false)}
       />
 
       {isCompactLayout && isSidebarOpenOnCompact && (
@@ -647,7 +520,6 @@ function App() {
                 <EditorOverlaysWrapper
                   runWysiwygCommand={runWysiwygCommand}
                   onOpenLinkFromSelection={onOpenLinkFromSelection}
-                  hasAiProviderConfigured={hasAiProviderConfigured}
                   onOpenAiTransformFromSelection={onOpenAiTransformFromSelection}
                   insertTableRow={insertTableRow}
                   insertTableColumn={insertTableColumn}

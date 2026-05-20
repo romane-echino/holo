@@ -1,19 +1,14 @@
 import { useMemo } from 'react'
 import { getBaseName } from '../lib/appUtils'
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useUI } from '../contexts/UIContext'
 
-type UseNavigationSuggestionsParams = {
-  allFilePaths: string[]
-  recentFilePaths: string[]
-  activeTabPath: string | null
-  pageQuery: string
-}
-
-export function useNavigationSuggestions({
-  allFilePaths,
-  recentFilePaths,
-  activeTabPath,
-  pageQuery,
-}: UseNavigationSuggestionsParams) {
+export function useNavigationSuggestions({ allFilePaths }: { allFilePaths: string[] }) {
+  const { activeTabPath } = useEditor()
+  const { recentFilePaths } = useWorkspace()
+  const { linkDialog } = useUI()
+  const pageQuery = linkDialog?.pageQuery ?? ''
   const visibleRecentFilePaths = useMemo(
     () => recentFilePaths.filter((filePath) => allFilePaths.includes(filePath)).slice(0, 5),
     [allFilePaths, recentFilePaths],

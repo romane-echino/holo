@@ -1,16 +1,8 @@
-import { useEffect, type Dispatch, type SetStateAction } from 'react'
+import { useEffect } from 'react'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
-type UseRecentFolderIconsParams = {
-  recentFolders: string[]
-  getHoloApi: () => Window['holo'] | null
-  setRecentFolderIconByPath: Dispatch<SetStateAction<Record<string, string>>>
-}
-
-export function useRecentFolderIcons({
-  recentFolders,
-  getHoloApi,
-  setRecentFolderIconByPath,
-}: UseRecentFolderIconsParams) {
+export function useRecentFolderIcons({ getHoloApi }: { getHoloApi: () => Window['holo'] | null }) {
+  const { recentFolders, setRecentFolderIconByPath } = useWorkspace()
   useEffect(() => {
     if (recentFolders.length === 0) {
       setRecentFolderIconByPath({})

@@ -1,19 +1,17 @@
 import { useCallback } from 'react'
 import { getParentPath, resolveRepoRelativePath } from '../lib/appUtils'
-
-type UseOpenEditorLinkParams = {
-  activeTabPath: string | null
-  getHoloApi: () => Window['holo'] | null
-  openFile: (filePath: string) => Promise<void>
-  rootPath: string | null
-}
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
 export function useOpenEditorLink({
-  activeTabPath,
   getHoloApi,
   openFile,
-  rootPath,
-}: UseOpenEditorLinkParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  openFile: (filePath: string) => Promise<void>
+}) {
+  const { activeTabPath } = useEditor()
+  const { rootPath } = useWorkspace()
   const openEditorLink = useCallback(
     async (href: string) => {
       const trimmedHref = href.trim()

@@ -1,40 +1,22 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import { getBaseName } from '../lib/appUtils'
-import type { FilePathStats } from '../types/editor'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
-
-interface OpenTab {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-interface UseOpenFileParams {
-  getHoloApi: () => Window['holo'] | null
-  rootPath: string | null
-  gitState: { isRepo: boolean; incoming: number }
-  applyRemoteEditBlockFromGitState: (state: any) => void
-  setRemoteEditBlock: (block: { isBlocked: boolean; message: string }) => void
-  setActiveTab: Dispatch<SetStateAction<OpenTab | null>>
-  setPathStatsByPath: Dispatch<SetStateAction<Record<string, FilePathStats>>>
-  setActiveTabPath: (path: string) => void
-  setRecentFilePaths: Dispatch<SetStateAction<string[]>>
-  focusActiveEditorSoon: () => void
-}
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useConfig } from '../contexts/ConfigContext'
 
 export function useOpenFile({
   getHoloApi,
-  rootPath,
-  gitState,
   applyRemoteEditBlockFromGitState,
-  setRemoteEditBlock,
-  setActiveTab,
-  setPathStatsByPath,
-  setActiveTabPath,
-  setRecentFilePaths,
   focusActiveEditorSoon,
-}: UseOpenFileParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  applyRemoteEditBlockFromGitState: (state: any) => void
+  focusActiveEditorSoon: () => void
+}) {
+  const { setActiveTab, setActiveTabPath } = useEditor()
+  const { rootPath, setPathStatsByPath, setRecentFilePaths } = useWorkspace()
+  const { gitState, setRemoteEditBlock } = useConfig()
   const { setShowCompactToc } = useEditorOverlay()
   const openFile = useCallback(
     async (filePath: string) => {
@@ -54,7 +36,7 @@ export function useOpenFile({
 
         const nextContent = await holo.readFile(filePath)
         const stats = await holo.getPathStats(filePath).catch(() => null)
-        const nextFile: OpenTab = {
+        const nextFile = {
           path: filePath,
           name: getBaseName(filePath),
           content: nextContent,

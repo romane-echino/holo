@@ -1,20 +1,20 @@
 import { useCallback } from 'react'
 import { useEditor } from '../contexts/EditorContext'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
+import { useIsEditorReadOnly } from './useIsEditorReadOnly'
 
 interface UseRawEditorDropParams {
-  isEditorReadOnly: boolean
   isImageFile: (file: File) => boolean
   handleImageFiles: (files: File[], callback: (mdImage: string) => void) => void
   updateActiveTabBody: (nextBody: string) => void
 }
 
 export function useRawEditorDrop({
-  isEditorReadOnly,
   isImageFile,
   handleImageFiles,
   updateActiveTabBody,
 }: UseRawEditorDropParams) {
+  const isEditorReadOnly = useIsEditorReadOnly()
   const { setIsImageDragOverEditor } = useEditor()
   const { imageDragDepthRef } = useEditorOverlay()
 

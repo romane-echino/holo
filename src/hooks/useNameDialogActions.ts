@@ -1,23 +1,12 @@
 import { useCallback } from 'react'
 import { getBaseName, getDirectoryTarget } from '../lib/appUtils'
 import type { NodeType } from '../types/app'
-import type { NameDialog } from '../types/shared'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useUI } from '../contexts/UIContext'
 
-type UseNameDialogActionsParams = {
-  ensureWritableMode: () => boolean
-  rootPath: string | null
-  selectedPath: string | null
-  selectedType: NodeType | null
-  setNameDialog: React.Dispatch<React.SetStateAction<NameDialog | null>>
-}
-
-export function useNameDialogActions({
-  ensureWritableMode,
-  rootPath,
-  selectedPath,
-  selectedType,
-  setNameDialog,
-}: UseNameDialogActionsParams) {
+export function useNameDialogActions({ ensureWritableMode }: { ensureWritableMode: () => boolean }) {
+  const { rootPath, selectedPath, selectedType } = useWorkspace()
+  const { setNameDialog } = useUI()
   const openCreateFileDialog = useCallback(
     (targetPath?: string | null, targetType?: NodeType | null) => {
       if (!ensureWritableMode()) {

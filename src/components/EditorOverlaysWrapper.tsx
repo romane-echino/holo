@@ -2,13 +2,13 @@ import React from 'react'
 import { EditorOverlays } from './EditorOverlays'
 import { useEditor } from '../contexts/EditorContext'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
+import { useConfig } from '../contexts/ConfigContext'
 import { SLASH_COMMANDS, matchesSlashQuery } from '../lib/editorSlash'
 import type { WysiwygCommand, SlashCommand } from '../types/editor'
 
 type EditorOverlaysWrapperProps = {
   runWysiwygCommand: (command: WysiwygCommand, value?: string) => void
   onOpenLinkFromSelection: () => void
-  hasAiProviderConfigured: boolean
   onOpenAiTransformFromSelection: () => void
   insertTableRow: () => void
   insertTableColumn: () => void
@@ -25,6 +25,8 @@ type EditorOverlaysWrapperProps = {
 
 export const EditorOverlaysWrapper: React.FC<EditorOverlaysWrapperProps> = (props) => {
   const { editorMode } = useEditor()
+  const { openaiApiKey, geminiApiKey } = useConfig()
+  const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
   const {
     selectionPopup, tablePopup, columnTypePopup, hoveredCodeBlock,
     codeBlockPopup, codeBlockLeaveTimerRef, setHoveredCodeBlock, setCodeBlockPopup,
@@ -47,6 +49,7 @@ export const EditorOverlaysWrapper: React.FC<EditorOverlaysWrapperProps> = (prop
       slashMenuIndex={slashMenuIndex}
       slashCommands={SLASH_COMMANDS}
       matchesSlashQuery={matchesSlashQuery}
+      hasAiProviderConfigured={hasAiProviderConfigured}
       {...props}
     />
   )

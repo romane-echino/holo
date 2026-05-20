@@ -1,20 +1,15 @@
 import { useCallback } from 'react'
 import { getEditableMarkdownHeader, splitMarkdownFrontMatter } from '../lib/markdown'
+import { useEditor } from '../contexts/EditorContext'
 
-type OpenTabLike = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseExportPdfParams = {
-  activeTab: OpenTabLike | null
+export function useExportPdf({
+  getHoloApi,
+  markdownToHtml,
+}: {
   getHoloApi: () => Window['holo'] | null
   markdownToHtml: (markdown: string) => string
-}
-
-export function useExportPdf({ activeTab, getHoloApi, markdownToHtml }: UseExportPdfParams) {
+}) {
+  const { activeTab } = useEditor()
   const exportActiveFileToPdf = useCallback(async () => {
     if (!activeTab) {
       window.alert('Aucun fichier actif à exporter.')

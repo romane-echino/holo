@@ -2,26 +2,16 @@ import { useCallback, useState } from 'react'
 import { getBaseName, getCommitTargetPath } from '../lib/appUtils'
 import { getEditableMarkdownHeader, splitMarkdownFrontMatter } from '../lib/markdown'
 import type { SearchResultItem } from '../types/app'
-
-type ArchivedFileEntry = {
-  archivedPath: string
-  originalPath: string
-  name: string
-}
-
-type UseSearchWorkflowParams = {
-  getHoloApi: () => Window['holo'] | null
-  allFilePaths: string[]
-  archivedFiles: ArchivedFileEntry[]
-  rootPath: string | null
-}
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
 export function useSearchWorkflow({
   getHoloApi,
   allFilePaths,
-  archivedFiles,
-  rootPath,
-}: UseSearchWorkflowParams) {
+}: {
+  getHoloApi: () => Window['holo'] | null
+  allFilePaths: string[]
+}) {
+  const { archivedFiles, rootPath } = useWorkspace()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([])
   const [isSearching, setIsSearching] = useState(false)

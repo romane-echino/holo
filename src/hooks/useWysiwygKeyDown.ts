@@ -4,25 +4,25 @@ import { useWysiwygKeyGuards } from './useWysiwygKeyGuards'
 import { useWysiwygTabNavigation } from './useWysiwygTabNavigation'
 import { useWysiwygStructuralKeys } from './useWysiwygStructuralKeys'
 import { useSlashMenuKeyboard } from './useSlashMenuKeyboard'
+import { useIsEditorReadOnly } from './useIsEditorReadOnly'
 import type { SlashCommand } from '../types/editor'
 
 type TurndownLike = { turndown: (input: string) => string }
 
 export function useWysiwygKeyDown({
-  isEditorReadOnly,
   executeSlashCommand,
   getBlockTextBeforeCursor,
   deleteCurrentBlockContents,
   turndownService,
   updateActiveTabBody,
 }: {
-  isEditorReadOnly: boolean
   executeSlashCommand: (command: SlashCommand) => void
   getBlockTextBeforeCursor: () => { text: string; block: Element | null }
   deleteCurrentBlockContents: () => void
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
 }) {
+  const isEditorReadOnly = useIsEditorReadOnly()
   const { wysiwygEditorRef } = useEditorOverlay()
   const { handleWysiwygKeyGuards } = useWysiwygKeyGuards({ isEditorReadOnly })
   const { handleWysiwygTabNavigation } = useWysiwygTabNavigation({ turndownService, updateActiveTabBody })

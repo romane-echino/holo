@@ -1,44 +1,25 @@
-import { useCallback, useEffect, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect } from 'react'
 import { buildAutoCommitMessage } from '../lib/appUtils'
-import type { FilePathStats } from '../types/editor'
-import type { GitState } from '../types/git'
 import { useEditor } from '../contexts/EditorContext'
-
-type OpenTabLike = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseSaveCurrentFileParams = {
-  activeTab: OpenTabLike | null
-  appAuthor: string
-  ensureWritableMode: () => boolean
-  getHoloApi: () => Window['holo'] | null
-  gitState: GitState
-  refreshGitState: (silent?: boolean) => Promise<void>
-  refreshTree: () => Promise<void>
-  rootPath: string | null
-  setActiveTab: Dispatch<SetStateAction<OpenTabLike | null>>
-  setPathStatsByPath: Dispatch<SetStateAction<Record<string, FilePathStats>>>
-  setSaveStatus: Dispatch<SetStateAction<'idle' | 'saving' | 'synced' | 'local'>>
-}
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useConfig } from '../contexts/ConfigContext'
+import { useUI } from '../contexts/UIContext'
 
 export function useSaveCurrentFile({
-  activeTab,
-  appAuthor,
   ensureWritableMode,
   getHoloApi,
-  gitState,
   refreshGitState,
   refreshTree,
-  rootPath,
-  setActiveTab,
-  setPathStatsByPath,
-  setSaveStatus,
-}: UseSaveCurrentFileParams) {
-  const { readOnlyMode } = useEditor()
+}: {
+  ensureWritableMode: () => boolean
+  getHoloApi: () => Window['holo'] | null
+  refreshGitState: (silent?: boolean) => Promise<void>
+  refreshTree: () => Promise<void>
+}) {
+  const { activeTab, setActiveTab, readOnlyMode } = useEditor()
+  const { rootPath, setPathStatsByPath } = useWorkspace()
+  const { appAuthor, gitState } = useConfig()
+  const { setSaveStatus } = useUI()
 
   const saveCurrentFile = useCallback(async () => {
     if (!activeTab) {

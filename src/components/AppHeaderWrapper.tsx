@@ -1,36 +1,46 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import { AppHeader } from './AppHeader'
 import { useEditor } from '../contexts/EditorContext'
 import { useConfig } from '../contexts/ConfigContext'
 import { useUI } from '../contexts/UIContext'
+import { useGetHoloApi } from '../hooks/useGetHoloApi'
+import { useDesktopWindow } from '../hooks/useDesktopWindow'
+import { useWindowHeaderDrag } from '../hooks/useWindowHeaderDrag'
 
 type AppHeaderWrapperProps = {
-  headerRef: React.RefObject<HTMLElement | null>
   isCompactLayout: boolean
   appVersion: string | null
   isSidebarOpenOnCompact: boolean
-  onHeaderMouseDown: (event: React.MouseEvent<HTMLHeadElement>) => void
   onToggleSidebar: () => void
   onLogout: () => void
-  onDevTools: () => void
-  onMinimize: () => void
-  onMaximize: () => void
-  onClose: () => void
 }
 
 export const AppHeaderWrapper: React.FC<AppHeaderWrapperProps> = ({
-  headerRef,
   isCompactLayout,
   appVersion,
   isSidebarOpenOnCompact,
-  onHeaderMouseDown,
   onToggleSidebar,
   onLogout,
-  onDevTools,
-  onMinimize,
-  onMaximize,
-  onClose,
 }) => {
+  const headerRef = useRef<HTMLElement | null>(null)
+  const { getHoloApi } = useGetHoloApi()
+  const {
+    windowIsMaximized,
+    windowPlatform,
+    setWindowIsMaximized,
+    setWindowPlatform,
+    minimizeWindow,
+    toggleDevTools,
+    toggleMaximizeWindow,
+    closeWindow,
+  } = useDesktopWindow(getHoloApi)
+  const { onHeaderMouseDown } = useWindowHeaderDrag({
+    headerRef,
+    windowIsMaximized,
+    windowPlatform,
+    setWindowIsMaximized,
+    setWindowPlatform,
+  })
   const { readOnlyMode, setReadOnlyMode } = useEditor()
   const { appAuthor } = useConfig()
   const { showUserMenu, setShowUserMenu, setShowAuthorModal, setAuthorModalMode, setAuthorModalValue } = useUI()
@@ -57,10 +67,10 @@ export const AppHeaderWrapper: React.FC<AppHeaderWrapperProps> = ({
         setShowUserMenu(false)
       }}
       onLogout={onLogout}
-      onDevTools={onDevTools}
-      onMinimize={onMinimize}
-      onMaximize={onMaximize}
-      onClose={onClose}
+      onDevTools={toggleDevTools}
+      onMinimize={minimizeWindow}
+      onMaximize={toggleMaximizeWindow}
+      onClose={closeWindow}
       onCloseUserMenuBackdrop={() => setShowUserMenu(false)}
     />
   )

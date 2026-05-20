@@ -1,12 +1,12 @@
 import { useCallback } from 'react'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
+import { useIsEditorReadOnly } from './useIsEditorReadOnly'
 
 type TurndownLike = {
   turndown: (input: string) => string
 }
 
 type UseWysiwygInputHandlerParams = {
-  isEditorReadOnly: boolean
   getBlockTextBeforeCursor: () => { text: string; block: Element | null }
   turndownService: TurndownLike
   updateActiveTabBody: (nextBody: string) => void
@@ -14,12 +14,12 @@ type UseWysiwygInputHandlerParams = {
 }
 
 export function useWysiwygInputHandler({
-  isEditorReadOnly,
   getBlockTextBeforeCursor,
   turndownService,
   updateActiveTabBody,
   refreshTableSummaries,
 }: UseWysiwygInputHandlerParams) {
+  const isEditorReadOnly = useIsEditorReadOnly()
   const { wysiwygEditorRef, isSyncingWysiwygRef, slashMenu, setSlashMenu } = useEditorOverlay()
 
   const onWysiwygInput = useCallback(() => {

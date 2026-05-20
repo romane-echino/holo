@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
 type SidebarSection = 'files' | 'git' | 'search'
 
-type UseCompactLayoutParams = {
-  activeTabPath: string | null
-  setActiveSidebar: React.Dispatch<React.SetStateAction<SidebarSection>>
-}
-
-export function useCompactLayout({ activeTabPath, setActiveSidebar }: UseCompactLayoutParams) {
+export function useCompactLayout() {
+  const { activeTabPath } = useEditor()
+  const { setActiveSidebar } = useWorkspace()
   const [isCompactLayout, setIsCompactLayout] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 1180 : false,
   )

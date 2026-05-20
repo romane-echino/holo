@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { getEditableMarkdownHeader } from '../lib/markdown'
+import { useConfig } from '../contexts/ConfigContext'
 
-type UseMyFilePathsParams = {
+export function useMyFilePaths({
+  allFilePaths,
+  getHoloApi,
+}: {
   allFilePaths: string[]
-  appAuthor: string
   getHoloApi: () => Window['holo'] | null
-}
-
-export function useMyFilePaths({ allFilePaths, appAuthor, getHoloApi }: UseMyFilePathsParams) {
+}) {
+  const { appAuthor } = useConfig()
   const [myFilePaths, setMyFilePaths] = useState<string[]>([])
 
   useEffect(() => {

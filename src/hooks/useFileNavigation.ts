@@ -1,29 +1,19 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import type { TreeNode } from '../types/app'
-
-type UseFileNavigationParams = {
-  activeTab: { isDirty: boolean } | null
-  activeTabPath: string | null
-  discardTransientEditorState: () => void
-  openFile: (filePath: string) => Promise<void>
-  pendingFileSwitchPath: string | null
-  setPendingFileSwitchPath: Dispatch<SetStateAction<string | null>>
-  setSelectedPath: Dispatch<SetStateAction<string | null>>
-  setSelectedType: Dispatch<SetStateAction<'file' | 'directory' | null>>
-  setShowUnsavedChangesModal: Dispatch<SetStateAction<boolean>>
-}
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useUI } from '../contexts/UIContext'
 
 export function useFileNavigation({
-  activeTab,
-  activeTabPath,
   discardTransientEditorState,
   openFile,
-  pendingFileSwitchPath,
-  setPendingFileSwitchPath,
-  setSelectedPath,
-  setSelectedType,
-  setShowUnsavedChangesModal,
-}: UseFileNavigationParams) {
+}: {
+  discardTransientEditorState: () => void
+  openFile: (filePath: string) => Promise<void>
+}) {
+  const { activeTab, activeTabPath } = useEditor()
+  const { setSelectedPath, setSelectedType } = useWorkspace()
+  const { pendingFileSwitchPath, setPendingFileSwitchPath, setShowUnsavedChangesModal } = useUI()
   const onSelectNode = useCallback(
     async (node: TreeNode) => {
       setSelectedPath(node.path)

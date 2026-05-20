@@ -1,12 +1,10 @@
 import { useCallback, type DragEvent } from 'react'
 import { useEditor } from '../contexts/EditorContext'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
+import { useIsEditorReadOnly } from './useIsEditorReadOnly'
 
-type UseEditorImageDragParams = {
-  isEditorReadOnly: boolean
-}
-
-export function useEditorImageDrag({ isEditorReadOnly }: UseEditorImageDragParams) {
+export function useEditorImageDrag() {
+  const isEditorReadOnly = useIsEditorReadOnly()
   const { setIsImageDragOverEditor } = useEditor()
   const { imageDragDepthRef } = useEditorOverlay()
 

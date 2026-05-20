@@ -1,27 +1,19 @@
 import { useEffect } from 'react'
 import { extractTemplateVariables } from '../lib/appUtils'
 import type { NameDialog } from '../types/shared'
+import { useUI } from '../contexts/UIContext'
+import { useConfig } from '../contexts/ConfigContext'
 
-type UseTemplateVariablesParams = {
-  nameDialog: NameDialog | null
-  appAuthor: string
-  getHoloApi: () => Window['holo'] | null
-  setNameDialog: React.Dispatch<React.SetStateAction<NameDialog | null>>
-}
-
-export function useTemplateVariables({
-  nameDialog,
-  appAuthor,
-  getHoloApi,
-  setNameDialog,
-}: UseTemplateVariablesParams) {
+export function useTemplateVariables({ getHoloApi }: { getHoloApi: () => Window['holo'] | null }) {
+  const { nameDialog, setNameDialog } = useUI()
+  const { appAuthor } = useConfig()
   const selectedTemplatePath =
     nameDialog && nameDialog.mode === 'create-file' ? nameDialog.selectedTemplatePath ?? null : null
 
   useEffect(() => {
     if (!selectedTemplatePath) {
       if (nameDialog && nameDialog.mode === 'create-file' && !nameDialog.selectedTemplatePath) {
-        setNameDialog((prev) =>
+        setNameDialog((prev: NameDialog | null) =>
           prev && prev.mode === 'create-file' ? { ...prev, templateVariables: undefined } : prev,
         )
       }
@@ -36,7 +28,7 @@ export function useTemplateVariables({
     void holo.readFile(selectedTemplatePath).then((content: string) => {
       const variables = extractTemplateVariables(content)
       if (variables.length === 0) {
-        setNameDialog((prev) =>
+        setNameDialog((prev: NameDialog | null) =>
           prev && prev.mode === 'create-file' ? { ...prev, templateVariables: undefined } : prev,
         )
         return
@@ -58,7 +50,7 @@ export function useTemplateVariables({
         }
       }
 
-      setNameDialog((prev) =>
+      setNameDialog((prev: NameDialog | null) =>
         prev && prev.mode === 'create-file' ? { ...prev, templateVariables: autoValues } : prev,
       )
     })

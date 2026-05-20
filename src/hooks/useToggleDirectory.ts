@@ -1,12 +1,8 @@
 import { useCallback } from 'react'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
-interface UseToggleDirectoryParams {
-  setExpandedDirectories: (updater: (prev: Set<string>) => Set<string>) => void
-}
-
-export function useToggleDirectory({
-  setExpandedDirectories,
-}: UseToggleDirectoryParams) {
+export function useToggleDirectory() {
+  const { setExpandedDirectories } = useWorkspace()
   const toggleDirectory = useCallback((directoryPath: string) => {
     setExpandedDirectories((previous) => {
       const next = new Set(previous)

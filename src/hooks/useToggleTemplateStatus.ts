@@ -1,36 +1,21 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import { updateMarkdownBooleanHeaderField } from '../lib/markdown'
-import type { FilePathStats } from '../types/editor'
-import type { FileMeta } from '../types/app'
-
-type OpenTabLike = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseToggleTemplateStatusParams = {
-  activeTabPath: string | null
-  ensureWritableMode: () => boolean
-  getHoloApi: () => Window['holo'] | null
-  refreshTree: () => Promise<void>
-  refreshGitState: (silent?: boolean) => Promise<void>
-  setActiveTab: Dispatch<SetStateAction<OpenTabLike | null>>
-  setFileMetaByPath: Dispatch<SetStateAction<Record<string, FileMeta>>>
-  setPathStatsByPath: Dispatch<SetStateAction<Record<string, FilePathStats>>>
-}
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
 export function useToggleTemplateStatus({
-  activeTabPath,
   ensureWritableMode,
   getHoloApi,
   refreshTree,
   refreshGitState,
-  setActiveTab,
-  setFileMetaByPath,
-  setPathStatsByPath,
-}: UseToggleTemplateStatusParams) {
+}: {
+  ensureWritableMode: () => boolean
+  getHoloApi: () => Window['holo'] | null
+  refreshTree: () => Promise<void>
+  refreshGitState: (silent?: boolean) => Promise<void>
+}) {
+  const { activeTabPath, setActiveTab } = useEditor()
+  const { setFileMetaByPath, setPathStatsByPath } = useWorkspace()
   const toggleTemplateStatus = useCallback(
     async (targetPath: string, nextValue: boolean) => {
       if (!ensureWritableMode()) {

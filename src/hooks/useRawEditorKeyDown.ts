@@ -1,16 +1,16 @@
 import { useCallback } from 'react'
 import { applyMarkdownListTabBehavior } from '../lib/appUtils'
 import { useEditorOverlay } from '../contexts/EditorOverlayContext'
+import { useIsEditorReadOnly } from './useIsEditorReadOnly'
 
 interface UseRawEditorKeyDownParams {
-  isEditorReadOnly: boolean
   updateActiveTabBody: (nextBody: string) => void
 }
 
 export function useRawEditorKeyDown({
-  isEditorReadOnly,
   updateActiveTabBody,
 }: UseRawEditorKeyDownParams) {
+  const isEditorReadOnly = useIsEditorReadOnly()
   const { rawEditorRef } = useEditorOverlay()
 
   const onRawKeyDown = useCallback(

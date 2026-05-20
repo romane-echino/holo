@@ -27,20 +27,19 @@ export const DEFAULT_SYNC_FEEDBACK: SyncFeedback = {
 type GetHoloApi = () => Window['holo'] | null
 
 export function useGitWorkflow({
-  activeTabIsDirty,
   getHoloApi,
   refreshTree,
   refreshActiveTabFromDisk,
   requestConfirmation,
 }: {
-  activeTabIsDirty: boolean
   getHoloApi: GetHoloApi
   refreshTree: () => Promise<void>
   refreshActiveTabFromDisk: (holo: NonNullable<Window['holo']>) => Promise<void>
   requestConfirmation: (dialog: ConfirmDialogState) => Promise<boolean>
 }) {
   const { rootPath } = useWorkspace()
-  const { activeTabPath } = useEditor()
+  const { activeTab, activeTabPath } = useEditor()
+  const activeTabIsDirty = activeTab?.isDirty ?? false
   const { gitState, isGitBusy, setGitState, setRemoteEditBlock, setSyncFeedback, setIsGitBusy } = useConfig()
   const refreshGitState = useCallback(
     async (fetchRemote = false) => {

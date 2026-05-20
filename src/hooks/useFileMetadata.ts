@@ -1,23 +1,14 @@
 import { useEffect } from 'react'
 import { getEditableMarkdownHeader } from '../lib/markdown'
 import { flatTreeFiles } from '../lib/appUtils'
-import type { FileMeta, TreeNode } from '../types/app'
+import type { FileMeta } from '../types/app'
+import { useEditor } from '../contexts/EditorContext'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
-type UseFileMetadataParams = {
-  tree: TreeNode | null
-  activeTabPath: string | null
-  activeTabContent: string | undefined
-  setFileIconByPath: React.Dispatch<React.SetStateAction<Record<string, string>>>
-  setFileMetaByPath: React.Dispatch<React.SetStateAction<Record<string, FileMeta>>>
-}
-
-export function useFileMetadata({
-  tree,
-  activeTabPath,
-  activeTabContent,
-  setFileIconByPath,
-  setFileMetaByPath,
-}: UseFileMetadataParams) {
+export function useFileMetadata() {
+  const { activeTab, activeTabPath } = useEditor()
+  const { tree, setFileIconByPath, setFileMetaByPath } = useWorkspace()
+  const activeTabContent = activeTab?.content
   useEffect(() => {
     const filePaths = tree ? flatTreeFiles(tree) : []
 

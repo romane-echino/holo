@@ -1,23 +1,9 @@
 import { useCallback } from 'react'
-import type { TreeNode, NodeType } from '../types/app'
+import type { TreeNode } from '../types/app'
+import { useWorkspace } from '../contexts/WorkspaceContext'
 
-interface ContextMenuState {
-  x: number
-  y: number
-  node: TreeNode
-}
-
-interface UseContextMenuActionsParams {
-  setContextMenu: (menu: ContextMenuState | null) => void
-  setSelectedPath: (path: string) => void
-  setSelectedType: (type: NodeType) => void
-}
-
-export function useContextMenuActions({
-  setContextMenu,
-  setSelectedPath,
-  setSelectedType,
-}: UseContextMenuActionsParams) {
+export function useContextMenuActions() {
+  const { setContextMenu, setSelectedPath, setSelectedType } = useWorkspace()
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
   }, [setContextMenu])
