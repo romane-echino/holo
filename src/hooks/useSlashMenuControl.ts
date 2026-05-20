@@ -1,14 +1,9 @@
 import { useCallback } from 'react'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
-interface UseSlashMenuControlParams {
-  setSlashMenu: (menu: null) => void
-  setSlashMenuIndex: (index: number) => void
-}
+export function useSlashMenuControl() {
+  const { setSlashMenu, setSlashMenuIndex } = useEditorOverlay()
 
-export function useSlashMenuControl({
-  setSlashMenu,
-  setSlashMenuIndex,
-}: UseSlashMenuControlParams) {
   const closeSlashMenu = useCallback(() => {
     setSlashMenu(null)
     setSlashMenuIndex(0)
@@ -18,3 +13,4 @@ export function useSlashMenuControl({
     closeSlashMenu,
   }
 }
+

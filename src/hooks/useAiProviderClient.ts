@@ -1,20 +1,10 @@
 import { useCallback } from 'react'
+import { useConfig } from '../contexts/ConfigContext'
 
 export type AiProvider = 'auto' | 'openai' | 'gemini'
 
-type UseAiProviderClientParams = {
-  aiProvider: AiProvider
-  openaiApiKey: string
-  geminiApiKey: string
-  openaiPrompt: string
-}
-
-export function useAiProviderClient({
-  aiProvider,
-  openaiApiKey,
-  geminiApiKey,
-  openaiPrompt,
-}: UseAiProviderClientParams) {
+export function useAiProviderClient() {
+  const { aiProvider, openaiApiKey, geminiApiKey, openaiPrompt } = useConfig()
   const askOpenAI = useCallback(
     async (userMessage: string): Promise<string> => {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {

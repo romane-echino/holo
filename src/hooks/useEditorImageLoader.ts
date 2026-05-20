@@ -1,18 +1,18 @@
 import { useEffect } from 'react'
+import { useEditorOverlay } from '../contexts/EditorOverlayContext'
 
 export function useEditorImageLoader({
   desktopApiAvailable,
-  wysiwygEditorRef,
   editorMode,
   activeTabPath,
   getHoloApi,
 }: {
   desktopApiAvailable: boolean
-  wysiwygEditorRef: React.RefObject<HTMLDivElement | null>
   editorMode: 'raw' | 'wysiwyg'
   activeTabPath: string | null
   getHoloApi: () => Window['holo'] | null
 }) {
+  const { wysiwygEditorRef } = useEditorOverlay()
   useEffect(() => {
     if (!desktopApiAvailable) return
 

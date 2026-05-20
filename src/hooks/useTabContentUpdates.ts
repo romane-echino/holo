@@ -1,25 +1,13 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import { updateMarkdownHeaderField, updateTagsInMarkdown } from '../lib/markdown'
 import type { EditableMarkdownHeader } from '../types/editor'
+import { useEditor } from '../contexts/EditorContext'
+import { useConfig } from '../contexts/ConfigContext'
 
-type OpenTab = {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-type UseTabContentUpdatesParams = {
-  activeTab: OpenTab | null
-  isEditorReadOnly: boolean
-  setActiveTab: Dispatch<SetStateAction<OpenTab | null>>
-}
-
-export function useTabContentUpdates({
-  activeTab,
-  isEditorReadOnly,
-  setActiveTab,
-}: UseTabContentUpdatesParams) {
+export function useTabContentUpdates() {
+  const { activeTab, setActiveTab, readOnlyMode } = useEditor()
+  const { remoteEditBlock } = useConfig()
+  const isEditorReadOnly = readOnlyMode || remoteEditBlock.isBlocked
   const updateActiveTabContent = useCallback(
     (nextContent: string) => {
       if (isEditorReadOnly) {

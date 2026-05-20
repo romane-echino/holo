@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { useEditor } from './contexts/EditorContext'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useUI } from './contexts/UIContext'
 import { useConfig } from './contexts/ConfigContext'
+import { turndownService } from './lib/markdown'
 import {
-  turndownService,
-  splitMarkdownFrontMatter,
-  getEditableMarkdownHeader,
-} from './lib/markdown'
-import {
-  AppHeader, AiDialogModal, AppModalsWrapper, AppSidebar,
-  EditorCanvas, EditorEmptyState, EditorOverlays, EditorRightToc, EditorTopBar,
+  AppHeader, AiDialogModalWrapper, AppModalsWrapper, AppSidebar,
+  EditorCanvasWrapper, EditorEmptyState, EditorOverlaysWrapper, EditorRightToc, EditorTopBarWrapper,
   AppSettingsModal, SidebarSearchPanel,
   SidebarFilesPanelWrapper, SidebarGitPanelWrapper,
   ContextMenuWrapper, FolderIconPickerWrapper,
@@ -20,7 +16,7 @@ import {
   useAppUpdates, useDesktopWindow, useGitWorkflow,
   useRepoImageSettings, useGlobalConfig, useFileMetadata, useMyFilePaths,
   useNavigationSuggestions, useTemplateVariables, useCompactToc, useCompactLayout,
-  useChangelogFlow, useEditorOverlayState, useConfirmationDialog, useTemplateOptions,
+  useChangelogFlow, useConfirmationDialog, useTemplateOptions,
   useAiDialogSubmission, useNameDialogActions, usePathTargetActions, useWindowHeaderDrag,
   useCloneWorkflow, useGitDialogActions, useWorkspaceUiActions, useEditorUiCallbacks,
   useWorkspaceFolders, useSearchWorkflow, useAiProviderClient, useRecentFolderIcons,
@@ -35,16 +31,15 @@ import {
   useEditorBodyUpdate, useTableDndAndMarkdownConversion, useExportPdf, useSyncWysiwygFromMarkdown,
   useRawEditorDrop, useRawEditorKeyDown, useWysiwygKeyOrchestration, useContextMenuActions,
   useReadonlyDateFormatter, useEditorUIHelpers, useToggleTemplateStatus,
-  useTocItems, useEditorImageLoader, useStartupNavigation,
+  useTocItems, useEditorImageLoader, useStartupNavigation, usePendingTitleFocus,
 } from './hooks'
 import { flatTreeFiles } from './lib/appUtils'
-import { matchesSlashQuery, SLASH_COMMANDS } from './lib/editorSlash'
 
 function App() {
   // ── State from contexts ──────────────────────────────────────────────────────
   const {
     activeTab, setActiveTab, activeTabPath, setActiveTabPath,
-    editorMode, setEditorMode, isImageDragOverEditor, setIsImageDragOverEditor,
+    editorMode, setEditorMode,
     readOnlyMode, setReadOnlyMode,
   } = useEditor()
 
@@ -55,7 +50,7 @@ function App() {
     recentFolders, recentFilePaths, setRecentFilePaths,
     setRecentFolderIconByPath,
     setFileIconByPath,
-    fileMetaByPath, setFileMetaByPath, pathStatsByPath, setPathStatsByPath,
+    fileMetaByPath, setFileMetaByPath, setPathStatsByPath,
     archivedFiles, activeSidebar, setActiveSidebar,
     contextMenu, setContextMenu,
   } = useWorkspace()
@@ -66,8 +61,8 @@ function App() {
     setShowAuthorModal, setAuthorModalMode,
     setAuthorModalValue, showUserMenu, setShowUserMenu,
     nameDialog, setNameDialog,
-    linkDialog, tagInput, setTagInput, showTagInput, setShowTagInput,
-    saveStatus, setSaveStatus, copyLinkStatus,
+    linkDialog,
+    setSaveStatus,
     pendingFileSwitchPath, setPendingFileSwitchPath,
   } = useUI()
 
@@ -77,43 +72,6 @@ function App() {
     remoteEditBlock, setRemoteEditBlock,
     openaiApiKey, geminiApiKey, aiProvider, openaiPrompt,
   } = useConfig()
-  const {
-    imageDragDepthRef,
-    tableDndCounterRef,
-    titleInputRef,
-    showEmojiPicker,
-    setShowEmojiPicker,
-    wysiwygEditorRef,
-    rawEditorRef,
-    codeBlockLeaveTimerRef,
-    isSyncingWysiwygRef,
-    lastWysiwygSyncedTabRef,
-    hoveredCodeBlock,
-    setHoveredCodeBlock,
-    pendingTitleFocusPath,
-    setPendingTitleFocusPath,
-    selectionPopup,
-    setSelectionPopup,
-    tablePopup,
-    setTablePopup,
-    codeBlockPopup,
-    setCodeBlockPopup,
-    showCompactToc,
-    setShowCompactToc,
-    slashMenu,
-    setSlashMenu,
-    slashMenuIndex,
-    setSlashMenuIndex,
-    slashMenuListRef,
-    compactTocRef,
-    aiDialog,
-    setAiDialog,
-    aiSavedRangeRef,
-    linkSavedRangeRef,
-    aiTextareaRef,
-    columnTypePopup,
-    setColumnTypePopup,
-  } = useEditorOverlayState()
   const {
     confirmDialog,
     requestConfirmation,
@@ -141,49 +99,18 @@ function App() {
 
   const templateOptions = useTemplateOptions(fileMetaByPath)
 
-  useEffect(() => {
-    if (!slashMenu) return
-    const listEl = slashMenuListRef.current
-    if (!listEl) return
-    const activeItem = listEl.querySelector<HTMLButtonElement>(`[data-slash-index="${slashMenuIndex}"]`)
-    activeItem?.scrollIntoView({ block: 'nearest' })
-  }, [slashMenu, slashMenuIndex])
-
   const showTypeRBadge = appAuthor.trim().toLowerCase() === 'virgile'
   const desktopApiAvailable = typeof window.holo !== 'undefined'
   const isEditorReadOnly = readOnlyMode || remoteEditBlock.isBlocked
-  const effectiveEditorMode = readOnlyMode ? 'wysiwyg' : editorMode
   const hasAiProviderConfigured = openaiApiKey.trim().length > 0 || geminiApiKey.trim().length > 0
 
-  const { focusActiveEditorSoon } = useFocusActiveEditor({
-    effectiveEditorMode, isEditorReadOnly, rawEditorRef, wysiwygEditorRef,
-  })
+  const { focusActiveEditorSoon } = useFocusActiveEditor()
 
   const { ensureWritableMode } = useEnsureWritableMode({ readOnlyMode })
 
-  const { discardTransientEditorState } = useDiscardTransientEditorState({
-    wysiwygEditorRef, rawEditorRef, lastWysiwygSyncedTabRef, isSyncingWysiwygRef,
-    aiSavedRangeRef, linkSavedRangeRef, setActiveTab, setActiveTabPath,
-    setSelectionPopup, setTablePopup, setCodeBlockPopup, setColumnTypePopup,
-    setHoveredCodeBlock, setShowCompactToc, setSlashMenu,
-  })
+  const { discardTransientEditorState } = useDiscardTransientEditorState()
 
-  const editableHeader = useMemo(
-    () => getEditableMarkdownHeader(activeTab?.content ?? ''),
-    [activeTab?.content],
-  )
-
-  const activeTabBody = useMemo(
-    () => splitMarkdownFrontMatter(activeTab?.content ?? '').body,
-    [activeTab?.content],
-  )
-
-  const tocItems = useTocItems(activeTabBody)
-
-  const activePathStats = useMemo(
-    () => (activeTabPath ? pathStatsByPath[activeTabPath] ?? null : null),
-    [activeTabPath, pathStatsByPath],
-  )
+  const tocItems = useTocItems()
 
   const { getHoloApi } = useGetHoloApi()
 
@@ -274,9 +201,6 @@ function App() {
   })
 
   useCompactToc({
-    showCompactToc,
-    setShowCompactToc,
-    compactTocRef,
     isCompactLayout,
     tocItemsCount: tocItems.length,
   })
@@ -293,7 +217,7 @@ function App() {
   const { openFile } = useOpenFile({
     getHoloApi, rootPath, gitState, applyRemoteEditBlockFromGitState,
     setRemoteEditBlock, setActiveTab, setPathStatsByPath, setActiveTabPath,
-    setRecentFilePaths, setShowCompactToc, focusActiveEditorSoon,
+    setRecentFilePaths, focusActiveEditorSoon,
   })
 
   const { openEditorLink } = useOpenEditorLink({ activeTabPath, getHoloApi, openFile, rootPath })
@@ -317,7 +241,7 @@ function App() {
 
   const { updateActiveTabBody } = useEditorBodyUpdate({ activeTab, updateActiveTabContent })
 
-  const { closeSlashMenu } = useSlashMenuControl({ setSlashMenu, setSlashMenuIndex })
+  const { closeSlashMenu } = useSlashMenuControl()
 
   const {
     searchQuery,
@@ -342,7 +266,7 @@ function App() {
   const {
     getBlockTextBeforeCursor,
     deleteCurrentBlockContents,
-  } = useWysiwygBlockHelpers({ wysiwygEditorRef })
+  } = useWysiwygBlockHelpers()
 
   const {
     isImageFile,
@@ -351,29 +275,19 @@ function App() {
     onEditorDragLeave,
   } = useEditorImageDrag({
     isEditorReadOnly,
-    imageDragDepthRef,
-    setIsImageDragOverEditor,
   })
 
 
   const { executeSlashCommand } = useSlashCommandExecutor({
-    wysiwygEditorRef,
-    linkSavedRangeRef,
-    aiSavedRangeRef,
     getBlockTextBeforeCursor,
     deleteCurrentBlockContents,
     turndownService,
     updateActiveTabBody,
     getHoloApi,
     closeSlashMenu,
-    setAiDialog,
   })
 
   const { handleSlashMenuKeyboard } = useSlashMenuKeyboard({
-    slashMenu,
-    slashMenuIndex,
-    setSlashMenu,
-    setSlashMenuIndex,
     executeSlashCommand,
     getBlockTextBeforeCursor,
   })
@@ -394,59 +308,27 @@ function App() {
     isEditorReadOnly,
   })
 
-  const { getNextTableDndId, markdownToHtml } = useTableDndAndMarkdownConversion({ tableDndCounterRef })
+  const { getNextTableDndId, markdownToHtml } = useTableDndAndMarkdownConversion()
 
   const { handleImageFiles } = useImageUploadHandler({ getHoloApi, ensureImageProviderReady })
 
   const { exportActiveFileToPdf } = useExportPdf({ activeTab, getHoloApi, markdownToHtml })
 
-  const { syncWysiwygFromMarkdown } = useSyncWysiwygFromMarkdown({
-    wysiwygEditorRef, isSyncingWysiwygRef, markdownToHtml,
-  })
+  const { syncWysiwygFromMarkdown } = useSyncWysiwygFromMarkdown({ markdownToHtml })
 
   const { formatCodeBlock } = useCodeBlockFormatter({
-    wysiwygEditorRef,
     turndownService,
     updateActiveTabBody,
     syncWysiwygFromMarkdown,
   })
 
-  useEffect(() => {
-    if (editorMode !== 'wysiwyg' || !activeTabPath || !activeTab) {
-      lastWysiwygSyncedTabRef.current = null
-      return
-    }
-
-    if (lastWysiwygSyncedTabRef.current !== activeTabPath) {
-      syncWysiwygFromMarkdown(splitMarkdownFrontMatter(activeTab.content).body)
-      lastWysiwygSyncedTabRef.current = activeTabPath
-    }
-  }, [activeTab, activeTabPath, editorMode, syncWysiwygFromMarkdown])
-
-  useEffect(() => {
-    if (!pendingTitleFocusPath || activeTabPath !== pendingTitleFocusPath) {
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      titleInputRef.current?.focus()
-      titleInputRef.current?.select()
-      setPendingTitleFocusPath(null)
-    }, 0)
-
-    return () => window.clearTimeout(timer)
-  }, [activeTabPath, pendingTitleFocusPath])
-
   // Load images with data-src via IPC
-  useEditorImageLoader({ desktopApiAvailable, wysiwygEditorRef, editorMode, activeTabPath, getHoloApi })
+  useEditorImageLoader({ desktopApiAvailable, editorMode, activeTabPath, getHoloApi })
+  usePendingTitleFocus()
 
   const submitAiDialog = useAiDialogSubmission({
-    aiDialog,
-    setAiDialog,
     askAi,
     markdownToHtml,
-    wysiwygEditorRef,
-    aiSavedRangeRef,
     turndownService,
     updateActiveTabBody,
   })
@@ -455,8 +337,6 @@ function App() {
     insertLinkIntoEditor,
     clearLinkSavedRange,
   } = useEditorLinkInsertion({
-    wysiwygEditorRef,
-    linkSavedRangeRef,
     turndownService,
     updateActiveTabBody,
   })
@@ -475,40 +355,32 @@ function App() {
     setCurrentColumnType,
     openCurrentColumnTypePicker,
   } = useTableInteractions({
-    wysiwygEditorRef,
     getNextTableDndId,
-    imageDragDepthRef,
-    setIsImageDragOverEditor,
     onEditorDragOver,
     handleImageFiles,
     isImageFile,
     turndownService,
     updateActiveTabBody,
     syncWysiwygFromMarkdown,
-    setColumnTypePopup,
   })
 
   const { onWysiwygInput } = useWysiwygInputHandler({
-    wysiwygEditorRef,
-    isSyncingWysiwygRef,
     isEditorReadOnly,
     getBlockTextBeforeCursor,
-    slashMenu,
-    setSlashMenu,
     turndownService,
     updateActiveTabBody,
     refreshTableSummaries,
   })
 
   const { onRawDrop } = useRawEditorDrop({
-    isEditorReadOnly, imageDragDepthRef, setIsImageDragOverEditor,
+    isEditorReadOnly,
     isImageFile, handleImageFiles, updateActiveTabBody,
   })
 
-  const { onRawKeyDown } = useRawEditorKeyDown({ isEditorReadOnly, rawEditorRef, updateActiveTabBody })
+  const { onRawKeyDown } = useRawEditorKeyDown({ isEditorReadOnly, updateActiveTabBody })
 
   const { onWysiwygKeyDown } = useWysiwygKeyOrchestration({
-    wysiwygEditorRef, handleWysiwygKeyGuards, handleSlashMenuKeyboard,
+    handleWysiwygKeyGuards, handleSlashMenuKeyboard,
     handleWysiwygTabNavigation, handleWysiwygStructuralKeys,
   })
 
@@ -528,23 +400,14 @@ function App() {
     refreshGitState,
   })
 
-  useEditorSelectionPopup({
-    wysiwygEditorRef,
-    setSelectionPopup,
-    setTablePopup,
-    setCodeBlockPopup,
-  })
+  useEditorSelectionPopup()
 
-  useEditorOverlayEffects({
-    aiDialog,
-    aiTextareaRef,
-    setCodeBlockPopup,
-  })
+  useEditorOverlayEffects()
 
   const { formatReadonlyDate } = useReadonlyDateFormatter()
 
   const { runWysiwygCommand, onTocItemClick } = useEditorUIHelpers({
-    editorMode, onWysiwygInput, setEditorMode, wysiwygEditorRef,
+    editorMode, onWysiwygInput, setEditorMode,
   })
 
   const {
@@ -565,7 +428,6 @@ function App() {
     refreshTree,
     refreshGitState,
     autoCommitStructuralChange,
-    setPendingTitleFocusPath,
   })
 
   const { toggleTemplateStatus } = useToggleTemplateStatus({
@@ -618,10 +480,6 @@ function App() {
     onEditorSave,
   } = useEditorUiCallbacks({
     pullChanges,
-    linkSavedRangeRef,
-    aiSavedRangeRef,
-    wysiwygEditorRef,
-    setAiDialog,
     turndownService,
     updateActiveTabBody,
     syncWysiwygFromMarkdown,
@@ -749,16 +607,9 @@ function App() {
             <div className="flex-1 min-w-0 flex flex-col">
             {activeTab ? (
               <>
-                <EditorTopBar
+                <EditorTopBarWrapper
                   isCompactLayout={isCompactLayout}
-                  activeTabIsDirty={activeTab.isDirty}
-                  readOnlyMode={readOnlyMode}
-                  effectiveEditorMode={effectiveEditorMode}
-                  saveStatus={saveStatus}
-                  copyLinkStatus={copyLinkStatus}
                   tocItems={tocItems}
-                  showCompactToc={showCompactToc}
-                  compactTocRef={compactTocRef}
                   onToggleCompactToc={onToggleCompactToc}
                   onCompactTocItemClick={onCompactTocItemClick}
                   onSwitchRaw={onEditorSwitchRaw}
@@ -768,13 +619,11 @@ function App() {
                   onSave={onEditorSave}
                 />
 
-                <EditorCanvas
+                <EditorCanvasWrapper
                   isCompactLayout={isCompactLayout}
-                  effectiveEditorMode={effectiveEditorMode}
-                  isEditorReadOnly={isEditorReadOnly}
-                  activeTabBody={activeTabBody}
-                  rawEditorRef={rawEditorRef}
-                  wysiwygEditorRef={wysiwygEditorRef}
+                  formatReadonlyDate={formatReadonlyDate}
+                  updateEditableHeader={updateEditableHeader}
+                  updateTags={updateTags}
                   onRawChange={updateActiveTabBody}
                   onRawKeyDown={onRawKeyDown}
                   onRawDrop={onRawDrop}
@@ -792,39 +641,14 @@ function App() {
                   syncWysiwygFromMarkdown={syncWysiwygFromMarkdown}
                   markdownToHtml={markdownToHtml}
                   refreshTableSummaries={refreshTableSummaries}
-                  setColumnTypePopup={setColumnTypePopup}
-                  isImageDragOverEditor={isImageDragOverEditor}
-                  remoteEditBlock={remoteEditBlock}
                   onPullNow={onPullNow}
-                  codeBlockLeaveTimerRef={codeBlockLeaveTimerRef}
-                  setHoveredCodeBlock={setHoveredCodeBlock}
-                  documentHeaderProps={{
-                    isCompactLayout,
-                    editableHeader,
-                    isEditorReadOnly,
-                    showEmojiPicker,
-                    setShowEmojiPicker,
-                    titleInputRef,
-                    activePathStats,
-                    formatReadonlyDate,
-                    updateEditableHeader,
-                    updateTags,
-                    showTagInput,
-                    setShowTagInput,
-                    tagInput,
-                    setTagInput,
-                  }}
                 />
                 
-                <EditorOverlays
-                  editorMode={editorMode}
-                  selectionPopup={selectionPopup}
+                <EditorOverlaysWrapper
                   runWysiwygCommand={runWysiwygCommand}
                   onOpenLinkFromSelection={onOpenLinkFromSelection}
                   hasAiProviderConfigured={hasAiProviderConfigured}
                   onOpenAiTransformFromSelection={onOpenAiTransformFromSelection}
-                  tablePopup={tablePopup}
-                  columnTypePopup={columnTypePopup}
                   insertTableRow={insertTableRow}
                   insertTableColumn={insertTableColumn}
                   sortTableByCurrentColumn={sortTableByCurrentColumn}
@@ -833,18 +657,8 @@ function App() {
                   deleteTableColumn={deleteTableColumn}
                   setCurrentColumnType={setCurrentColumnType}
                   onCloseColumnTypePopup={onCloseColumnTypePopup}
-                  hoveredCodeBlock={hoveredCodeBlock}
-                  codeBlockPopup={codeBlockPopup}
-                  codeBlockLeaveTimerRef={codeBlockLeaveTimerRef}
-                  setHoveredCodeBlock={setHoveredCodeBlock}
-                  setCodeBlockPopup={setCodeBlockPopup}
                   formatCodeBlock={formatCodeBlock}
                   onApplyCodeLanguage={onApplyCodeLanguage}
-                  slashMenu={slashMenu}
-                  slashMenuListRef={slashMenuListRef}
-                  slashMenuIndex={slashMenuIndex}
-                  slashCommands={SLASH_COMMANDS}
-                  matchesSlashQuery={matchesSlashQuery}
                   executeSlashCommand={executeSlashCommand}
                 />
 
@@ -861,16 +675,7 @@ function App() {
           </div>{/* end flex-1 min-h-0 flex row */}
       </section>
 
-      <AiDialogModal
-        aiDialog={aiDialog}
-        aiTextareaRef={aiTextareaRef}
-        onSetAiDialog={setAiDialog}
-        onSubmitAiDialog={() => { void submitAiDialog() }}
-        onClose={() => {
-          setAiDialog(null)
-          aiSavedRangeRef.current = null
-        }}
-      />
+      <AiDialogModalWrapper onSubmitAiDialog={() => { void submitAiDialog() }} />
 
       <ContextMenuWrapper
         onRunContextAction={runContextAction}

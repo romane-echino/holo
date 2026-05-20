@@ -1,22 +1,13 @@
 import { useCallback } from 'react'
 import { updateMarkdownBody } from '../lib/markdown'
-
-interface ActiveTab {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-interface UseEditorBodyUpdateParams {
-  activeTab: ActiveTab | null
-  updateActiveTabContent: (content: string) => void
-}
+import { useEditor } from '../contexts/EditorContext'
 
 export function useEditorBodyUpdate({
-  activeTab,
   updateActiveTabContent,
-}: UseEditorBodyUpdateParams) {
+}: {
+  updateActiveTabContent: (content: string) => void
+}) {
+  const { activeTab } = useEditor()
   const updateActiveTabBody = useCallback(
     (nextBody: string) => {
       if (!activeTab) {

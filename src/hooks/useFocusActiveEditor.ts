@@ -24,26 +24,3 @@ export function useFocusActiveEditor() {
 
   return { focusActiveEditorSoon }
 }
-
-  effectiveEditorMode,
-  isEditorReadOnly,
-  rawEditorRef,
-  wysiwygEditorRef,
-}: UseFocusActiveEditorParams) {
-  const focusActiveEditorSoon = useCallback(() => {
-    window.setTimeout(() => {
-      if (effectiveEditorMode === 'raw') {
-        rawEditorRef.current?.focus()
-        return
-      }
-
-      if (!isEditorReadOnly) {
-        wysiwygEditorRef.current?.focus()
-      }
-    }, 0)
-  }, [effectiveEditorMode, isEditorReadOnly, rawEditorRef, wysiwygEditorRef])
-
-  return {
-    focusActiveEditorSoon,
-  }
-}

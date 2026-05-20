@@ -1,21 +1,8 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
+import { useEditor } from '../contexts/EditorContext'
 
-interface ActiveTab {
-  path: string
-  name: string
-  content: string
-  isDirty: boolean
-}
-
-interface UseRefreshActiveTabFromDiskParams {
-  activeTabPath: string | null
-  setActiveTab: Dispatch<SetStateAction<ActiveTab | null>>
-}
-
-export function useRefreshActiveTabFromDisk({
-  activeTabPath,
-  setActiveTab,
-}: UseRefreshActiveTabFromDiskParams) {
+export function useRefreshActiveTabFromDisk() {
+  const { activeTabPath, setActiveTab } = useEditor()
   const refreshActiveTabFromDisk = useCallback(
     async (holo: NonNullable<Window['holo']>) => {
       if (!activeTabPath) {

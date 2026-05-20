@@ -1,14 +1,8 @@
 import { useCallback, useEffect } from 'react'
 import { useEditor } from '../contexts/EditorContext'
 
-interface UseEnsureWritableModeParams {
-  readOnlyMode: boolean
-}
-
-export function useEnsureWritableMode({
-  readOnlyMode,
-}: UseEnsureWritableModeParams) {
-  const { setEditorMode } = useEditor()
+export function useEnsureWritableMode() {
+  const { readOnlyMode, setEditorMode } = useEditor()
   const ensureWritableMode = useCallback(() => {
     if (!readOnlyMode) {
       return true

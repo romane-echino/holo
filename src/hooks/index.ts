@@ -98,5 +98,6 @@ export { useDiscardTransientEditorState } from './useDiscardTransientEditorState
 export { useTableDndAndMarkdownConversion } from './useTableDndAndMarkdownConversion'
 
 export { useTocItems } from './useTocItems'
+export { usePendingTitleFocus } from './usePendingTitleFocus'
 export { useEditorImageLoader } from './useEditorImageLoader'
 export { useStartupNavigation } from './useStartupNavigation'
