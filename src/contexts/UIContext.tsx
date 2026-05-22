@@ -1,4 +1,5 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from 'react'
+import type { NameDialog, GitDialog, CloneDialog, LinkDialogState } from '../types/shared'
 
 export interface UIContextType {
   // Modals & Dialogs
@@ -16,20 +17,20 @@ export interface UIContextType {
   setShowUserMenu: Dispatch<SetStateAction<boolean>>
   
   // Name Dialog
-  nameDialog: any
-  setNameDialog: Dispatch<SetStateAction<any>>
+  nameDialog: NameDialog | null
+  setNameDialog: Dispatch<SetStateAction<NameDialog | null>>
   
   // Git Dialog
-  gitDialog: any
-  setGitDialog: Dispatch<SetStateAction<any>>
-  cloneDialog: any
-  setCloneDialog: Dispatch<SetStateAction<any>>
+  gitDialog: GitDialog | null
+  setGitDialog: Dispatch<SetStateAction<GitDialog | null>>
+  cloneDialog: CloneDialog | null
+  setCloneDialog: Dispatch<SetStateAction<CloneDialog | null>>
   showGitAuthHelp: boolean
   setShowGitAuthHelp: Dispatch<SetStateAction<boolean>>
   
   // Link Dialog
-  linkDialog: any
-  setLinkDialog: Dispatch<SetStateAction<any>>
+  linkDialog: LinkDialogState | null
+  setLinkDialog: Dispatch<SetStateAction<LinkDialogState | null>>
   
   // Tag Input
   tagInput: string

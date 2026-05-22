@@ -8,6 +8,7 @@ import type { FilePathStats } from '../types/editor'
 import type { ImageStorageMode } from './useRepoImageSettings'
 import type { GitState, RemoteEditBlock } from '../types/git'
 import { DEFAULT_GIT_STATE } from '../lib/gitUtils'
+import type { NameDialog, GitDialog, CloneDialog, LinkDialogState } from '../types/shared'
 import { DEFAULT_SYNC_FEEDBACK } from './useGitWorkflow'
 
 /**
@@ -58,11 +59,11 @@ export function useAppState() {
   const [authorModalMode, setAuthorModalMode] = useState<'startup' | 'edit'>('startup')
   const [authorModalValue, setAuthorModalValue] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
-  const [nameDialog, setNameDialog] = useState(null)
-  const [gitDialog, setGitDialog] = useState(null)
-  const [cloneDialog, setCloneDialog] = useState(null)
+  const [nameDialog, setNameDialog] = useState<NameDialog | null>(null)
+  const [gitDialog, setGitDialog] = useState<GitDialog | null>(null)
+  const [cloneDialog, setCloneDialog] = useState<CloneDialog | null>(null)
   const [showGitAuthHelp, setShowGitAuthHelp] = useState(false)
-  const [linkDialog, setLinkDialog] = useState(null)
+  const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [showTagInput, setShowTagInput] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'synced' | 'local'>('idle')

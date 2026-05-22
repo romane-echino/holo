@@ -71,6 +71,7 @@ export { useAppState } from './useAppState'
 
 // API
 export { useGetHoloApi } from './useGetHoloApi'
+export { usePopup } from './usePopup'
 
 // Specialized editor hooks
 export { useEditorSelectionPopup } from './useEditorSelectionPopup'
@@ -86,7 +87,6 @@ export { useFileNavigation } from './useFileNavigation'
 export { useTabContentUpdates } from './useTabContentUpdates'
 export { useEditorUIHelpers } from './useEditorUIHelpers'
 export { useSlashMenuControl } from './useSlashMenuControl'
-export { useWysiwygKeyOrchestration } from './useWysiwygKeyOrchestration'
 export { useWysiwygKeyDown } from './useWysiwygKeyDown'
 export { useEditorBodyUpdate } from './useEditorBodyUpdate'
 export { useRawEditorDrop } from './useRawEditorDrop'

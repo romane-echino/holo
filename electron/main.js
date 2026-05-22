@@ -1040,14 +1040,16 @@ function spawnDetachedHoloInstance({ rootPath = '', filePath = '' } = {}) {
 
 function createWindow(launchPayload = null) {
   const window = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 400,
-    minHeight: 640,
+    width: 1440,
+    height: 940,
+    minWidth: 320,
+    minHeight: 640, 
+    title: "Holo",
     frame: false,
-    autoHideMenuBar: true,
-    backgroundColor: '#242527',
-    hasShadow: true,
+    transparent: true,
+    backgroundColor: "#00000000",
+    vibrancy: "under-window",
+    visualEffectState: "active",
     show: false,
     icon: path.join(__dirname, '../public/app-icon.png'),
     webPreferences: {
