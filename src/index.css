@@ -233,8 +233,13 @@
     margin-top: 0;
   }
 
+  /* Cursor text on editable blocks — no background change */
+  .holo-markdown--editable [data-block-index] {
+    cursor: text;
+  }
+
   .holo-markdown h1 {
-    margin-top: 3rem;
+    /*margin-top: 3rem;*/
     margin-bottom: 1.25rem;
     font-size: clamp(2.2rem, 4vw, 3.2rem);
     line-height: 1.05;

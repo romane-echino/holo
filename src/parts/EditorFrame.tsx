@@ -411,6 +411,16 @@ Les titres secondaires servent à structurer la documentation sans donner une im
 
 > Le rôle de Holo n'est pas de ressembler à un IDE, mais à un espace de connaissance vivant où Git devient une timeline documentaire.
 
+## Latex equation
+
+Une équation inline peut s'intégrer dans le texte, par exemple $E = mc²$, tandis qu'une équation importante peut être mise en avant.
+
+$$f(x) = \\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}$$
+
+## Image
+
+![Figure 1 — Exemple de bloc image dans le rendu Markdown.](https://placehold.co/920x360/0B0F16/7B61FF?text=Image+%2F+diagramme)
+
 ## Code
 
 \`\`\`typescript
