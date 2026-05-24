@@ -75,7 +75,11 @@ export default function App2() {
 
         {/* Zone éditeur — cachée sur mobile */}
         <div className="hidden lg:block overflow-y-auto holo-scrollbar">
-          <EditorFrame filepath='' />
+          <EditorFrame
+            filepath='test.md'
+            markdown={TEST_MARKDOWN}
+            onMarkdownChange={(md) => console.log('[BlockEditor]', md)}
+          />
         </div>
 
         {/* Inspecteur — colonne droite, grands écrans */}
@@ -89,3 +93,10 @@ export default function App2() {
     </div>
   )
 }
+
+const TEST_MARKDOWN = `Premier paragraphe avec du **texte en gras**, de l'_italique_ et du \`code inline\`. Tu peux cliquer pour éditer.
+
+Deuxième paragraphe. Essaie d'appuyer sur **Entrée** en fin de ligne pour créer un nouveau bloc, ou **Backspace** au début d'un paragraphe vide pour le supprimer.
+
+Un troisième paragraphe pour tester la navigation.
+`

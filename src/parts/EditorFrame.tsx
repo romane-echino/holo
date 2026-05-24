@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Ellipsis, ExternalLink, FileText } from 'lucide-react'
 import { cn } from '../utils/global'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { BlockEditor } from './MarkdownEditor/BlockEditor'
+import { TableTest } from './TableTest'
 
 type EditorFrameProps = {
   filepath: string
@@ -338,6 +340,8 @@ export function EditorFrame({
           </div>
         </header>
 
+        <TableTest />
+
         <article>
           {!markdown ? (
             <div className="grid grid-cols-2 gap-10">
@@ -351,7 +355,17 @@ export function EditorFrame({
               </div>
             </div>
           ) : (
-            <MarkdownRenderer markdown={markdown} onChange={onMarkdownChange} />
+            <div className="grid grid-cols-2 gap-10">
+              <div>
+                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-text-faint">JSX reference</div>
+                <div className="holo-markdown"><MarkdownVisualExample /></div>
+              </div>
+              <div>
+                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-primary-soft">Editor</div>
+                <BlockEditor markdown={MarkdownDemo} onChange={onMarkdownChange ?? (() => { })} />
+              </div>
+
+            </div>
           )}
         </article>
       </div>

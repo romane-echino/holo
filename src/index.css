@@ -238,7 +238,22 @@
     cursor: text;
   }
 
-  .holo-markdown h1 {
+  /* Placeholder pour les contentEditable vides (BlockEditor) — uniquement au focus */
+  [data-placeholder][data-empty="true"]:focus {
+    position: relative;
+  }
+
+  [data-placeholder][data-empty="true"]:focus::before {
+    content: attr(data-placeholder);
+    color: var(--color-holo-text-faint);
+    font-style: italic;
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+  }
+
+  .holo-markdown h1,
+  .holo-markdown [data-block-type="heading-1"] {
     /*margin-top: 3rem;*/
     margin-bottom: 1.25rem;
     font-size: clamp(2.2rem, 4vw, 3.2rem);
@@ -247,9 +262,12 @@
     letter-spacing: -0.05em;
     color: var(--color-holo-text);
     scroll-margin-top: 5rem;
+    cursor: text;
+    min-height: 1lh;
   }
 
-  .holo-markdown h2 {
+  .holo-markdown h2,
+  .holo-markdown [data-block-type="heading-2"] {
     margin-top: 3rem;
     margin-bottom: 1rem;
     font-size: clamp(1.8rem, 3vw, 2.2rem);
@@ -258,9 +276,12 @@
     letter-spacing: -0.04em;
     color: var(--color-holo-text);
     scroll-margin-top: 5rem;
+    cursor: text;
+    min-height: 1lh;
   }
 
-  .holo-markdown h3 {
+  .holo-markdown h3,
+  .holo-markdown [data-block-type="heading-3"] {
     margin-top: 2.25rem;
     margin-bottom: 0.75rem;
     font-size: 1.35rem;
@@ -268,9 +289,12 @@
     font-weight: 620;
     color: var(--color-holo-text);
     scroll-margin-top: 5rem;
+    cursor: text;
+    min-height: 1lh;
   }
 
-  .holo-markdown h4 {
+  .holo-markdown h4,
+  .holo-markdown [data-block-type="heading-4"] {
     margin-top: 1.8rem;
     margin-bottom: 0.65rem;
     font-size: 1.1rem;
@@ -278,16 +302,22 @@
     font-weight: 620;
     color: var(--color-holo-text);
     scroll-margin-top: 5rem;
+    cursor: text;
+    min-height: 1lh;
   }
 
   .holo-markdown p,
+  .holo-markdown [data-block-type="paragraph"],
   .holo-markdown li {
     font-size: 1.04rem;
     line-height: 1.95;
   }
 
-  .holo-markdown p {
+  .holo-markdown p,
+  .holo-markdown [data-block-type="paragraph"] {
     margin: 1rem 0;
+    min-height: 1lh;
+    cursor: text;
   }
 
   .holo-markdown strong {
@@ -299,7 +329,9 @@
     color: var(--color-holo-text-muted);
   }
 
-  .holo-markdown del {
+  .holo-markdown del,
+  .holo-markdown s,
+  .holo-markdown strike {
     color: var(--color-holo-text-faint);
     text-decoration-color: color-mix(in srgb, var(--color-holo-text-faint), transparent 30%);
   }
@@ -412,7 +444,7 @@
 
   .holo-markdown table {
     width: 100%;
-    margin: 2rem 0;
+    margin: 0rem 0;
     border-collapse: separate;
     border-spacing: 0;
     overflow: hidden;
