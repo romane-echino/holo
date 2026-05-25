@@ -35,8 +35,10 @@ type SpacePanelProps = {
   recentItems?: SpacePanelItem[]
   favoriteItems?: SpacePanelItem[]
   selectedPath?: string
+  rootPath?: string
   onSelectFile?: (node: SpaceFileNode) => void
-  onAddItem?: (type: 'file' | 'folder', name: string) => void
+  onAddItem?: (type: 'file' | 'folder', name: string, parentPath?: string) => void
+  onMoveItem?: (sourcePath: string, targetFolderPath: string) => void
   onSearch?: (query: string) => void
 }
 
@@ -45,49 +47,109 @@ type SpacePanelProps = {
 const tabClassName =
   'flex flex-1 items-center justify-center rounded-holo-md px-2 py-2 text-sm transition active:scale-[0.99]'
 
+// ─── Métadonnées fichier (frontmatter) ───────────────────────────────────────
+
+type TreeFileMeta = { title?: string; description?: string; icon?: string }
+
+function parseFrontmatterQuick(content: string): TreeFileMeta {
+  const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const result: TreeFileMeta = {}
+  for (const line of match[1].split('\n')) {
+    const colon = line.indexOf(':')
+    if (colon === -1) continue
+    const key = line.slice(0, colon).trim()
+    if (key !== 'title' && key !== 'description' && key !== 'icon') continue
+    const value = line.slice(colon + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (value) result[key as keyof TreeFileMeta] = value
+  }
+  return result
+}
+
+function collectMdPaths(nodes: SpaceFileNode[]): string[] {
+  const paths: string[] = []
+  for (const node of nodes) {
+    if (node.type === 'file' && node.extension === 'md') paths.push(node.path)
+    if (node.children?.length) paths.push(...collectMdPaths(node.children))
+  }
+  return paths
+}
+
 function getFileIcon(node: SpaceFileNode): LucideIcon {
   if (node.type === 'folder') return Folder
   if (node.extension === 'md') return FileText
   return File
 }
 
+// Props DnD passés à chaque TreeNode
+type DragProps = {
+  dragOverPath: string | null
+  onDragStart: (path: string, e: React.DragEvent) => void
+  onDragOverFolder: (folderPath: string, e: React.DragEvent) => void
+  onDragLeaveFolder: (e: React.DragEvent) => void
+  onDropFolder: (folderPath: string, e: React.DragEvent) => void
+  onDragEnd: () => void
+}
+
 function TreeNode({
   node,
   level,
-  selectedPath,
+  activePath,
   expanded,
   onToggle,
   onSelectFile,
+  onSelectFolder,
+  drag,
+  fileMeta,
 }: {
   node: SpaceFileNode
   level: number
-  selectedPath?: string
+  activePath?: string
   expanded: Set<string>
   onToggle: (path: string) => void
   onSelectFile?: (node: SpaceFileNode) => void
+  onSelectFolder?: (path: string) => void
+  drag?: DragProps
+  fileMeta?: Record<string, TreeFileMeta>
 }) {
   const isFolder = node.type === 'folder'
   const isExpanded = expanded.has(node.path)
-  const isSelected = selectedPath === node.path
+  const isSelected = activePath === node.path
   const hasChildren = Boolean(node.children?.length)
   const FileIcon = getFileIcon(node)
+  const isDragOver = drag?.dragOverPath === node.path && isFolder
+  const meta = !isFolder ? fileMeta?.[node.path] : undefined
+  const displayTitle = meta?.title || node.name
+  const displayIcon = meta?.icon
+  const displayDesc = meta?.description
 
   const handleClick = () => {
     if (isFolder) {
       onToggle(node.path)
+      onSelectFolder?.(isSelected ? '' : node.path)
       return
     }
-
+    onSelectFolder?.('')
     onSelectFile?.(node)
   }
 
   return (
-    <div>
+    <div
+      onDragOver={isFolder && drag ? (e) => drag.onDragOverFolder(node.path, e) : undefined}
+      onDragLeave={isFolder && drag ? drag.onDragLeaveFolder : undefined}
+      onDrop={isFolder && drag ? (e) => drag.onDropFolder(node.path, e) : undefined}
+    >
       <button
         onClick={handleClick}
+        draggable={!!drag}
+        onDragStart={drag ? (e) => drag.onDragStart(node.path, e) : undefined}
+        onDragEnd={drag ? drag.onDragEnd : undefined}
         className={cn(
           'group flex min-h-9 w-full items-center gap-2 rounded-holo-md py-2 pr-2 text-left text-sm transition hover:bg-holo-glass-hover hover:text-holo-text',
-          isSelected ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-holo-primary/20' : 'text-holo-text-muted',
+          isSelected
+            ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-holo-primary/20'
+            : 'text-holo-text-muted',
+          isDragOver && 'ring-1 ring-holo-primary/50 bg-holo-primary-surface/60 text-holo-primary-soft',
         )}
         style={{ paddingLeft: `${10 + level * 14}px` }}
         title={node.path}
@@ -101,10 +163,18 @@ function TreeNode({
         </span>
 
         <span className="flex size-5 shrink-0 items-center justify-center text-holo-text-faint group-hover:text-holo-text-muted">
-          <FileIcon size={14} />
+          {displayIcon
+            ? <span className="text-sm leading-none">{displayIcon}</span>
+            : <FileIcon size={14} />
+          }
         </span>
 
-        <span className="min-w-0 flex-1 truncate leading-none">{node.name}</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate leading-none">{displayTitle}</div>
+          {displayDesc && (
+            <div className="mt-0.5 truncate text-[11px] leading-4 text-holo-text-faint/70">{displayDesc}</div>
+          )}
+        </div>
       </button>
 
       {isFolder && isExpanded && hasChildren && (
@@ -114,10 +184,13 @@ function TreeNode({
               key={child.path}
               node={child}
               level={level + 1}
-              selectedPath={selectedPath}
+              activePath={activePath}
               expanded={expanded}
               onToggle={onToggle}
               onSelectFile={onSelectFile}
+              onSelectFolder={onSelectFolder}
+              drag={drag}
+              fileMeta={fileMeta}
             />
           ))}
         </div>
@@ -186,21 +259,148 @@ export function SpacePanel({
   recentItems,
   favoriteItems,
   selectedPath,
+  rootPath,
   onSelectFile,
   onAddItem,
+  onMoveItem,
   onSearch,
 }: SpacePanelProps) {
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
+  const [selectedFolderPath, setSelectedFolderPath] = useState('')
+
+  // ─── Métadonnées frontmatter des fichiers .md ─────────────────────────────
+  const [fileMeta, setFileMeta] = useState<Record<string, TreeFileMeta>>({})
+  const fileMetaRef = useRef<Record<string, TreeFileMeta>>({})
+  fileMetaRef.current = fileMeta
+  const loadingPathsRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!files?.length || !window.holo) return
+    const paths = collectMdPaths(files)
+    const toLoad = paths.filter(p => !fileMetaRef.current[p] && !loadingPathsRef.current.has(p))
+    if (!toLoad.length) return
+    for (const path of toLoad) {
+      loadingPathsRef.current.add(path)
+      window.holo.readFile(path)
+        .then(content => {
+          const meta = parseFrontmatterQuick(content)
+          setFileMeta(prev => ({ ...prev, [path]: meta }))
+        })
+        .catch(() => {
+          setFileMeta(prev => ({ ...prev, [path]: {} }))
+        })
+        .finally(() => {
+          loadingPathsRef.current.delete(path)
+        })
+    }
+  }, [files])
+
+  // ─── Drag-and-drop ──────────────────────────────────────────────────────────
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [dragOverRoot, setDragOverRoot] = useState(false)
+  const dragSourceRef = useRef<string | null>(null)
+
+  const handleDragStart = useCallback((path: string, e: React.DragEvent) => {
+    dragSourceRef.current = path
+    e.dataTransfer.setData('text/plain', path)
+    e.dataTransfer.effectAllowed = 'move'
+  }, [])
+
+  const handleDragOverFolder = useCallback((folderPath: string, e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const source = dragSourceRef.current
+    // Interdit de déposer un dossier dans lui-même ou dans un de ses enfants
+    if (source && (folderPath === source || folderPath.startsWith(source + '/'))) return
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverRoot(false)
+    setDragOverPath(folderPath)
+  }, [])
+
+  const handleDragLeaveFolder = useCallback((e: React.DragEvent) => {
+    const related = e.relatedTarget as Node | null
+    if (related && e.currentTarget.contains(related)) return
+    setDragOverPath(null)
+  }, [])
+
+  const handleDropFolder = useCallback((folderPath: string, e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverPath(null)
+    const sourcePath = e.dataTransfer.getData('text/plain') || dragSourceRef.current
+    dragSourceRef.current = null
+    if (!sourcePath || sourcePath === folderPath || folderPath.startsWith(sourcePath + '/')) return
+    // Évite de déplacer vers le dossier parent actuel (opération inutile)
+    const currentParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+    if (currentParent === folderPath) return
+    onMoveItem?.(sourcePath, folderPath)
+  }, [onMoveItem])
+
+  // Zone de dépôt sur le dossier root
+  const handleDragOverRoot = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    const source = dragSourceRef.current
+    if (!source || !rootPath) return
+    if (source === rootPath || rootPath.startsWith(source + '/')) return
+    const currentParent = source.substring(0, source.lastIndexOf('/'))
+    if (currentParent === rootPath) return  // déjà à la racine
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverRoot(true)
+  }, [rootPath])
+
+  const handleDragLeaveRoot = useCallback((e: React.DragEvent) => {
+    const related = e.relatedTarget as Node | null
+    if (related && e.currentTarget.contains(related)) return
+    setDragOverRoot(false)
+  }, [])
+
+  const handleDropRoot = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverRoot(false)
+    const sourcePath = e.dataTransfer.getData('text/plain') || dragSourceRef.current
+    dragSourceRef.current = null
+    if (!sourcePath || !rootPath) return
+    const currentParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+    if (currentParent === rootPath) return
+    if (sourcePath === rootPath || rootPath.startsWith(sourcePath + '/')) return
+    onMoveItem?.(sourcePath, rootPath)
+  }, [rootPath, onMoveItem])
+
+  const handleDragEnd = useCallback(() => {
+    dragSourceRef.current = null
+    setDragOverPath(null)
+    setDragOverRoot(false)
+  }, [])
+
+  const dragProps: DragProps | undefined = onMoveItem ? {
+    dragOverPath,
+    onDragStart: handleDragStart,
+    onDragOverFolder: handleDragOverFolder,
+    onDragLeaveFolder: handleDragLeaveFolder,
+    onDropFolder: handleDropFolder,
+    onDragEnd: handleDragEnd,
+  } : undefined
 
   // ─── Dialog ajout fichier / dossier ────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false)
   const [addType, setAddType] = useState<'file' | 'folder'>('file')
   const [addName, setAddName] = useState('')
   const addInputRef = useRef<HTMLInputElement>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
-  const openAddDialog = useCallback((type: 'file' | 'folder' = 'file') => {
+  useEffect(() => {
+    if (!menuOpen) return
+    const onMouseDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [menuOpen])
+
+  const openAddDialog = useCallback((type: 'file' | 'folder') => {
     setAddType(type)
     setAddName('')
     setAddOpen(true)
@@ -208,12 +408,13 @@ export function SpacePanel({
   }, [])
 
   const handleAddConfirm = useCallback(() => {
-    const name = addName.trim()
+    let name = addName.trim()
     if (!name) return
-    onAddItem?.(addType, name)
+    if (addType === 'file' && !name.includes('.')) name += '.md'
+    onAddItem?.(addType, name, selectedFolderPath || undefined)
     setAddOpen(false)
     setAddName('')
-  }, [addName, addType, onAddItem])
+  }, [addName, addType, onAddItem, selectedFolderPath])
 
   const filteredFiles = useMemo(() => {
     if (!query.trim()) return files
@@ -258,14 +459,35 @@ export function SpacePanel({
     <AbstractPanel
       title={spaceName}
       actions={
-        <button
-          onClick={() => openAddDialog()}
-          className="flex size-8 shrink-0 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-primary-soft active:scale-[0.98]"
-          title="Nouveau fichier ou dossier"
-          aria-label="Nouveau fichier ou dossier"
-        >
-          <Plus size={13} />
-        </button>
+        <div ref={menuRef} className="relative">
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="flex size-8 shrink-0 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-primary-soft active:scale-[0.98]"
+            title="Nouveau…"
+            aria-label="Nouveau…"
+          >
+            <Plus size={13} />
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated shadow-[0_12px_40px_rgba(0,0,0,.4)]">
+              <button
+                onClick={() => { setMenuOpen(false); openAddDialog('file') }}
+                className="flex w-full items-center gap-3 px-3.5 py-2.5 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                <FileText size={13} className="shrink-0 text-holo-text-faint" />
+                Nouveau fichier
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); openAddDialog('folder') }}
+                className="flex w-full items-center gap-3 px-3.5 py-2.5 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                <Folder size={13} className="shrink-0 text-holo-text-faint" />
+                Nouveau dossier
+              </button>
+            </div>
+          )}
+        </div>
       }
       subHeader={
         <div className="px-4 pb-3">
@@ -295,7 +517,7 @@ export function SpacePanel({
             <input
               value={query}
               onChange={(event) => handleSearch(event.target.value)}
-              placeholder="Rechercher…"
+              placeholder="Filtrer..."
               className="w-full rounded-holo-md border border-holo-border-soft bg-holo-glass py-2 pl-9 pr-3 text-sm text-holo-text placeholder:text-holo-text-faint transition focus:border-holo-primary/40 focus:bg-white/[0.045] focus:shadow-[0_0_0_4px_rgba(123,97,255,.10)] focus:outline-none"
             />
           </div>
@@ -305,16 +527,24 @@ export function SpacePanel({
       {tab === 'browse' && (
         <>
           {filteredFiles?.length ? (
-            <div className="-mx-4 space-y-0.5 px-1">
+            <div
+              className={cn('space-y-0.5 px-1 rounded-holo-md transition-all', dragOverRoot && 'ring-1 ring-holo-primary/50 bg-holo-primary-surface/20')}
+              onDragOver={rootPath ? handleDragOverRoot : undefined}
+              onDragLeave={rootPath ? handleDragLeaveRoot : undefined}
+              onDrop={rootPath ? handleDropRoot : undefined}
+            >
               {filteredFiles.map((node) => (
                 <TreeNode
                   key={node.path}
                   node={node}
                   level={0}
-                  selectedPath={selectedPath}
+                  activePath={selectedFolderPath || selectedPath}
                   expanded={expanded}
                   onToggle={handleToggle}
                   onSelectFile={onSelectFile}
+                  onSelectFolder={setSelectedFolderPath}
+                  drag={dragProps}
+                  fileMeta={fileMeta}
                 />
               ))}
             </div>
@@ -355,7 +585,9 @@ export function SpacePanel({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-holo-text">Nouveau…</h3>
+            <h3 className="text-sm font-semibold text-holo-text">
+              {addType === 'file' ? 'Nouveau fichier' : 'Nouveau dossier'}
+            </h3>
             <button
               onClick={() => setAddOpen(false)}
               className="flex size-7 items-center justify-center rounded-holo-md text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
@@ -364,23 +596,12 @@ export function SpacePanel({
             </button>
           </div>
 
-          <div className="mb-4 flex gap-1 rounded-holo-lg bg-holo-glass p-1">
-            {(['file', 'folder'] as const).map((type) => (
-              <button
-                key={type}
-                onClick={() => setAddType(type)}
-                className={cn(
-                  'flex flex-1 items-center justify-center gap-2 rounded-holo-md px-3 py-2 text-sm transition',
-                  addType === type
-                    ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-white/[0.05]'
-                    : 'text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
-                )}
-              >
-                {type === 'file' ? <FileText size={13} /> : <Folder size={13} />}
-                {type === 'file' ? 'Fichier' : 'Dossier'}
-              </button>
-            ))}
-          </div>
+          {selectedFolderPath && (
+            <div className="mb-3 flex items-center gap-1.5 rounded-holo-md bg-holo-glass px-2.5 py-1.5 text-xs text-holo-text-faint">
+              <Folder size={11} className="shrink-0" />
+              <span className="truncate">{selectedFolderPath.split('/').filter(Boolean).at(-1)}</span>
+            </div>
+          )}
 
           <input
             ref={addInputRef}
@@ -447,20 +668,36 @@ export function SpaceRoute({
   const { getHoloApi } = useGetHoloApi()
   const { openRecentFolder } = useWorkspaceFolders({ getHoloApi })
 
-  const handleAddItem = useCallback(async (type: 'file' | 'folder', name: string) => {
-    if (!rootPath) return
+  const handleAddItem = useCallback(async (type: 'file' | 'folder', name: string, parentPath?: string) => {
+    const parent = parentPath || rootPath
+    if (!parent) return
     try {
       if (type === 'file') {
-        await window.holo?.createFile(rootPath, name)
+        await window.holo?.createFile(parent, name)
       } else {
-        await window.holo?.createDirectory(rootPath, name)
+        await window.holo?.createDirectory(parent, name)
       }
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      // Auto-ouvrir le fichier nouvellement créé
+      if (type === 'file') {
+        const newPath = `${parent}/${name}`
+        onSelectFile?.({ id: newPath, path: newPath, name, type: 'file' })
+      }
     } catch (err) {
       console.error('[SpaceRoute] Impossible de créer :', err)
     }
-  }, [rootPath, setTree])
+  }, [rootPath, setTree, onSelectFile])
+
+  const handleMoveItem = useCallback(async (sourcePath: string, targetFolderPath: string) => {
+    try {
+      await window.holo?.movePath(sourcePath, targetFolderPath)
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible de déplacer :', err)
+    }
+  }, [setTree])
 
   useEffect(() => {
     if (folderPath && folderPath !== rootPath) {
@@ -499,6 +736,8 @@ export function SpaceRoute({
       selectedPath={selectedFilePath}
       onSelectFile={onSelectFile}
       onAddItem={handleAddItem}
+      onMoveItem={handleMoveItem}
+      rootPath={folderPath ?? undefined}
     />
   )
 }

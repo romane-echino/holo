@@ -256,7 +256,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
     // ── Rendu ─────────────────────────────────────────────────────────────────
 
     return (
-      <div className="my-0.5 space-y-0.5">
+      <div className="my-4 space-y-0.5">
         {items.map((item, idx) => (
           <ListItemRow
             key={item.id}
@@ -436,7 +436,7 @@ function ListItemRow({
     )
     : ordered
     ? (
-      <span className="min-w-[1.5rem] shrink-0 select-none text-right text-sm tabular-nums text-holo-text-faint">
+      <span className="min-w-[1.5rem] shrink-0 select-none text-right tabular-nums text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
         {idx + 1}.
       </span>
     )
@@ -454,6 +454,7 @@ function ListItemRow({
         }}
         contentEditable
         suppressContentEditableWarning
+        data-list-text
         className={cn('min-h-[1.5em] flex-1 outline-none transition-opacity', item.checked && 'opacity-40 line-through')}
         onKeyDown={handleKeyDown}
         onBlur={() => {

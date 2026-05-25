@@ -20,12 +20,13 @@ interface HeadingBlockProps {
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
   onConvert?: (type: string, children: InlineNode[]) => void
-  onSlashCommand?: (rect: DOMRect) => void
+  onSlashCommand?: () => void
   onSplit?: (after: InlineNode[]) => void
+  alwaysShowPlaceholder?: boolean
 }
 
 export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
-  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit }, ref) {
+  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -48,6 +49,7 @@ export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
         onSplit={onSplit}
         blockType={`heading-${node.depth}`}
         placeholder="Titre…"
+        alwaysShowPlaceholder={alwaysShowPlaceholder}
       />
     )
   },

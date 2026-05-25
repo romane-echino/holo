@@ -1,5 +1,6 @@
 export type GitState = {
   isRepo: boolean
+  hasRemote: boolean
   branch: string | null
   localChanges: number
   incoming: number

@@ -16,9 +16,9 @@
 ## 1. Ouverture / navigation fichiers
 - [ ] Ouvrir un dossier local
 - [ ] L'arborescence s'affiche sans erreur bloquante
-- [ ] Ouvrir plusieurs fichiers `.md`
+- [ ] Ouvrir plusieurs fichiers `.md` (N/A le système de tabs à été supprimé)
 - [ ] Le bon contenu s'affiche dans l'éditeur
-- [ ] Les onglets restent cohérents lors des changements de fichier
+- [ ] Les onglets restent cohérents lors des changements de fichier (N/A le système de tabs à été supprimé)
 - [ ] Les dossiers récents restent utilisables
 
 ## 2. Édition RAW

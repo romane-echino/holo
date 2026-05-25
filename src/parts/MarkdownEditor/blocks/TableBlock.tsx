@@ -622,15 +622,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                   )
                 })}
 
-                <th className="w-10 border-b border-holo-border-soft bg-white/[0.055] p-0 rounded-tr-holo-xl">
-                  <button
-                    onClick={() => addColumnAt(table.columns.length)}
-                    className="flex w-full items-center justify-center py-3 text-holo-text-faint opacity-0 transition hover:text-holo-primary group-hover/table:opacity-100"
-                    title="Ajouter une colonne"
-                  >
-                    <Plus size={14} />
-                  </button>
-                </th>
               </tr>
             </thead>
 
@@ -720,7 +711,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                       )
                     })}
 
-                    <td className={cn('w-10 bg-transparent p-0', !isLastRow && 'border-b border-holo-border-soft')} />
                   </tr>
                 )
               })}

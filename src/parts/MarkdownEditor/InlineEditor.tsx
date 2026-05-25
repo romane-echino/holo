@@ -64,10 +64,12 @@ export interface InlineEditorProps {
   blockType?: string
   /** Texte du placeholder */
   placeholder?: string
+  /** Toujours afficher le placeholder (même sans focus) — pour le premier bloc */
+  alwaysShowPlaceholder?: boolean
   /** Conversion de type via raccourci markdown (# + espace, etc.) */
   onConvert?: (type: string, children: InlineNode[]) => void
   /** Commande slash dans un bloc vide */
-  onSlashCommand?: (rect: DOMRect) => void
+  onSlashCommand?: () => void
   /** Shift+Enter : scinde le bloc au curseur — le contenu après va dans un nouveau bloc */
   onSplit?: (after: InlineNode[]) => void
   className?: string
@@ -83,6 +85,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   onArrowDown,
   blockType,
   placeholder = 'Écrire quelque chose…',
+  alwaysShowPlaceholder,
   onConvert,
   onSlashCommand,
   onSplit,
@@ -361,10 +364,17 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           if (!sel?.rangeCount) return
           const range = sel.getRangeAt(0)
           slashRangeRef.current = range.cloneRange()
-          const rect = range.getBoundingClientRect()
-          onSlashCommand(rect.width === 0 ? el.getBoundingClientRect() : rect)
+          onSlashCommand()
         }, 0)
       }
+    }
+
+    // Ctrl+Espace — ouvre la palette de commande sans insérer de "/"
+    if ((e.ctrlKey || e.metaKey) && e.key === ' ' && onSlashCommand) {
+      e.preventDefault()
+      // Pas de slashRange : clearSlash() sera un no-op à la sélection/annulation
+      slashRangeRef.current = null
+      onSlashCommand()
     }
 
     // Enter → bloc avant si curseur au début d'un bloc non vide, sinon bloc après
@@ -403,14 +413,23 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       return
     }
 
-    // Backspace au début → supprime le bloc s'il est vide
+    // Backspace au début → supprime le bloc s'il est vide, ou dé-formate un titre
     if (e.key === 'Backspace' && isAtStart() && onBackspaceAtStart) {
       const el = divRef.current
       if (el && !el.textContent?.trim()) {
+        // Bloc vide → supprimer le bloc
         e.preventDefault()
         save()
         onBackspaceAtStart()
+        return
       }
+      if (el && onConvert && blockType?.startsWith('heading-')) {
+        // Titre non-vide en position 0 → convertir en paragraphe (comme Notion)
+        e.preventDefault()
+        onConvert('paragraph', domToInlines(el))
+        return
+      }
+      // Autre bloc non-vide → laisser le navigateur gérer
       return
     }
 
@@ -458,6 +477,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         }}
         onKeyDown={handleKeyDown}
         data-placeholder={placeholder}
+        data-always-placeholder={alwaysShowPlaceholder || undefined}
         onPaste={(e) => {
           e.preventDefault()
           const text = e.clipboardData.getData('text/plain')

@@ -14,6 +14,7 @@ type OpenFolderResult = {
 
 type HoloGitState = {
   isRepo: boolean
+  hasRemote: boolean
   branch: string | null
   localChanges: number
   incoming: number
@@ -29,6 +30,15 @@ type HoloGitCommitResult = {
   pushed: boolean
   output: string
   pushError: string | null
+}
+
+type HoloGitFileCommit = {
+  hash: string
+  shortHash: string
+  authorName: string
+  authorEmail: string
+  timestamp: string
+  subject: string
 }
 
 type HoloGitSyncResult = {
@@ -112,6 +122,7 @@ interface HoloApi {
   getRecentFolders: () => Promise<string[]>
   getRecentFolderIcon: (folderPath: string) => Promise<string | null>
   removeRecentFolder: (folderPath: string) => Promise<string[]>
+  showItemInFolder: (folderPath: string) => Promise<{ ok: true }>
   openRecentFolder: (folderPath: string) => Promise<OpenFolderResult>
   refreshTree: () => Promise<OpenFolderResult>
   readFile: (filePath: string) => Promise<string>
@@ -139,6 +150,9 @@ interface HoloApi {
   readRepoConfig: () => Promise<Record<string, unknown> | null>
   writeRepoConfig: (config: Record<string, unknown>) => Promise<{ ok: true }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
+  gitGetFolderStatuses: (folderPaths: string[]) => Promise<Record<string, 'local' | 'git-sync' | 'git-readonly'>>
+  gitGetFileLog: (filePath: string, maxCount?: number) => Promise<HoloGitFileCommit[]>
+  gitAutoSave: (filePath: string, authorName?: string, authorEmail?: string) => Promise<{ ok: boolean; committed: boolean; reason?: string; error?: string }>
   gitPickCloneDirectory: () => Promise<string | null>
   gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>
   gitFetch: () => Promise<{ ok: true; output: string }>

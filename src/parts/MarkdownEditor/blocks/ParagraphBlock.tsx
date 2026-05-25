@@ -20,12 +20,13 @@ interface ParagraphBlockProps {
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
   onConvert?: (type: string, children: InlineNode[]) => void
-  onSlashCommand?: (rect: DOMRect) => void
+  onSlashCommand?: () => void
   onSplit?: (after: InlineNode[]) => void
+  alwaysShowPlaceholder?: boolean
 }
 
 export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps>(
-  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit }, ref) {
+  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -50,6 +51,8 @@ export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps
         onSlashCommand={onSlashCommand}
         onSplit={onSplit}
         blockType="paragraph"
+        placeholder={alwaysShowPlaceholder ? 'Commencez à taper  —  / ou Ctrl+Espace pour les commandes' : 'Commencez à taper…'}
+        alwaysShowPlaceholder={alwaysShowPlaceholder}
       />
     )
   },

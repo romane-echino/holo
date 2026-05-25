@@ -752,8 +752,12 @@ async function getGitState({ fetchRemote = false } = {}) {
     ? getConflictedFilesFromStatusOutput(statusResult.stdout, currentRootPath)
     : []
 
+  const remoteResult = await runGit(['remote'], currentRootPath)
+  const hasRemote = remoteResult.ok && remoteResult.stdout.trim().length > 0
+
   return {
     isRepo: true,
+    hasRemote,
     branch: branchResult.ok ? branchResult.stdout : null,
     localChanges,
     incoming,
@@ -1213,6 +1217,11 @@ ipcMain.handle('fs:get-recent-folder-icon', async (_event, folderPath) => {
 
 ipcMain.handle('fs:remove-recent-folder', async (_event, folderPath) => removeRecentFolder(folderPath))
 
+ipcMain.handle('shell:show-item-in-folder', async (_event, folderPath) => {
+  shell.showItemInFolder(path.resolve(folderPath))
+  return { ok: true }
+})
+
 ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
   const targetPath = path.resolve(folderPath)
   const stats = await fs.stat(targetPath).catch(() => null)
@@ -1652,6 +1661,84 @@ ipcMain.handle('fs:restore-archived-path', async (_event, archivedPath) => {
 ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
   getGitState({ fetchRemote: Boolean(fetchRemote) }),
 )
+
+ipcMain.handle('git:get-folder-statuses', async (_event, folderPaths) => {
+  const results = {}
+  await Promise.all(
+    (folderPaths ?? []).map(async (folderPath) => {
+      try {
+        const isRepo = await isGitRepository(folderPath)
+        if (!isRepo) { results[folderPath] = 'local'; return }
+        const remoteResult = await runGit(['remote'], folderPath)
+        results[folderPath] = remoteResult.ok && remoteResult.stdout.trim().length > 0
+          ? 'git-sync'
+          : 'git-readonly'
+      } catch {
+        results[folderPath] = 'local'
+      }
+    })
+  )
+  return results
+})
+
+ipcMain.handle('git:get-file-log', async (_event, filePath, maxCount = 10) => {
+  const cwd = currentRootPath
+  if (!cwd) return []
+
+  const isRepo = await isGitRepository(cwd)
+  if (!isRepo) return []
+
+  const result = await runGit(
+    ['log', '--follow', `-n`, String(maxCount), '--pretty=format:%H\x1f%an\x1f%ae\x1f%at\x1f%s', '--', filePath],
+    cwd,
+  )
+
+  if (!result.ok || !result.stdout) return []
+
+  return result.stdout.split('\n').map((line) => {
+    const [hash, authorName, authorEmail, timestamp, subject] = line.split('\x1f')
+    return {
+      hash: hash ?? '',
+      shortHash: (hash ?? '').slice(0, 7),
+      authorName: authorName ?? '',
+      authorEmail: authorEmail ?? '',
+      timestamp: timestamp ? new Date(Number(timestamp) * 1000).toISOString() : '',
+      subject: subject ?? '',
+    }
+  })
+})
+
+ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail) => {
+  const cwd = currentRootPath
+  if (!cwd) return { ok: true, committed: false, reason: 'no-root-path' }
+
+  const isRepo = await isGitRepository(cwd)
+  if (!isRepo) return { ok: true, committed: false, reason: 'not-a-repo' }
+
+  // Stage seulement ce fichier
+  const relPath = path.relative(cwd, filePath)
+  const addResult = await runGit(['add', '--', relPath], cwd)
+  if (!addResult.ok) return { ok: false, committed: false, reason: 'add-failed', error: addResult.stderr }
+
+  // Vérifie s'il y a des changements à committer
+  const diffResult = await runGit(['diff', '--cached', '--quiet'], cwd)
+  if (diffResult.ok) return { ok: true, committed: false, reason: 'nothing-to-commit' }
+
+  const args = ['commit', '--no-gpg-sign', '-m', 'Enregistrement automatique']
+  const name = (authorName ?? '').trim()
+  const email = (authorEmail ?? '').trim()
+  if (name) args.push(`--author=${name} <${email}>`)
+
+  const commitResult = await runGit(args, cwd)
+  if (!commitResult.ok) {
+    if (/nothing to commit/i.test(commitResult.stdout + commitResult.stderr)) {
+      return { ok: true, committed: false, reason: 'nothing-to-commit' }
+    }
+    return { ok: false, committed: false, reason: 'commit-failed', error: commitResult.stderr }
+  }
+
+  return { ok: true, committed: true }
+})
 
 ipcMain.handle('holo:read-repo-config', async () => {
   if (!currentRootPath) {
