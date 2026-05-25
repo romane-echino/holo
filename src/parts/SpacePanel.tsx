@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
 import { getBaseName } from '../lib/appUtils'
@@ -6,7 +6,7 @@ import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
 import type { TreeNode } from '../types/app'
-import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search } from 'lucide-react'
+import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { AbstractPanel } from './AbstractPanel'
 
@@ -36,7 +36,7 @@ type SpacePanelProps = {
   favoriteItems?: SpacePanelItem[]
   selectedPath?: string
   onSelectFile?: (node: SpaceFileNode) => void
-  onAddFile?: () => void
+  onAddItem?: (type: 'file' | 'folder', name: string) => void
   onSearch?: (query: string) => void
 }
 
@@ -187,12 +187,33 @@ export function SpacePanel({
   favoriteItems,
   selectedPath,
   onSelectFile,
-  onAddFile,
+  onAddItem,
   onSearch,
 }: SpacePanelProps) {
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
+
+  // ─── Dialog ajout fichier / dossier ────────────────────────────────────────
+  const [addOpen, setAddOpen] = useState(false)
+  const [addType, setAddType] = useState<'file' | 'folder'>('file')
+  const [addName, setAddName] = useState('')
+  const addInputRef = useRef<HTMLInputElement>(null)
+
+  const openAddDialog = useCallback((type: 'file' | 'folder' = 'file') => {
+    setAddType(type)
+    setAddName('')
+    setAddOpen(true)
+    setTimeout(() => addInputRef.current?.focus(), 50)
+  }, [])
+
+  const handleAddConfirm = useCallback(() => {
+    const name = addName.trim()
+    if (!name) return
+    onAddItem?.(addType, name)
+    setAddOpen(false)
+    setAddName('')
+  }, [addName, addType, onAddItem])
 
   const filteredFiles = useMemo(() => {
     if (!query.trim()) return files
@@ -233,14 +254,15 @@ export function SpacePanel({
   }
 
   return (
+    <>
     <AbstractPanel
       title={spaceName}
       actions={
         <button
-          onClick={onAddFile}
+          onClick={() => openAddDialog()}
           className="flex size-8 shrink-0 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-primary-soft active:scale-[0.98]"
-          title="Nouveau fichier"
-          aria-label="Nouveau fichier"
+          title="Nouveau fichier ou dossier"
+          aria-label="Nouveau fichier ou dossier"
         >
           <Plus size={13} />
         </button>
@@ -322,6 +344,75 @@ export function SpacePanel({
         />
       )}
     </AbstractPanel>
+
+    {addOpen && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onClick={() => setAddOpen(false)}
+      >
+        <div
+          className="w-[320px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-holo-text">Nouveau…</h3>
+            <button
+              onClick={() => setAddOpen(false)}
+              className="flex size-7 items-center justify-center rounded-holo-md text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="mb-4 flex gap-1 rounded-holo-lg bg-holo-glass p-1">
+            {(['file', 'folder'] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setAddType(type)}
+                className={cn(
+                  'flex flex-1 items-center justify-center gap-2 rounded-holo-md px-3 py-2 text-sm transition',
+                  addType === type
+                    ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-white/[0.05]'
+                    : 'text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
+                )}
+              >
+                {type === 'file' ? <FileText size={13} /> : <Folder size={13} />}
+                {type === 'file' ? 'Fichier' : 'Dossier'}
+              </button>
+            ))}
+          </div>
+
+          <input
+            ref={addInputRef}
+            value={addName}
+            onChange={(e) => setAddName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAddConfirm()
+              if (e.key === 'Escape') setAddOpen(false)
+            }}
+            placeholder={addType === 'file' ? 'nom-du-fichier.md' : 'nom-du-dossier'}
+            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+          />
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setAddOpen(false)}
+              className="rounded-holo-md px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={handleAddConfirm}
+              disabled={!addName.trim()}
+              className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]"
+            >
+              Créer
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 
@@ -341,14 +432,35 @@ function treeNodeToSpaceFile(node: TreeNode): SpaceFileNode {
   }
 }
 
-export function SpaceRoute() {
+export function SpaceRoute({
+  onSelectFile,
+  selectedFilePath,
+}: {
+  onSelectFile?: (node: SpaceFileNode) => void
+  selectedFilePath?: string
+}) {
   const { encodedPath } = useParams()
   const folderPath = encodedPath ? decodeURIComponent(encodedPath) : null
   const spaceName = folderPath ? getBaseName(folderPath) : ''
 
-  const { rootPath, tree, recentFilePaths, fileMetaByPath } = useWorkspace()
+  const { rootPath, tree, recentFilePaths, fileMetaByPath, setTree } = useWorkspace()
   const { getHoloApi } = useGetHoloApi()
   const { openRecentFolder } = useWorkspaceFolders({ getHoloApi })
+
+  const handleAddItem = useCallback(async (type: 'file' | 'folder', name: string) => {
+    if (!rootPath) return
+    try {
+      if (type === 'file') {
+        await window.holo?.createFile(rootPath, name)
+      } else {
+        await window.holo?.createDirectory(rootPath, name)
+      }
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible de créer :', err)
+    }
+  }, [rootPath, setTree])
 
   useEffect(() => {
     if (folderPath && folderPath !== rootPath) {
@@ -384,6 +496,9 @@ export function SpaceRoute() {
       files={files}
       recentItems={recentItems}
       favoriteItems={[]}
+      selectedPath={selectedFilePath}
+      onSelectFile={onSelectFile}
+      onAddItem={handleAddItem}
     />
   )
 }

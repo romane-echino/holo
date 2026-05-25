@@ -1,23 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
-import { Ellipsis, ExternalLink, FileText } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Ellipsis, ExternalLink, FileText, PanelRight } from 'lucide-react'
 import { cn } from '../utils/global'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import { BlockEditor } from './MarkdownEditor/BlockEditor'
-import { TableTest } from './TableTest'
 
 type EditorFrameProps = {
   filepath: string
   markdown?: string
   onMarkdownChange?: (value: string) => void
-
-  onTitleChange?: (value: string) => void
-  onDescriptionChange?: (value: string) => void
-  onAuthorChange?: (value: string) => void
-  onCreatedAtChange?: (value: string) => void
-  onUpdatedAtChange?: (value: string) => void
-  onTagsChange?: (value: string[]) => void
   onIconClick?: () => void
-
+  onToggleInspector?: () => void
   onShare?: () => void
   onMore?: () => void
 }
@@ -214,17 +205,56 @@ function StickyEditorHeader({
   )
 }
 
+// ─── Frontmatter ─────────────────────────────────────────────────────────────────────
+
+interface FrontmatterData {
+  title?: string
+  description?: string
+  author?: string
+  created?: string
+  updated?: string
+  tags?: string[]
+  [key: string]: string | string[] | undefined
+}
+
+function parseFrontmatter(markdown: string): { fm: FrontmatterData; body: string } {
+  const match = markdown.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)/)
+  if (!match) return { fm: {}, body: markdown }
+  const yamlStr = match[1]
+  const body = (match[2] ?? '').replace(/^\n/, '')
+  const fm: FrontmatterData = {}
+  for (const line of yamlStr.split('\n')) {
+    const colon = line.indexOf(':')
+    if (colon === -1) continue
+    const key = line.slice(0, colon).trim()
+    if (!key) continue
+    const raw = line.slice(colon + 1).trim()
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+      fm[key] = raw.slice(1, -1).split(',').map((s) => s.trim()).filter(Boolean)
+    } else {
+      fm[key] = raw.replace(/^['"]|['"]$/g, '')
+    }
+  }
+  return { fm, body }
+}
+
+function serializeFrontmatter(fm: FrontmatterData): string {
+  const entries = Object.entries(fm).filter(([, v]) =>
+    Array.isArray(v) ? v.length > 0 : v !== undefined && v !== ''
+  )
+  if (entries.length === 0) return ''
+  const lines = entries.map(([k, v]) =>
+    Array.isArray(v) ? `${k}: [${v.join(', ')}]` : `${k}: ${v}`
+  )
+  return `---\n${lines.join('\n')}\n---\n\n`
+}
+
 export function EditorFrame({
   filepath,
   markdown = '',
   onMarkdownChange,
-  onTitleChange,
-  onDescriptionChange,
-  onAuthorChange,
-  onCreatedAtChange,
-  onUpdatedAtChange,
-  onTagsChange,
   onIconClick,
+  onToggleInspector,
   onShare,
   onMore,
 }: EditorFrameProps) {
@@ -234,13 +264,31 @@ export function EditorFrame({
   const filename = filenameFromPath(filepath)
   const folder = folderFromPath(filepath)
   const extension = extensionFromPath(filepath)
-  const icon = undefined // TODO: Add file type icons based on extension
-  const title = filename.replace(/\.[^/.]+$/, '') // Remove extension for title
-  const description = undefined // TODO: Add support for file description/summary
-  const author = undefined // TODO: Add support for file author
-  const createdAt = undefined // TODO: Add support for file creation date
-  const updatedAt = undefined // TODO: Add support for file modification date
-  const tags: string[] = [] // TODO: Add support for file tags
+  const icon = undefined
+
+  // ── État dérivé du frontmatter (remonte à chaque changement de fichier via key=path) ─
+  const [fm, setFm] = useState<FrontmatterData>(() => parseFrontmatter(markdown).fm)
+  const [body, setBody] = useState(() => parseFrontmatter(markdown).body)
+  const fmRef = useRef<FrontmatterData>(fm)
+  fmRef.current = fm
+  const bodyRef = useRef(body)
+  bodyRef.current = body
+
+  const displayTitle = (fm.title as string | undefined) || filename.replace(/\.[^/.]+$/, '')
+
+  const handleFmChange = useCallback((updates: Partial<FrontmatterData>) => {
+    const next: FrontmatterData = {}
+    for (const [k, v] of Object.entries({ ...fmRef.current, ...updates })) {
+      if (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== '') next[k] = v
+    }
+    setFm(next)
+    onMarkdownChange?.(serializeFrontmatter(next) + bodyRef.current)
+  }, [onMarkdownChange])
+
+  const handleBodyChange = useCallback((newBody: string) => {
+    setBody(newBody)
+    onMarkdownChange?.(serializeFrontmatter(fmRef.current) + newBody)
+  }, [onMarkdownChange])
 
   useEffect(() => {
     const el = sectionRef.current
@@ -268,8 +316,8 @@ export function EditorFrame({
       <StickyEditorHeader
         visible={showStickyHeader}
         icon={icon}
-        title={title || filename}
-        author={author}
+        title={displayTitle}
+        author={fm.author as string | undefined}
         extension={extension}
         onShare={onShare}
         onMore={onMore}
@@ -296,6 +344,15 @@ export function EditorFrame({
 
             <div className="flex shrink-0 items-center gap-2">
               <button
+                onClick={onToggleInspector}
+                className="3xl:hidden flex size-10 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
+                title="Inspecteur"
+                aria-label="Inspecteur"
+              >
+                <PanelRight size={14} />
+              </button>
+
+              <button
                 onClick={onShare}
                 className="flex size-10 items-center justify-center rounded-holo-md bg-holo-primary py-2 text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.22)] transition hover:bg-holo-primary/90 active:scale-[0.98]"
                 title="Share"
@@ -317,15 +374,15 @@ export function EditorFrame({
 
           <div className="mb-6 flex flex-col gap-2">
             <EditableText
-              value={title ?? filename}
-              onChange={onTitleChange}
+              value={displayTitle}
+              onChange={(v) => handleFmChange({ title: v })}
               placeholder="Untitled"
               className="text-[clamp(2.25rem,5vw,4rem)] font-[650] leading-[1] tracking-[-0.05em]"
             />
 
             <EditableText
-              value={description}
-              onChange={onDescriptionChange}
+              value={fm.description as string | undefined}
+              onChange={(v) => handleFmChange({ description: v })}
               placeholder="Ajouter une description…"
               multiline
               className="max-w-[720px] text-[1.02rem] leading-7"
@@ -333,373 +390,18 @@ export function EditorFrame({
           </div>
 
           <div className="rounded-holo-2xl border border-holo-border-soft bg-holo-glass p-3">
-            <PropertyField label="Auteur" value={author} placeholder="Auteur…" onChange={onAuthorChange} />
-            <PropertyField label="Créé" value={createdAt} placeholder="Date de création…" onChange={onCreatedAtChange} />
-            <PropertyField label="Modifié" value={updatedAt} placeholder="Date de modification…" onChange={onUpdatedAtChange} />
-            <TagsField tags={tags} onChange={onTagsChange} />
+            <PropertyField label="Auteur" value={fm.author as string | undefined} placeholder="Auteur…" onChange={(v) => handleFmChange({ author: v })} />
+            <PropertyField label="Créé" value={fm.created as string | undefined} placeholder="Date de création…" onChange={(v) => handleFmChange({ created: v })} />
+            <PropertyField label="Modifié" value={fm.updated as string | undefined} placeholder="Date de modification…" onChange={(v) => handleFmChange({ updated: v })} />
+            <TagsField tags={Array.isArray(fm.tags) ? fm.tags as string[] : []} onChange={(t) => handleFmChange({ tags: t })} />
           </div>
         </header>
 
-        <TableTest />
-
         <article>
-          {!markdown ? (
-            <div className="grid grid-cols-2 gap-10">
-              <div>
-                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-text-faint">JSX reference</div>
-                <div className="holo-markdown"><MarkdownVisualExample /></div>
-              </div>
-              <div>
-                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-primary-soft">MarkdownRenderer</div>
-                <MarkdownRenderer markdown={MarkdownDemo} />
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-10">
-              <div>
-                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-text-faint">JSX reference</div>
-                <div className="holo-markdown"><MarkdownVisualExample /></div>
-              </div>
-              <div>
-                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-holo-primary-soft">Editor</div>
-                <BlockEditor markdown={MarkdownDemo} onChange={onMarkdownChange ?? (() => { })} />
-              </div>
-
-            </div>
-          )}
+          <BlockEditor markdown={body} onChange={handleBodyChange} />
         </article>
       </div>
     </section>
   )
 }
 
-// prettier-ignore
-export const MarkdownDemo = `
-# Titre 1 — Document principal
-
-Ceci est un exemple complet de rendu Markdown dans le design system Holo. Le texte est pensé pour être confortable à lire, avec une colonne centrée, beaucoup d'espace et une hiérarchie typographique claire.
-
-Voici un [lien contextuel](#), du **texte important**, du _texte accentué_, du ~~texte barré~~ et un exemple de code inline \`git status\`.
-
-## Titre 2 — Structure du contenu
-
-Les titres secondaires servent à structurer la documentation sans donner une impression trop technique ou trop dense. L'objectif est de garder un rendu premium, lisible et calme.
-
-### Titre 3 — Liste simple
-
-- Documentation interne et durable.
-- Markdown WYSIWYG avec rendu propre.
-- Versioning Git visible mais simplifié.
-- IA intégrée au flux d'écriture.
-
-### Titre 3 — Nested list
-
-- Architecture
-  - Frontend
-    - React
-    - Electron
-    - Tailwind
-  - Backend
-    - Git index
-    - RAG pipeline
-- Documentation
-  - Guides
-  - ADR
-  - Runbooks
-
-### Titre 3 — Liste numérotée
-
-1. Créer ou ouvrir un repository.
-2. Écrire la documentation en Markdown.
-3. Synchroniser les changements automatiquement.
-4. Utiliser l'IA pour améliorer, résumer ou relier les contenus.
-
-### Checklist / Tasklist
-
-- [x] Finaliser le rendu Markdown
-- [x] Ajouter les propriétés éditables
-- [ ] Brancher le vrai moteur WYSIWYG
-- [ ] Générer la table des matières automatiquement
-
-#### Titre 4 — Note contextuelle
-
-> Le rôle de Holo n'est pas de ressembler à un IDE, mais à un espace de connaissance vivant où Git devient une timeline documentaire.
-
-## Latex equation
-
-Une équation inline peut s'intégrer dans le texte, par exemple $E = mc²$, tandis qu'une équation importante peut être mise en avant.
-
-$$f(x) = \\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}$$
-
-## Image
-
-![Figure 1 — Exemple de bloc image dans le rendu Markdown.](https://placehold.co/920x360/0B0F16/7B61FF?text=Image+%2F+diagramme)
-
-## Code
-
-\`\`\`typescript
-type DocumentState = {
-  filepath: string
-  saved: boolean
-  branch: string
-  modifiedAt: Date
-}
-
-function updateDocument(state: DocumentState) {
-  return {
-    ...state,
-    saved: false,
-    modifiedAt: new Date(),
-  }
-}
-\`\`\`
-
-## Tableau
-
-| Élément | Rôle | Statut |
-| --- | --- | --- |
-| Markdown | Format principal d'écriture | Actif |
-| Git | Historique et synchronisation | Synchronisé |
-| IA | Résumé, liens, réécriture | Prêt |
-
-## Tableau aligné
-
-| Gauche | Centre | Droite |
-| :--- | :---: | ---: |
-| Nom | Score | 128 |
-| Version | Stable | 2.0 |
-
----
-
-## Footnote
-
-Holo peut afficher des notes de bas de page discrètes, utiles pour les précisions techniques ou les références internes.[^1]
-
-[^1]: Une footnote doit rester lisible, mais visuellement secondaire par rapport au document principal.
-
-## Conclusion
-
-Ce rendu doit donner l'impression d'un document vivant, lisible et versionné, tout en restant suffisamment neutre pour accueillir de vrais contenus techniques.
-`
-
-export function MarkdownVisualExample() {
-  return (
-    <>
-      <h1 id="titre-1-document-principal">Titre 1 — Document principal</h1>
-
-      <p>
-        Ceci est un exemple complet de rendu Markdown dans le design system Holo. Le texte est pensé pour être
-        confortable à lire, avec une colonne centrée, beaucoup d’espace et une hiérarchie typographique claire.
-      </p>
-
-      <p>
-        Voici un <a href="#">lien contextuel</a>, du <strong>texte important</strong>, du <em>texte accentué</em>, du{' '}
-        <del>texte barré</del> et un exemple de code inline <code>git status</code>.
-      </p>
-
-      <h2 id="structure-du-contenu">Titre 2 — Structure du contenu</h2>
-
-      <p>
-        Les titres secondaires servent à structurer la documentation sans donner une impression trop technique ou trop
-        dense. L’objectif est de garder un rendu premium, lisible et calme.
-      </p>
-
-      <h3 id="liste-simple">Titre 3 — Liste simple</h3>
-
-      <ul>
-        <li>Documentation interne et durable.</li>
-        <li>Markdown WYSIWYG avec rendu propre.</li>
-        <li>Versioning Git visible mais simplifié.</li>
-        <li>IA intégrée au flux d’écriture.</li>
-      </ul>
-
-      <h3 id="nested-list">Titre 3 — Nested list</h3>
-
-      <ul>
-        <li>
-          Architecture
-          <ul>
-            <li>
-              Frontend
-              <ul>
-                <li>React</li>
-                <li>Electron</li>
-                <li>Tailwind</li>
-              </ul>
-            </li>
-            <li>
-              Backend
-              <ul>
-                <li>Git index</li>
-                <li>RAG pipeline</li>
-              </ul>
-            </li>
-          </ul>
-        </li>
-        <li>
-          Documentation
-          <ul>
-            <li>Guides</li>
-            <li>ADR</li>
-            <li>Runbooks</li>
-          </ul>
-        </li>
-      </ul>
-
-      <h3 id="liste-numerotee">Titre 3 — Liste numérotée</h3>
-
-      <ol>
-        <li>Créer ou ouvrir un repository.</li>
-        <li>Écrire la documentation en Markdown.</li>
-        <li>Synchroniser les changements automatiquement.</li>
-        <li>Utiliser l’IA pour améliorer, résumer ou relier les contenus.</li>
-      </ol>
-
-      <h3 id="tasklist">Checklist / Tasklist</h3>
-
-      <ul className="contains-task-list">
-        <li className="task-list-item">
-          <input type="checkbox" checked readOnly /> Finaliser le rendu Markdown
-        </li>
-        <li className="task-list-item">
-          <input type="checkbox" checked readOnly /> Ajouter les propriétés éditables
-        </li>
-        <li className="task-list-item">
-          <input type="checkbox" readOnly /> Brancher le vrai moteur WYSIWYG
-        </li>
-        <li className="task-list-item">
-          <input type="checkbox" readOnly /> Générer la table des matières automatiquement
-        </li>
-      </ul>
-
-      <h4 id="note-contextuelle">Titre 4 — Note contextuelle</h4>
-
-      <blockquote>
-        Le rôle de Holo n’est pas de ressembler à un IDE, mais à un espace de connaissance vivant où Git devient une
-        timeline documentaire.
-      </blockquote>
-
-      <h2 id="latex-equation">Latex equation</h2>
-
-      <p>
-        Une équation inline peut s’intégrer dans le texte, par exemple <span className="holo-latex-inline">E = mc²</span>,
-        tandis qu’une équation importante peut être mise en avant.
-      </p>
-
-      <div className="holo-latex-block">
-        <span>f(x) = \int_&#123;-\infty&#125;^&#123;\infty&#125; e^&#123;-x^2&#125; dx = \sqrt&#123;\pi&#125;</span>
-      </div>
-
-      <h2 id="image">Image</h2>
-
-      <figure>
-        <div className="flex aspect-[16/9] w-full items-center justify-center rounded-holo-2xl border border-holo-border-soft bg-[radial-gradient(circle_at_50%_0%,rgba(123,97,255,.22),transparent_38rem),linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.02))] shadow-[0_20px_60px_rgba(0,0,0,.25)]">
-          <div className="text-center">
-            <div className="mx-auto mb-3 flex size-14 items-center justify-center rounded-holo-2xl bg-holo-glass">
-              <i className="far fa-image text-xl text-holo-text-muted" />
-            </div>
-            <p className="text-sm font-medium text-holo-text">Image / diagramme</p>
-            <p className="mt-1 text-xs text-holo-text-faint">Aperçu visuel intégré au document</p>
-          </div>
-        </div>
-        <figcaption>Figure 1 — Exemple de bloc image dans le rendu Markdown.</figcaption>
-      </figure>
-
-      <h2 id="code">Code</h2>
-
-      <pre>
-        <code>{`type DocumentState = {
-  filepath: string
-  saved: boolean
-  branch: string
-  modifiedAt: Date
-}
-
-function updateDocument(state: DocumentState) {
-  return {
-    ...state,
-    saved: false,
-    modifiedAt: new Date(),
-  }
-}`}</code>
-      </pre>
-
-      <h2 id="tableau">Tableau</h2>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Élément</th>
-            <th>Rôle</th>
-            <th>Statut</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Markdown</td>
-            <td>Format principal d’écriture</td>
-            <td>Actif</td>
-          </tr>
-          <tr>
-            <td>Git</td>
-            <td>Historique et synchronisation</td>
-            <td>Synchronisé</td>
-          </tr>
-          <tr>
-            <td>IA</td>
-            <td>Résumé, liens, réécriture</td>
-            <td>Prêt</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <h2 id="tableau-aligne">Tableau aligné</h2>
-
-      <table>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left' }}>Gauche</th>
-            <th style={{ textAlign: 'center' }}>Centre</th>
-            <th style={{ textAlign: 'right' }}>Droite</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style={{ textAlign: 'left' }}>Nom</td>
-            <td style={{ textAlign: 'center' }}>Score</td>
-            <td style={{ textAlign: 'right' }}>128</td>
-          </tr>
-          <tr>
-            <td style={{ textAlign: 'left' }}>Version</td>
-            <td style={{ textAlign: 'center' }}>Stable</td>
-            <td style={{ textAlign: 'right' }}>2.0</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <hr />
-
-      <h2 id="footnote">Footnote</h2>
-
-      <p>
-        Holo peut afficher des notes de bas de page discrètes, utiles pour les précisions techniques ou les références
-        internes.<sup><a href="#fn-1">1</a></sup>
-      </p>
-
-      <section className="footnotes">
-        <ol>
-          <li id="fn-1">
-            Une footnote doit rester lisible, mais visuellement secondaire par rapport au document principal.
-          </li>
-        </ol>
-      </section>
-
-      <h2 id="conclusion">Conclusion</h2>
-
-      <p>
-        Ce rendu doit donner l’impression d’un document vivant, lisible et versionné, tout en restant suffisamment neutre
-        pour accueillir de vrais contenus techniques.
-      </p>
-    </>
-  )
-}
