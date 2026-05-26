@@ -671,19 +671,37 @@ src/main.tsx
 # App2
 - Quand on switch de fichier ou qu'on ferme holo sauvegarde le fichier courant avant (+ sync github)
 - Intégration d'un git diff lors de merge nécessaire qui est modal sur le fichier
-- dans space panel a coté du plus ajouter "..." pour un menu qui permet de
+- ✅ dans space panel a coté du plus ajouter "..." pour un menu qui permet de
   - Dissocier l'espace de holo
   - SI C'EST UN REPO GIT : voir le nombre de commit a push et pull et pouvoir faire une sync manuelle
   - Mettre / Enlever des favoris
-- Dans les panneau récent et favoris enlever les espaces (ça sert a rien)
-- Formatter la table de matière en points numérique
+- ✅ Dans les panneau récent et favoris enlever les espaces (ça sert a rien)
+- ✅ Formatter la table de matière en points numérique
   1. Titre 1
   2. Titre 2
     2.1 Sous titre 1
     ...
-- Rendre le titre dans EditorFrame multi-ligne
-- Dans SpacePanel bouton droite sur un fichier ajouter mettre/retirer des favoris
-- Dans Settings les paramêtres d'apparence ne fonctionne pas
+- ✅ Rendre le titre dans EditorFrame multi-ligne
+- ✅ Dans SpacePanel bouton droite sur un fichier ajouter mettre/retirer des favoris
+- ✅ Dans Settings les paramêtres d'apparence ne fonctionne pas
 - Dans Recent Panel si je clique sur un fichier alors que je n'ai pas le bon espace ouvert n'ouvre pas le fichier lors du clic
 - Implémenter la recherche (focaliser sur les nom de fichier -> les titre -> les tags -> la description -> les titre dans le contenu -> le contenu (ordre de pertinance))
 - Dans les tableau le menu contextuel des colonnes est tronqué par un overflow-hidden et on voit pas toutes les options
+- Voir dans l'arboresence et dans editor frame si le document est un favori.
+- Dans EditorFrame "..." Ajouter dans le menu contextuelle ajouter/enlever des favoris
+- Dans inspector pouvoir cliquer dans la table des matières pour scrollTo dans EditorFrame
+- Dans EditorFrame Quand le headerSticky apparait et qu'on clique "..." le menu contextuell aparait hors de la zone
+- Donner une couleur aux tags (selon la première ou les deux premier caractère) ex : pe -> jaune (trouver un algo pour pick une couleur selon une palette)
+- Mieux gérer les nested list numérique et alphabetiques
+  1. Element 1
+    1.1 Sous element 1
+  
+  a. Element 1
+    a.1 Sous element 1
+      a.1.1 sous sous element 1
+- Dans inspector ajouter a coté de Tables de matière et liens l'onglet "Notes" qui ressence tout les "footnote" du document
+- Ajouter le support des composant manquant (block quote, latex, image, code, footnote)
+- Dans EditorFrame voir un status d'enregistrement (j'ai besoin de savoir si ce fichier est bien synchronizé avec git)
+  - Enregistré localement (disquette jaune)
+  - Synchronisé (il est commit et tout est bon) (sync vert)
+- La table des matière ne se rafraichie pas au fur a mesure de la saisie du document

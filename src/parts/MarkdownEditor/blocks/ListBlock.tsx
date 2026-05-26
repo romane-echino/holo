@@ -160,7 +160,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
     // ── Enter : nouvel item ou sortie de liste ────────────────────────────────
 
     const handleItemEnter = useCallback(
-      (id: string, afterInlines: InlineNode[], isEmpty: boolean) => {
+      (id: string, beforeInlines: InlineNode[], afterInlines: InlineNode[], isEmpty: boolean) => {
         const prev = itemsRef.current
         const idx = prev.findIndex((item) => item.id === id)
         if (idx === -1) return
@@ -174,7 +174,8 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
           return
         }
 
-        // Créer un nouvel item avec le contenu après le curseur
+        // Mettre à jour l'item courant ET créer le nouvel item en un seul setItems
+        // (évite le batching React qui écrase les inlines si onSave et onEnter sont séparés)
         const isChecklist = prev.some((i) => i.checked !== null)
         const newItem: Item = {
           id: newItemId(),
@@ -182,7 +183,12 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
           checked: isChecklist ? false : null,
           depth: prev[idx].depth,
         }
-        const next = [...prev.slice(0, idx + 1), newItem, ...prev.slice(idx + 1)]
+        const next = [
+          ...prev.slice(0, idx),
+          { ...prev[idx], inlines: beforeInlines },
+          newItem,
+          ...prev.slice(idx + 1),
+        ]
         setItems(next)
         emit(next)
         requestAnimationFrame(() => focusItem(newItem.id, 'start'))
@@ -268,7 +274,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
             }}
             onSave={(inlines) => saveItem(item.id, inlines)}
             onToggle={() => handleItemToggle(item.id)}
-            onEnter={(after, empty) => handleItemEnter(item.id, after, empty)}
+            onEnter={(before, after, empty) => handleItemEnter(item.id, before, after, empty)}
             onTab={(shift) => handleItemTab(item.id, shift)}
             onBackspaceAtStart={() => handleItemBackspace(item.id)}
             onArrowUp={(x) => {
@@ -309,7 +315,7 @@ function ListItemRow({
   elRef: (el: HTMLDivElement | null) => void
   onSave: (inlines: InlineNode[]) => void
   onToggle: () => void
-  onEnter: (afterInlines: InlineNode[], isEmpty: boolean) => void
+  onEnter: (beforeInlines: InlineNode[], afterInlines: InlineNode[], isEmpty: boolean) => void
   onTab: (shift: boolean) => void
   onBackspaceAtStart: () => void
   onArrowUp: (x: number) => void
@@ -404,8 +410,9 @@ function ListItemRow({
         } catch { /* ignore */ }
       }
       savedRef.current = true
-      onSave(domToInlines(el))
-      onEnter(afterInlines, isEmpty)
+      // beforeInlines = contenu DOM après extractContents (seule la partie avant curseur reste)
+      const beforeInlines = domToInlines(el)
+      onEnter(beforeInlines, afterInlines, isEmpty)
       return
     }
     if (e.key === 'Backspace' && isAtStart() && !el.textContent?.trim()) {

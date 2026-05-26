@@ -546,7 +546,6 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
         <div
           key={block.id}
           data-block-id={block.id}
-          data-block-type={block.node.type}
           className={cn(
             'group/block relative',
             selectedBlockIds.has(block.id) && 'rounded-sm bg-holo-primary-surface/15 outline outline-1 outline-holo-primary/20',

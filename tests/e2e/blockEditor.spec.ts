@@ -14,9 +14,26 @@ import { test, expect, Page } from '@playwright/test'
 
 const FIXTURE_URL = '/tests/fixtures/editor.html'
 
-/** Markdown courant selon le spy #pw-md-output */
-async function getCurrentMd(page: Page): Promise<string> {
-  return page.locator('#pw-md-output').textContent() ?? ''
+/**
+ * Attend que le markdown courant satisfasse un prédicat.
+ * page.locator('#pw-md-output').textContent() fonctionne même sur display:none.
+ */
+async function waitForMd(page: Page, predicate: (md: string) => boolean, timeout = 4000): Promise<string> {
+  await page.waitForFunction(
+    (sel: string) => {
+      const el = document.querySelector(sel)
+      return el?.textContent ?? ''
+    },
+    '#pw-md-output',
+    { timeout },
+  )
+  // Retry jusqu'à ce que le prédicat soit vrai
+  let md = ''
+  await expect(async () => {
+    md = (await page.locator('#pw-md-output').textContent()) ?? ''
+    expect(predicate(md)).toBe(true)
+  }).toPass({ timeout })
+  return md
 }
 
 /** Attends que le BlockEditor soit prêt */
@@ -24,10 +41,7 @@ async function waitForEditor(page: Page) {
   await page.waitForSelector('[data-testid="block-editor"]', { timeout: 10_000 })
 }
 
-/**
- * Navigue vers la fixture avec un markdown initial personnalisé.
- * Le markdown est injecté via window.__PW_MD__ AVANT le chargement du script React.
- */
+/** Navigue vers la fixture avec un markdown initial personnalisé. */
 async function gotoEditor(page: Page, markdown?: string) {
   if (markdown) {
     await page.addInitScript((md) => { (window as any).__PW_MD__ = md }, markdown)
@@ -36,26 +50,24 @@ async function gotoEditor(page: Page, markdown?: string) {
   await waitForEditor(page)
 }
 
-/** Trouve un bloc paragraph par son contenu texte */
+/** Trouve un bloc paragraph éditable par son contenu texte */
 function paragraphWithText(page: Page, text: string) {
-  return page.locator('[data-block-type="paragraph"]').filter({ hasText: text })
+  return page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: text })
 }
 
-/**
- * Ouvre la slash command depuis un bloc paragraph vide focalisé.
- * Présuppose que le curseur est déjà dans un bloc vide.
- */
+/** Ouvre la slash command depuis un bloc vide focalisé. */
 async function openSlashPopup(page: Page) {
   await page.keyboard.type('/')
   await page.waitForSelector('[data-testid="slash-popup"]', { timeout: 3_000 })
 }
 
-/** Sélectionne une commande slash par son label */
+/** Sélectionne une commande slash par son label. */
 async function selectSlashCommand(page: Page, label: string) {
-  // Taper le début du label pour filtrer et réduire le risque d'ambiguïté
   const query = label.split(' ')[0]
   await page.keyboard.type(query)
   await page.getByRole('button', { name: label }).first().click()
+  // Attendre la fermeture du popup
+  await page.waitForSelector('[data-testid="slash-popup"]', { state: 'hidden', timeout: 2_000 })
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -87,11 +99,11 @@ test.describe('BlockEditor — slash commands', () => {
     await expect(paragraphWithText(page, 'Bloc C')).toBeVisible()
     await expect(paragraphWithText(page, 'Bloc D')).toBeVisible()
 
-    // Vérifier le markdown sérialisé
-    const md = await getCurrentMd(page)
+    // Vérifier le markdown sérialisé (avec retry car React est async)
+    const md = await waitForMd(page, (s) => s.includes('Bloc C') && s.includes('Bloc D') && /^-/m.test(s))
     expect(md).toContain('Bloc C')
     expect(md).toContain('Bloc D')
-    expect(md).toMatch(/^- /m) // au moins un item de liste à puces
+    expect(md).toMatch(/^-/m) // au moins un item de liste à puces
   })
 
   test('list-bullet en fin de doc ajoute un paragraphe vide après', async ({ page }) => {
@@ -106,8 +118,8 @@ test.describe('BlockEditor — slash commands', () => {
     await selectSlashCommand(page, 'Liste à puces')
 
     // Le doc doit contenir la liste ET un paragraphe vide après
-    const md = await getCurrentMd(page)
-    expect(md).toMatch(/^- /m)
+    const md = await waitForMd(page, (s) => /^-/m.test(s))
+    expect(md).toMatch(/^-/m)
     // La liste n'est pas le dernier caractère (paragraphe vide ajouté)
     expect(md.trimEnd()).not.toMatch(/\n- \s*$/)
   })
@@ -130,9 +142,9 @@ test.describe('BlockEditor — slash commands', () => {
     await selectSlashCommand(page, 'Titre 1')
 
     await expect(paragraphWithText(page, 'Fin')).toBeVisible()
-    const md = await getCurrentMd(page)
+    const md = await waitForMd(page, (s) => s.includes('Fin') && /^#/m.test(s))
     expect(md).toContain('Fin')
-    expect(md).toMatch(/^# /m)
+    expect(md).toMatch(/^#/m)
   })
 
   test('table en milieu de doc préserve les blocs suivants', async ({ page }) => {
@@ -208,8 +220,8 @@ test.describe('BlockEditor — raccourcis markdown', () => {
     await page.keyboard.type('- ')
 
     // Le bloc doit être converti en liste
-    const md = await getCurrentMd(page)
-    expect(md).toMatch(/^- /m)
+    const md = await waitForMd(page, (s) => /^-/m.test(s))
+    expect(md).toMatch(/^-/m)
     await expect(paragraphWithText(page, 'Paragraphe')).toBeVisible()
   })
 
@@ -222,8 +234,8 @@ test.describe('BlockEditor — raccourcis markdown', () => {
     await page.keyboard.press('Enter')
     await page.keyboard.type('# ')
 
-    const md = await getCurrentMd(page)
-    expect(md).toMatch(/^# /m)
+    const md = await waitForMd(page, (s) => /^#/m.test(s))
+    expect(md).toMatch(/^#/m)
   })
 
   test('## espace crée un titre H2', async ({ page }) => {
@@ -235,8 +247,8 @@ test.describe('BlockEditor — raccourcis markdown', () => {
     await page.keyboard.press('Enter')
     await page.keyboard.type('## ')
 
-    const md = await getCurrentMd(page)
-    expect(md).toMatch(/^## /m)
+    const md2 = await waitForMd(page, (s) => /^##/m.test(s))
+    expect(md2).toMatch(/^##/m)
   })
 
   test('1. espace crée une liste ordonnée', async ({ page }) => {
@@ -248,8 +260,8 @@ test.describe('BlockEditor — raccourcis markdown', () => {
     await page.keyboard.press('Enter')
     await page.keyboard.type('1. ')
 
-    const md = await getCurrentMd(page)
-    expect(md).toMatch(/^1\. /m)
+    const md3 = await waitForMd(page, (s) => /^1\./m.test(s))
+    expect(md3).toMatch(/^1\./m)
   })
 
 })
@@ -259,7 +271,7 @@ test.describe('BlockEditor — navigation et structure', () => {
   test('Enter en fin de bloc crée un nouveau paragraphe', async ({ page }) => {
     await gotoEditor(page, 'Un seul bloc\n')
 
-    const md0 = await getCurrentMd(page)
+    const md0 = (await page.locator('#pw-md-output').textContent()) ?? ''
     const blocksBefore = md0.split('\n\n').filter(Boolean).length
 
     const bloc = paragraphWithText(page, 'Un seul bloc')
@@ -267,8 +279,10 @@ test.describe('BlockEditor — navigation et structure', () => {
     await page.keyboard.press('End')
     await page.keyboard.press('Enter')
     await page.keyboard.type('Nouveau bloc')
+    // InlineEditor sauvegarde sur onBlur → cliquer ailleurs pour déclencher
+    await page.keyboard.press('Tab')
 
-    const md = await getCurrentMd(page)
+    const md = await waitForMd(page, (s) => s.includes('Un seul bloc') && s.includes('Nouveau bloc'))
     expect(md).toContain('Un seul bloc')
     expect(md).toContain('Nouveau bloc')
     expect(md.split('\n\n').filter(Boolean).length).toBeGreaterThan(blocksBefore)
@@ -304,9 +318,11 @@ test.describe('BlockEditor — navigation et structure', () => {
     await bloc.click()
     await page.keyboard.press('End')
     await page.keyboard.type(' Texte ajouté')
+    // InlineEditor sauvegarde sur onBlur → cliquer ailleurs pour déclencher
+    await page.keyboard.press('Tab')
 
-    const md = await getCurrentMd(page)
-    expect(md).toContain('Paragraphe un. Texte ajouté')
+    const md4 = await waitForMd(page, (s) => s.includes('Paragraphe un. Texte ajouté'))
+    expect(md4).toContain('Paragraphe un. Texte ajouté')
   })
 
 })
@@ -345,13 +361,15 @@ test.describe('BlockEditor — intégrité du document', () => {
     await expect(paragraphWithText(page, 'Alpha')).toBeVisible()
     await expect(paragraphWithText(page, 'Delta')).toBeVisible()
 
-    const md = await getCurrentMd(page)
+    const md = await waitForMd(page, (s) =>
+      s.includes('Alpha') && s.includes('Beta') && s.includes('Gamma') && s.includes('Delta') && /^##/m.test(s) && /^-/m.test(s)
+    )
     expect(md).toContain('Alpha')
     expect(md).toContain('Beta')
     expect(md).toContain('Gamma')
     expect(md).toContain('Delta')
-    expect(md).toMatch(/^## /m)
-    expect(md).toMatch(/^- /m)
+    expect(md).toMatch(/^##/m)
+    expect(md).toMatch(/^-/m)
   })
 
   test('le markdown sérialisé est idempotent (aller-retour sans perte)', async ({ page }) => {
@@ -370,10 +388,9 @@ test.describe('BlockEditor — intégrité du document', () => {
 
     await gotoEditor(page, originalMd)
 
-    // Juste attendre que l'éditeur ait chargé et émis le md normalisé
-    await page.waitForTimeout(200)
+    // Attendre que l'éditeur ait chargé et émis le md normalisé
+    const md = await waitForMd(page, (s) => s.includes('Mon titre'), 2000)
 
-    const md = await getCurrentMd(page)
     // Le contenu textuel doit être présent
     expect(md).toContain('Mon titre')
     expect(md).toContain('Premier paragraphe')
