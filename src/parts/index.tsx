@@ -6,6 +6,8 @@ export { Inspector } from './Inspector'
 export { Onboarding } from './Onboarding'
 export type { OnboardingWelcomeValue } from './Onboarding'
 export { RecentPanel } from './RecentPanel'
+export { HoloSettingsDialog } from './Settings'
+export type { HoloSettingsValue } from './Settings'
 export { Sidebar } from './Sidebar'
 export { SpacePanel } from './SpacePanel'
 

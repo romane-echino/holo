@@ -5,6 +5,8 @@ import { cn } from '../utils/global'
 import { BlockEditor } from './MarkdownEditor/BlockEditor'
 import { useConfig } from '../contexts/ConfigContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
+import { ContextMenu } from '../components/ContextMenu'
+import type { ContextMenuAction } from '../components/ContextMenu'
 
 type EditorFrameProps = {
   filepath: string
@@ -41,22 +43,38 @@ function EditableText({
   onChange,
   className,
   multiline = false,
+  rows = 1,
 }: {
   value?: string
   placeholder: string
   onChange?: (value: string) => void
   className?: string
   multiline?: boolean
+  rows?: number
 }) {
+  const taRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!multiline || !taRef.current) return
+    taRef.current.style.height = 'auto'
+    taRef.current.style.height = `${taRef.current.scrollHeight}px`
+  }, [value, multiline])
+
   if (multiline) {
     return (
       <textarea
+        ref={taRef}
         value={value ?? ''}
         onChange={(event) => onChange?.(event.target.value)}
         placeholder={placeholder}
-        rows={2}
+        rows={rows}
+        onInput={(e) => {
+          const el = e.currentTarget
+          el.style.height = 'auto'
+          el.style.height = `${el.scrollHeight}px`
+        }}
         className={cn(
-          'w-full resize-none rounded-holo-md border border-transparent bg-transparent px-0 py-1 text-holo-text-muted placeholder:text-holo-text-faint transition focus:border-holo-border-soft focus:bg-holo-glass focus:px-3 focus:outline-none',
+          'w-full resize-none overflow-hidden rounded-holo-md border border-transparent bg-transparent px-0 py-1 placeholder:text-holo-text-faint transition focus:border-holo-border-soft focus:bg-holo-glass focus:px-3 focus:outline-none',
           className,
         )}
       />
@@ -132,16 +150,24 @@ function StickyEditorHeader({
   icon,
   title,
   author,
+  saveStatus,
+  rawMode,
   onShare,
-  onMore,
+  onToggleInspector,
+  onToggleRaw,
 }: {
   visible: boolean
   icon?: React.ReactNode
   title: string
   author?: string
+  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
+  rawMode: boolean
   onShare?: () => void
-  onMore?: () => void
+  onToggleInspector?: () => void
+  onToggleRaw: () => void
 }) {
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
+
   return (
     <div
       className={cn(
@@ -165,6 +191,17 @@ function StickyEditorHeader({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <SaveStatusBadge status={saveStatus} />
+
+          <button
+            onClick={onToggleInspector}
+            className="3xl:hidden flex size-9 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
+            title="Inspecteur"
+            aria-label="Inspecteur"
+          >
+            <PanelRight size={14} />
+          </button>
+
           <button
             onClick={onShare}
             className="flex size-9 items-center justify-center rounded-holo-md bg-holo-primary text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.18)] transition hover:bg-holo-primary/90 active:scale-[0.98]"
@@ -174,14 +211,32 @@ function StickyEditorHeader({
             <ExternalLink size={14} />
           </button>
 
-          <button
-            onClick={onMore}
-            className="flex size-9 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
-            aria-label="Plus d'actions"
-            title="Plus d'actions"
-          >
-            <Ellipsis size={14} />
-          </button>
+          <div className="relative">
+            <button
+              onClick={(e) => setMenuAnchorEl(e.currentTarget)}
+              className="flex size-9 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
+              aria-label="Plus d'actions"
+              title="Plus d'actions"
+            >
+              <Ellipsis size={14} />
+            </button>
+
+            {menuAnchorEl && (
+              <ContextMenu
+                anchorEl={menuAnchorEl}
+                anchorAlign="right"
+                onClose={() => setMenuAnchorEl(null)}
+                items={[
+                  {
+                    type: 'item',
+                    label: rawMode ? "Retour à l'éditeur" : 'Affichage brut',
+                    icon: Code2,
+                    onClick: () => { onToggleRaw(); setMenuAnchorEl(null) },
+                  },
+                ] satisfies ContextMenuAction[]}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -297,7 +352,6 @@ export function EditorFrame({
   onMarkdownChange,
   onToggleInspector,
   onShare,
-  onMore,
   saveStatus,
   onMobileBack,
   contentFontScale,
@@ -305,10 +359,9 @@ export function EditorFrame({
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState('')
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
   const iconPickerRef = useRef<HTMLDivElement>(null)
 
   const { rootPath } = useWorkspace()
@@ -356,7 +409,7 @@ export function EditorFrame({
   const enterRawMode = useCallback(() => {
     setRawValue(serializeFrontmatter(fmRef.current) + bodyRef.current)
     setRawMode(true)
-    setMenuOpen(false)
+    setMenuAnchorEl(null)
   }, [])
 
   const exitRawMode = useCallback(() => {
@@ -364,7 +417,7 @@ export function EditorFrame({
     setFm(newFm)
     setBody(newBody)
     setRawMode(false)
-    setMenuOpen(false)
+    setMenuAnchorEl(null)
   }, [rawValue])
 
   const handleRawChange = useCallback((value: string) => {
@@ -379,17 +432,6 @@ export function EditorFrame({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const handle = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [menuOpen])
 
   useEffect(() => {
     if (!iconPickerOpen) return
@@ -430,8 +472,11 @@ export function EditorFrame({
         icon={fm.icon ? <span className="text-base leading-none">{fm.icon as string}</span> : undefined}
         title={displayTitle}
         author={fm.author as string | undefined}
+        saveStatus={saveStatus}
+        rawMode={rawMode}
         onShare={onShare}
-        onMore={onMore}
+        onToggleInspector={onToggleInspector}
+        onToggleRaw={rawMode ? exitRawMode : enterRawMode}
       />
 
       <div className="mx-auto max-w-[920px] px-5 py-6 sm:px-8 md:px-10 md:py-9">
@@ -520,9 +565,9 @@ export function EditorFrame({
                 <ExternalLink size={14} />
               </button>
 
-              <div className="relative" ref={menuRef}>
+              <div className="relative">
                 <button
-                  onClick={() => setMenuOpen((v) => !v)}
+                  onClick={(e) => setMenuAnchorEl(e.currentTarget)}
                   className="flex size-10 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
                   aria-label="Plus d'actions"
                   title="Plus d'actions"
@@ -530,17 +575,21 @@ export function EditorFrame({
                   <Ellipsis size={14} />
                 </button>
 
-                {menuOpen && (
-                  <div className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.42)] backdrop-blur-2xl">
-                    <button
-                      onClick={rawMode ? exitRawMode : enterRawMode}
-                      className="flex w-full items-center gap-2.5 rounded-holo-md px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
-                    >
-                      <Code2 size={13} className="shrink-0" />
-                      <span className="flex-1 text-left">{rawMode ? 'Retour à l\'éditeur' : 'Affichage brut'}</span>
-                      {rawMode && <Check size={11} className="text-holo-primary-soft" />}
-                    </button>
-                  </div>
+                {menuAnchorEl && (
+                  <ContextMenu
+                    anchorEl={menuAnchorEl}
+                    anchorAlign="right"
+                    onClose={() => setMenuAnchorEl(null)}
+                    items={[
+                      {
+                        type: 'item',
+                        label: rawMode ? "Retour à l'éditeur" : 'Affichage brut',
+                        icon: Code2,
+                        onClick: rawMode ? exitRawMode : enterRawMode,
+                        ...(rawMode ? {} : {}),
+                      },
+                    ] satisfies ContextMenuAction[]}
+                  />
                 )}
               </div>
             </div>
@@ -564,7 +613,9 @@ export function EditorFrame({
                 value={displayTitle}
                 onChange={(v) => handleFmChange({ title: v })}
                 placeholder="Untitled"
-                className="text-[clamp(2.25rem,5vw,4rem)] font-[650] leading-[1] tracking-[-0.05em]"
+                multiline
+                rows={1}
+                className="text-[clamp(2.25rem,5vw,4rem)] font-[650] leading-[1.1] tracking-[-0.05em] text-holo-text"
               />
 
               <EditableText
@@ -572,7 +623,8 @@ export function EditorFrame({
                 onChange={(v) => handleFmChange({ description: v })}
                 placeholder="Ajouter une description…"
                 multiline
-                className="max-w-[720px] text-[1.02rem] leading-7"
+                rows={2}
+                className="max-w-[720px] text-[1.02rem] leading-7 text-holo-text-muted"
               />
             </div>
           </>

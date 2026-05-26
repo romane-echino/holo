@@ -44,9 +44,9 @@ export type HoloSettingsDialogProps = {
 }
 
 const defaultValue: HoloSettingsValue = {
-  firstName: 'Stéphane',
-  lastName: '',
-  gitEmail: 'stephane@example.com',
+  firstName: 'Maria',
+  lastName: 'Bernasconi',
+  gitEmail: 'maria@example.com',
   imageStorageMode: 'azure',
   azureContainerUrl: '',
   azureSasToken: '',

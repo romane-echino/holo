@@ -29,7 +29,11 @@
     "release:patch": "bash ./scripts/release.sh patch",
     "release:minor": "bash ./scripts/release.sh minor",
     "release:major": "bash ./scripts/release.sh major",
-    "release:version": "bash ./scripts/release.sh"
+    "release:version": "bash ./scripts/release.sh",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0",
@@ -49,6 +53,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",

@@ -23,9 +23,10 @@ const COMMANDS: SlashCommand[] = [
   { id: 'heading-2',   label: 'Titre 2',         description: 'Titre de sous-section',     icon: 'H2', blockType: 'heading-2',    keywords: ['h2', 'titre', 'sous', 'heading'] },
   { id: 'heading-3',   label: 'Titre 3',         description: 'Petit titre',               icon: 'H3', blockType: 'heading-3',    keywords: ['h3', 'titre', 'petit', 'heading'] },
   { id: 'heading-4',   label: 'Titre 4',         description: 'Titre de niveau 4',         icon: 'H4', blockType: 'heading-4',    keywords: ['h4', 'titre', 'heading'] },
-  { id: 'list-bullet',  label: 'Liste à puces',   description: 'Liste non ordonnée',        icon: '•',  blockType: 'list-bullet',  keywords: ['bullet', 'ul', 'puce', 'liste', 'unordered'] },
-  { id: 'list-ordered', label: 'Liste numérotée', description: 'Liste ordonnée',            icon: '1.', blockType: 'list-ordered', keywords: ['numbered', 'ol', 'numero', 'liste', 'ordered'] },
-  { id: 'checklist',    label: 'Checklist',       description: 'Liste de tâches à cocher',  icon: '☑',  blockType: 'checklist',    keywords: ['todo', 'task', 'tâche', 'checkbox', 'check', 'cocher'] },
+  { id: 'list-bullet',  label: 'Liste à puces',       description: 'Liste non ordonnée',        icon: '•',  blockType: 'list-bullet',  keywords: ['bullet', 'ul', 'puce', 'liste', 'unordered'] },
+  { id: 'list-ordered', label: 'Liste numérotée',      description: 'Liste ordonnée 1. 2. 3.',   icon: '1.', blockType: 'list-ordered', keywords: ['numbered', 'ol', 'numero', 'liste', 'ordered'] },
+  { id: 'list-alpha',   label: 'Liste alphabétique',   description: 'Liste ordonnée a. b. c.',   icon: 'a.', blockType: 'list-alpha',   keywords: ['alpha', 'alphabetique', 'lettre', 'abc', 'liste'] },
+  { id: 'checklist',    label: 'Checklist',            description: 'Liste de tâches à cocher',  icon: '☑',  blockType: 'checklist',    keywords: ['todo', 'task', 'tâche', 'checkbox', 'check', 'cocher'] },
   { id: 'table',        label: 'Tableau',         description: 'Tableau avec colonnes',     icon: '⊞',  blockType: 'table',        keywords: ['grid', 'grille', 'colonnes', 'rows'] },
 ]
 
@@ -99,8 +100,7 @@ export function SlashCommandPopup({ onSelect, onClose }: SlashCommandPopupProps)
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
 
       {/* Palette */}
-      <div className="relative w-[480px] max-w-[90vw] overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated shadow-holo-md">
-
+        <div data-testid="slash-popup" className="relative w-[480px] max-w-[90vw] overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated shadow-holo-md">
         {/* Champ de recherche */}
         <div className="flex items-center gap-3 border-b border-holo-border-soft px-4 py-3">
           <Search size={15} className="shrink-0 text-holo-text-faint" />

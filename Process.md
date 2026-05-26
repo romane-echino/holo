@@ -665,3 +665,25 @@ src/main.tsx
 - **Modifiés** : src/main.tsx (ajout AppStateProvider)
 - **Taille App.tsx** : Stable à 2303 lignes
 - **Build** : ✅ Succès (975ms)
+
+
+
+# App2
+- Quand on switch de fichier ou qu'on ferme holo sauvegarde le fichier courant avant (+ sync github)
+- Intégration d'un git diff lors de merge nécessaire qui est modal sur le fichier
+- dans space panel a coté du plus ajouter "..." pour un menu qui permet de
+  - Dissocier l'espace de holo
+  - SI C'EST UN REPO GIT : voir le nombre de commit a push et pull et pouvoir faire une sync manuelle
+  - Mettre / Enlever des favoris
+- Dans les panneau récent et favoris enlever les espaces (ça sert a rien)
+- Formatter la table de matière en points numérique
+  1. Titre 1
+  2. Titre 2
+    2.1 Sous titre 1
+    ...
+- Rendre le titre dans EditorFrame multi-ligne
+- Dans SpacePanel bouton droite sur un fichier ajouter mettre/retirer des favoris
+- Dans Settings les paramêtres d'apparence ne fonctionne pas
+- Dans Recent Panel si je clique sur un fichier alors que je n'ai pas le bon espace ouvert n'ouvre pas le fichier lors du clic
+- Implémenter la recherche (focaliser sur les nom de fichier -> les titre -> les tags -> la description -> les titre dans le contenu -> le contenu (ordre de pertinance))
+- Dans les tableau le menu contextuel des colonnes est tronqué par un overflow-hidden et on voit pas toutes les options

@@ -38,6 +38,9 @@ function inlineToHtml(node: InlineNode): string {
     case 'delete':
       return `<del>${node.children.map(inlineToHtml).join('')}</del>`
 
+    case 'underline':
+      return `<u>${node.children.map(inlineToHtml).join('')}</u>`
+
     case 'break':
       return '<br>'
 

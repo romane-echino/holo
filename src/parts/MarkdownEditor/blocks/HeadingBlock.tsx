@@ -22,11 +22,12 @@ interface HeadingBlockProps {
   onConvert?: (type: string, children: InlineNode[]) => void
   onSlashCommand?: () => void
   onSplit?: (after: InlineNode[]) => void
+  onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
   alwaysShowPlaceholder?: boolean
 }
 
 export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
-  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, alwaysShowPlaceholder }, ref) {
+  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -47,6 +48,7 @@ export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
         onConvert={onConvert}
         onSlashCommand={onSlashCommand}
         onSplit={onSplit}
+        onSmartPaste={onSmartPaste}
         blockType={`heading-${node.depth}`}
         placeholder="Titre…"
         alwaysShowPlaceholder={alwaysShowPlaceholder}
@@ -69,6 +71,7 @@ function InlineNodeView({ node }: { node: InlineNode }) {
     case 'inlineCode': return <code>{node.value}</code>
     case 'link':       return <a href={node.url}><InlineView nodes={node.children} /></a>
     case 'delete':     return <del><InlineView nodes={node.children} /></del>
+    case 'underline':  return <u><InlineView nodes={node.children} /></u>
     case 'break':      return <br />
     default:           return null
   }

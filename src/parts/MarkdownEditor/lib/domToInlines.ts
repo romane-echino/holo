@@ -46,6 +46,9 @@ function nodeToInlines(node: Node): InlineNode[] {
     case 'strike': // produit par execCommand('strikeThrough') dans certains navigateurs
       return [{ type: 'delete', children }]
 
+    case 'u':
+      return [{ type: 'underline', children }]
+
     case 'br':
       return [{ type: 'break' }]
 

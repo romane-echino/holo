@@ -1,10 +1,15 @@
-import React from 'react'
+import React, { useState } from 'react'
+import { FileDown, Link, MoreHorizontal } from 'lucide-react'
+import { ContextMenu } from './ContextMenu'
+import type { ContextMenuAction } from './ContextMenu'
 
 type TocItem = {
   level: number
   text: string
   headingIndex: number
 }
+
+export type BreadcrumbSegment = { label: string; path: string; isDir: boolean }
 
 type EditorTopBarProps = {
   isCompactLayout: boolean
@@ -16,6 +21,8 @@ type EditorTopBarProps = {
   tocItems: TocItem[]
   showCompactToc: boolean
   compactTocRef: React.RefObject<HTMLDivElement | null>
+  breadcrumbSegments?: BreadcrumbSegment[]
+  onBreadcrumbClick?: (path: string) => void
   onToggleCompactToc: () => void
   onCompactTocItemClick: (headingIndex: number) => void
   onSwitchRaw: () => void
@@ -35,6 +42,8 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
   tocItems,
   showCompactToc,
   compactTocRef,
+  breadcrumbSegments,
+  onBreadcrumbClick,
   onToggleCompactToc,
   onCompactTocItemClick,
   onSwitchRaw,
@@ -43,11 +52,45 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
   onCopyLink,
   onSave,
 }) => {
+  const [moreMenuAnchor, setMoreMenuAnchor] = useState<HTMLElement | null>(null)
+
+  const moreItems: ContextMenuAction[] = [
+    { type: 'item', label: 'Exporter en PDF', icon: FileDown, onClick: onExportPdf },
+    { type: 'item', label: 'Copier le lien', icon: Link, onClick: onCopyLink },
+  ]
+
   return (
     <div className={`flex shrink-0 items-center border-b border-white/5 ${isCompactLayout ? 'flex-wrap gap-2 px-3 py-2' : 'justify-between px-6 py-2'}`}>
-      <span className={`text-[10px] text-white/25 ${isCompactLayout ? 'w-full' : ''}`}>
-        {activeTabIsDirty ? '● non sauvegardé' : ''}
-      </span>
+      {/* Breadcrumb */}
+      <div className={`flex min-w-0 items-center gap-0.5 ${isCompactLayout ? 'w-full' : 'flex-1 overflow-hidden'}`}>
+        {breadcrumbSegments && breadcrumbSegments.length > 0 ? (
+          breadcrumbSegments.map((seg, i) => (
+            <React.Fragment key={seg.path}>
+              {i > 0 && <span className="mx-0.5 shrink-0 text-[10px] text-white/15">/</span>}
+              {i < breadcrumbSegments.length - 1 ? (
+                <button
+                  className="max-w-[130px] truncate rounded px-1 py-0.5 text-[11px] text-white/30 transition-colors hover:bg-white/5 hover:text-white/60"
+                  onClick={() => onBreadcrumbClick?.(seg.path)}
+                  title={seg.path}
+                >
+                  {seg.label}
+                </button>
+              ) : (
+                <span className="max-w-[200px] truncate px-1 py-0.5 text-[11px] text-white/55" title={seg.path}>
+                  {seg.label}
+                </span>
+              )}
+            </React.Fragment>
+          ))
+        ) : (
+          <span className={`text-[10px] text-white/25 ${isCompactLayout ? 'w-full' : ''}`}>
+            {activeTabIsDirty ? '\u25cf non sauvegard\u00e9' : ''}
+          </span>
+        )}
+        {breadcrumbSegments && breadcrumbSegments.length > 0 && activeTabIsDirty && (
+          <span className="ml-1 shrink-0 text-[10px] text-amber-400/70" title="Non sauvegard\u00e9">\u25cf</span>
+        )}
+      </div>
       <div className={`flex items-center gap-2 ${isCompactLayout ? 'w-full flex-wrap' : ''}`}>
         {readOnlyMode && (
           <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-200">
@@ -104,36 +147,50 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
                   Table des matières
                 </p>
                 <nav className="max-h-72 space-y-0.5 overflow-y-auto">
-                  {tocItems.map((item) => (
-                    <button
-                      key={`compact-${item.headingIndex}-${item.text}`}
-                      className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-white/60 transition-colors hover:bg-white/8 hover:text-white/95"
-                      style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
-                      onClick={() => onCompactTocItemClick(item.headingIndex)}
-                      title={item.text}
-                    >
-                      {item.text}
-                    </button>
-                  ))}
+                  {(() => {
+                    const counters: Record<number, number> = {}
+                    const numbers = tocItems.map(item => {
+                      counters[item.level] = (counters[item.level] ?? 0) + 1
+                      Object.keys(counters).forEach(k => { if (Number(k) > item.level) delete counters[Number(k)] })
+                      const min = Math.min(...Object.keys(counters).map(Number))
+                      const parts: number[] = []
+                      for (let l = min; l <= item.level; l++) parts.push(counters[l] ?? 0)
+                      return parts.join('.')
+                    })
+                    return tocItems.map((item, i) => (
+                      <button
+                        key={`compact-${item.headingIndex}-${item.text}`}
+                        className="flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left text-[11px] text-white/60 transition-colors hover:bg-white/8 hover:text-white/95"
+                        style={{ paddingLeft: `${Math.min((item.level - 1) * 10 + 8, 36)}px` }}
+                        onClick={() => onCompactTocItemClick(item.headingIndex)}
+                        title={item.text}
+                      >
+                        <span className="shrink-0 font-mono text-white/40">{numbers[i]}</span>
+                        <span className="truncate">{item.text}</span>
+                      </button>
+                    ))
+                  })()}
                 </nav>
               </div>
             )}
           </div>
         )}
         <button
-          className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
-          onClick={onExportPdf}
-          title="Exporter le fichier actif en PDF"
+          className="flex size-7 items-center justify-center rounded border border-white/10 bg-white/5 text-white/60 transition hover:bg-white/10 hover:text-white"
+          onClick={(e) => setMoreMenuAnchor(e.currentTarget)}
+          title="Plus d'options"
+          aria-label="Plus d'options"
         >
-          <i className="fa-solid fa-file-pdf mr-1" />Exporter en PDF
+          <MoreHorizontal size={14} />
         </button>
-        <button
-          className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/85 hover:bg-white/10 hover:text-white"
-          onClick={onCopyLink}
-          title="Copier le lien holo:// du fichier"
-        >
-          <i className="fa-solid fa-link mr-1" />Copier le lien
-        </button>
+        {moreMenuAnchor && (
+          <ContextMenu
+            anchorEl={moreMenuAnchor}
+            anchorAlign="right"
+            items={moreItems}
+            onClose={() => setMoreMenuAnchor(null)}
+          />
+        )}
         <button
           className="rounded bg-[#7B61FF] px-3 py-1 text-xs font-medium text-white hover:bg-[#6D4FD8] disabled:opacity-50"
           onClick={onSave}

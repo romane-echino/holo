@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { cn } from "../utils/global"
 import { GitBranch, ArrowDown, ArrowUp, Command, Plus, Star, FolderOpen, Unlink, Monitor, RefreshCw, Lock, Folder } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { ContextMenu } from '../components/ContextMenu'
+import type { ContextMenuAction } from '../components/ContextMenu'
 
 export type HoloNavItem = {
     label: string;
@@ -75,79 +76,26 @@ function SpaceNavItem({ item, isFavorite, spaceStatus, onContextMenu }: {
                 isActive ? "bg-holo-primary-surface text-holo-primary-soft ring-1 ring-holo-primary/20" : "hover:bg-holo-glass-hover hover:text-holo-text"
             )}
         >
-        <span className={`flex size-4 shrink-0 items-center justify-center rounded-sm ${isActive ? '' : 'text-holo-text-muted group-hover:text-holo-text'}`}>
+            <span className={`flex size-4 shrink-0 items-center justify-center rounded-sm ${isActive ? '' : 'text-holo-text-muted group-hover:text-holo-text'}`}>
+                {isActive ?
+                    <FolderOpen size={14} />
+                    : <Folder size={14} />
+                }
+
+            </span>
+            <span className={`flex-1 truncate leading-none ${isActive ? "text-holo-primary-soft" : "text-holo-text-muted group-hover:text-holo-text"}`}>{item.label}</span>
+
+            <span className={`flex size-4 shrink-0 items-center justify-center rounded-sm ${isActive ? '' : 'text-holo-text-muted group-hover:text-holo-text'}`}>
                 {spaceStatus
                     ? <SpaceStatusIcon status={spaceStatus} isActive={isActive} />
                     : item.icon ? <item.icon size={14} /> : <Folder size={14} />}
             </span>
-            <span className={`flex-1 truncate leading-none ${isActive ? "text-holo-primary-soft" : "text-holo-text-muted group-hover:text-holo-text"}`}>{item.label}</span>
             {isFavorite && <Star size={10} className="shrink-0 fill-holo-warning text-holo-warning" />}
         </button>
     )
 }
 
 type SpaceMenuState = { path: string; label: string; x: number; y: number }
-
-function SpaceContextMenu({ menu, isFavorite, onFavorite, onRemove, onOpenInExplorer, onClose }: {
-    menu: SpaceMenuState | null
-    isFavorite: boolean
-    onFavorite: () => void
-    onRemove: () => void
-    onOpenInExplorer: () => void
-    onClose: () => void
-}) {
-    const ref = useRef<HTMLDivElement>(null)
-
-    useEffect(() => {
-        if (!menu) return
-        const onMouseDown = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-        }
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-        document.addEventListener('mousedown', onMouseDown)
-        document.addEventListener('keydown', onKey)
-        return () => {
-            document.removeEventListener('mousedown', onMouseDown)
-            document.removeEventListener('keydown', onKey)
-        }
-    }, [menu, onClose])
-
-    if (!menu) return null
-
-    return createPortal(
-        <div
-            ref={ref}
-            style={{ top: menu.y, left: menu.x }}
-            className="fixed z-[9999] min-w-52 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.42)] backdrop-blur-2xl"
-        >
-            <div className="px-3 py-1.5 text-[11px] text-holo-text-faint truncate max-w-[200px]">{menu.label}</div>
-            <div className="my-1 h-px bg-holo-border-soft" />
-            <button
-                onClick={() => { onFavorite(); onClose() }}
-                className="flex w-full items-center gap-2.5 rounded-holo-md px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
-            >
-                <Star size={13} className={cn("shrink-0", isFavorite ? "fill-holo-warning text-holo-warning" : "")} />
-                <span>{isFavorite ? 'Retirer des favoris' : 'Mettre en favori'}</span>
-            </button>
-            <button
-                onClick={() => { onOpenInExplorer(); onClose() }}
-                className="flex w-full items-center gap-2.5 rounded-holo-md px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
-            >
-                <FolderOpen size={13} className="shrink-0" />
-                <span>Ouvrir dans l'explorateur</span>
-            </button>
-            <div className="my-1 h-px bg-holo-border-soft" />
-            <button
-                onClick={() => { onRemove(); onClose() }}
-                className="flex w-full items-center gap-2.5 rounded-holo-md px-3 py-2 text-sm text-holo-danger/80 transition hover:bg-holo-glass-hover hover:text-holo-danger"
-            >
-                <Unlink size={13} className="shrink-0" />
-                <span>Dissocier de Holo</span>
-            </button>
-        </div>,
-        document.body
-    )
-}
 
 type HoloSidebarProps = {
     primaryItems: HoloNavItem[];
@@ -203,11 +151,12 @@ export function Sidebar({
                     {primaryItems.map((item) => <NavItem key={item.label} item={item} />)}
                 </div>
 
-                <div className="mb-2 mt-7 flex items-center justify-between px-3">
+                <div className="mb-2 mt-7 flex items-center justify-between pl-3">
                     <span className="text-[11px] uppercase tracking-wider text-holo-text-faint">Espaces</span>
                     <button
                         onClick={onAddSpace}
-                        className="flex size-6 items-center justify-center rounded-holo-sm text-holo-text-faint hover:bg-holo-glass-hover hover:text-holo-primary-soft"
+                        className={`flex size-7 items-center justify-center rounded-holo-md
+                        ${spaces.length === 0 ? 'bg-holo-primary/80 text-white hover:bg-holo-primary/80' : 'bg-holo-glass border border-holo-border-soft text-holo-text-muted hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft'} transition active:scale-[0.97]`}
                         title="Ajouter un espace de travail"
                     >
                         <Plus size={13} />
@@ -265,13 +214,34 @@ export function Sidebar({
                 </div>
             </div>
             {spaceMenu && (
-                <SpaceContextMenu
-                    menu={spaceMenu}
-                    isFavorite={favoritePaths.includes(spaceMenu.path)}
-                    onFavorite={() => onSpaceFavorite?.(spaceMenu.path)}
-                    onRemove={() => onSpaceRemove?.(spaceMenu.path)}
-                    onOpenInExplorer={() => onSpaceOpenInExplorer?.(spaceMenu.path)}
+                <ContextMenu
+                    x={spaceMenu.x}
+                    y={spaceMenu.y}
                     onClose={() => setSpaceMenu(null)}
+                    items={[
+                        { type: 'header', label: spaceMenu.label },
+                        { type: 'separator' },
+                        {
+                            type: 'item',
+                            label: favoritePaths.includes(spaceMenu.path) ? 'Retirer des favoris' : 'Mettre en favori',
+                            icon: Star,
+                            onClick: () => onSpaceFavorite?.(spaceMenu.path),
+                        },
+                        {
+                            type: 'item',
+                            label: "Ouvrir dans l'explorateur",
+                            icon: FolderOpen,
+                            onClick: () => onSpaceOpenInExplorer?.(spaceMenu.path),
+                        },
+                        { type: 'separator' },
+                        {
+                            type: 'item',
+                            label: 'Dissocier de Holo',
+                            icon: Unlink,
+                            variant: 'danger',
+                            onClick: () => onSpaceRemove?.(spaceMenu.path),
+                        },
+                    ] satisfies ContextMenuAction[]}
                 />
             )}        </aside>
     );

@@ -98,17 +98,17 @@ function internalToNode(t: InternalTable): TableNode {
     align: t.columns.map((c) => c.align),
     children: [
       {
-        type: 'tableRow',
+        type: 'tableRow' as const,
         children: t.columns.map((c) => ({
-          type: 'tableCell',
-          children: c.title ? [{ type: 'text', value: c.title }] : [],
+          type: 'tableCell' as const,
+          children: c.title ? [{ type: 'text' as const, value: c.title }] : [],
         })),
       },
       ...t.rows.map((row) => ({
-        type: 'tableRow',
+        type: 'tableRow' as const,
         children: t.columns.map((c) => ({
-          type: 'tableCell',
-          children: row.cells[c.id] ? [{ type: 'text', value: row.cells[c.id] }] : [],
+          type: 'tableCell' as const,
+          children: row.cells[c.id] ? [{ type: 'text' as const, value: row.cells[c.id] }] : [],
         })),
       })),
     ],
@@ -131,6 +131,9 @@ export interface TableBlockProps {
 export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
   function TableBlock({ node, onChange, onArrowUp, onArrowDown }, ref) {
     const [table, setTable] = useState<InternalTable>(() => nodeToInternal(node))
+    // Ref toujours synchronisé avec table pour éviter les closures périmées
+    const tableRef = useRef(table)
+    tableRef.current = table
     const [activeCell, setActiveCell] = useState<{ rowId: string; colId: string } | null>(null)
     const [activeColMenu, setActiveColMenu] = useState<string | null>(null)
     const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
@@ -178,44 +181,38 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     const saveCell = useCallback(
       (rowId: string, colId: string, value: string) => {
-        setTable((prev) => {
-          const next = {
-            ...prev,
-            rows: prev.rows.map((r) =>
-              r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r,
-            ),
-          }
-          emit(next)
-          return next
-        })
+        const next = {
+          ...tableRef.current,
+          rows: tableRef.current.rows.map((r) =>
+            r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r,
+          ),
+        }
+        setTable(next)
+        emit(next)
       },
       [emit],
     )
 
     const renameColumn = useCallback(
       (colId: string, title: string) => {
-        setTable((prev) => {
-          const next = {
-            ...prev,
-            columns: prev.columns.map((c) => (c.id === colId ? { ...c, title } : c)),
-          }
-          emit(next)
-          return next
-        })
+        const next = {
+          ...tableRef.current,
+          columns: tableRef.current.columns.map((c) => (c.id === colId ? { ...c, title } : c)),
+        }
+        setTable(next)
+        emit(next)
       },
       [emit],
     )
 
     const setColumnAlign = useCallback(
       (colId: string, align: ColAlign) => {
-        setTable((prev) => {
-          const next = {
-            ...prev,
-            columns: prev.columns.map((c) => (c.id === colId ? { ...c, align } : c)),
-          }
-          emit(next)
-          return next
-        })
+        const next = {
+          ...tableRef.current,
+          columns: tableRef.current.columns.map((c) => (c.id === colId ? { ...c, align } : c)),
+        }
+        setTable(next)
+        emit(next)
         setActiveColMenu(null)
       },
       [emit],
@@ -223,80 +220,64 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     const addRowAt = useCallback(
       (index: number, focusColId?: string) => {
-        setTable((prev) => {
-          const newRow: InternalRow = {
-            id: newRowId(),
-            cells: Object.fromEntries(prev.columns.map((c) => [c.id, ''])),
-          }
-
-          const next = {
-            ...prev,
-            rows: [...prev.rows.slice(0, index), newRow, ...prev.rows.slice(index)],
-          }
-
-          emit(next)
-
-          const targetColId = focusColId ?? prev.columns[0]?.id
-          if (targetColId) {
-            requestAnimationFrame(() => {
-              cellRefs.current.get(`${newRow.id}-${targetColId}`)?.focus()
-            })
-          }
-
-          return next
-        })
+        const prev = tableRef.current
+        const newRow: InternalRow = {
+          id: newRowId(),
+          cells: Object.fromEntries(prev.columns.map((c) => [c.id, ''])),
+        }
+        const next = {
+          ...prev,
+          rows: [...prev.rows.slice(0, index), newRow, ...prev.rows.slice(index)],
+        }
+        setTable(next)
+        emit(next)
+        const targetColId = focusColId ?? prev.columns[0]?.id
+        if (targetColId) {
+          requestAnimationFrame(() => {
+            cellRefs.current.get(`${newRow.id}-${targetColId}`)?.focus()
+          })
+        }
       },
       [emit],
     )
 
     const removeRow = useCallback(
       (rowId: string) => {
-        setTable((prev) => {
-          if (prev.rows.length <= 1) return prev
-
-          const idx = prev.rows.findIndex((r) => r.id === rowId)
-          const next = { ...prev, rows: prev.rows.filter((r) => r.id !== rowId) }
-
-          emit(next)
-
-          const targetRow = next.rows[Math.max(0, idx - 1)]
-          const targetCol = prev.columns[0]
-          if (targetRow && targetCol) {
-            requestAnimationFrame(() => {
-              cellRefs.current.get(`${targetRow.id}-${targetCol.id}`)?.focus()
-            })
-          }
-
-          return next
-        })
+        const prev = tableRef.current
+        if (prev.rows.length <= 1) return
+        const idx = prev.rows.findIndex((r) => r.id === rowId)
+        const next = { ...prev, rows: prev.rows.filter((r) => r.id !== rowId) }
+        setTable(next)
+        emit(next)
+        const targetRow = next.rows[Math.max(0, idx - 1)]
+        const targetCol = prev.columns[0]
+        if (targetRow && targetCol) {
+          requestAnimationFrame(() => {
+            cellRefs.current.get(`${targetRow.id}-${targetCol.id}`)?.focus()
+          })
+        }
       },
       [emit],
     )
 
     const addColumnAt = useCallback(
       (index: number) => {
-        setTable((prev) => {
-          const newCol: InternalColumn = {
-            id: newColId(),
-            title: '',
-            align: 'left',
-            width: 180,
-          }
-
-          const next = {
-            columns: [...prev.columns.slice(0, index), newCol, ...prev.columns.slice(index)],
-            rows: prev.rows.map((r) => ({ ...r, cells: { ...r.cells, [newCol.id]: '' } })),
-          }
-
-          emit(next)
-
-          requestAnimationFrame(() => {
-            headerRefs.current.get(newCol.id)?.focus()
-          })
-
-          return next
+        const prev = tableRef.current
+        const newCol: InternalColumn = {
+          id: newColId(),
+          title: '',
+          align: 'left',
+          width: 180,
+        }
+        const next = {
+          columns: [...prev.columns.slice(0, index), newCol, ...prev.columns.slice(index)],
+          rows: prev.rows.map((r) => ({ ...r, cells: { ...r.cells, [newCol.id]: '' } })),
+        }
+        setTable(next)
+        emit(next)
+        requestAnimationFrame(() => {
+          headerRefs.current.get(newCol.id)?.focus()
         })
-
         setActiveColMenu(null)
       },
       [emit],
@@ -304,22 +285,18 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     const removeColumn = useCallback(
       (colId: string) => {
-        setTable((prev) => {
-          if (prev.columns.length <= 1) return prev
-
-          const next = {
-            columns: prev.columns.filter((c) => c.id !== colId),
-            rows: prev.rows.map((r) => {
-              const cells = { ...r.cells }
-              delete cells[colId]
-              return { ...r, cells }
-            }),
-          }
-
-          emit(next)
-          return next
-        })
-
+        const prev = tableRef.current
+        if (prev.columns.length <= 1) return
+        const next = {
+          columns: prev.columns.filter((c) => c.id !== colId),
+          rows: prev.rows.map((r) => {
+            const cells = { ...r.cells }
+            delete cells[colId]
+            return { ...r, cells }
+          }),
+        }
+        setTable(next)
+        emit(next)
         setActiveColMenu(null)
       },
       [emit],

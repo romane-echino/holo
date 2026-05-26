@@ -97,6 +97,10 @@ export interface ListBlockProps {
 export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
   function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart }, ref) {
     const [items, setItems] = useState<Item[]>(() => nodeToItems(node))
+    const listStyle = (node.data?.listStyle as string | undefined) ?? (node.ordered ? 'ordered' : 'bullet')
+    // Ref toujours synchronisé avec items pour éviter les closures périmées dans les handlers
+    const itemsRef = useRef(items)
+    itemsRef.current = items
     const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
     // ── Focus helper ──────────────────────────────────────────────────────────
@@ -146,11 +150,9 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
     const saveItem = useCallback(
       (id: string, inlines: InlineNode[]) => {
-        setItems((prev) => {
-          const next = prev.map((item) => (item.id === id ? { ...item, inlines } : item))
-          emit(next)
-          return next
-        })
+        const next = itemsRef.current.map((item) => (item.id === id ? { ...item, inlines } : item))
+        setItems(next)
+        emit(next)
       },
       [emit],
     )
@@ -159,31 +161,31 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
     const handleItemEnter = useCallback(
       (id: string, afterInlines: InlineNode[], isEmpty: boolean) => {
-        setItems((prev) => {
-          const idx = prev.findIndex((item) => item.id === id)
-          if (idx === -1) return prev
+        const prev = itemsRef.current
+        const idx = prev.findIndex((item) => item.id === id)
+        if (idx === -1) return
 
-          // Dernier item vide → sortir de la liste
-          if (isEmpty && idx === prev.length - 1 && prev.length > 1) {
-            const next = prev.slice(0, -1)
-            emit(next)
-            setTimeout(() => onEnterAtEnd?.(), 0)
-            return next
-          }
-
-          // Créer un nouvel item avec le contenu après le curseur
-          const isChecklist = prev.some((i) => i.checked !== null)
-          const newItem: Item = {
-            id: newItemId(),
-            inlines: afterInlines,
-            checked: isChecklist ? false : null,
-            depth: prev[idx].depth,
-          }
-          const next = [...prev.slice(0, idx + 1), newItem, ...prev.slice(idx + 1)]
+        // Dernier item vide → sortir de la liste
+        if (isEmpty && idx === prev.length - 1 && prev.length > 1) {
+          const next = prev.slice(0, -1)
+          setItems(next)
           emit(next)
-          requestAnimationFrame(() => focusItem(newItem.id, 'start'))
-          return next
-        })
+          setTimeout(() => onEnterAtEnd?.(), 0)
+          return
+        }
+
+        // Créer un nouvel item avec le contenu après le curseur
+        const isChecklist = prev.some((i) => i.checked !== null)
+        const newItem: Item = {
+          id: newItemId(),
+          inlines: afterInlines,
+          checked: isChecklist ? false : null,
+          depth: prev[idx].depth,
+        }
+        const next = [...prev.slice(0, idx + 1), newItem, ...prev.slice(idx + 1)]
+        setItems(next)
+        emit(next)
+        requestAnimationFrame(() => focusItem(newItem.id, 'start'))
       },
       [emit, focusItem, onEnterAtEnd],
     )
@@ -192,15 +194,13 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
     const handleItemToggle = useCallback(
       (id: string) => {
-        setItems((prev) => {
-          const next = prev.map((item) =>
-            item.id === id && item.checked !== null
-              ? { ...item, checked: !item.checked }
-              : item
-          )
-          emit(next)
-          return next
-        })
+        const next = itemsRef.current.map((item) =>
+          item.id === id && item.checked !== null
+            ? { ...item, checked: !item.checked }
+            : item
+        )
+        setItems(next)
+        emit(next)
       },
       [emit],
     )
@@ -209,24 +209,23 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
     const handleItemTab = useCallback(
       (id: string, shift: boolean) => {
-        setItems((prev) => {
-          const idx = prev.findIndex((item) => item.id === id)
-          if (idx === -1) return prev
-          const item = prev[idx]
-          if (shift) {
-            if (item.depth === 0) return prev
-            const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth - 1 } : it)
-            emit(next)
-            return next
-          } else {
-            if (idx === 0) return prev // impossible d'indenter le 1er élément
-            const maxDepth = prev[idx - 1].depth + 1
-            if (item.depth >= maxDepth) return prev
-            const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth + 1 } : it)
-            emit(next)
-            return next
-          }
-        })
+        const prev = itemsRef.current
+        const idx = prev.findIndex((item) => item.id === id)
+        if (idx === -1) return
+        const item = prev[idx]
+        if (shift) {
+          if (item.depth === 0) return
+          const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth - 1 } : it)
+          setItems(next)
+          emit(next)
+        } else {
+          if (idx === 0) return // impossible d'indenter le 1er élément
+          const maxDepth = prev[idx - 1].depth + 1
+          if (item.depth >= maxDepth) return
+          const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth + 1 } : it)
+          setItems(next)
+          emit(next)
+        }
       },
       [emit],
     )
@@ -235,20 +234,19 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
     const handleItemBackspace = useCallback(
       (id: string) => {
-        setItems((prev) => {
-          if (prev.length === 1) {
-            // Seul item → laisser BlockEditor gérer (merge avec le bloc précédent)
-            setTimeout(() => onBackspaceAtStart?.(), 0)
-            return prev
-          }
-          const idx = prev.findIndex((item) => item.id === id)
-          if (idx === -1) return prev
-          const next = prev.filter((item) => item.id !== id)
-          emit(next)
-          const targetId = idx > 0 ? next[idx - 1].id : next[0].id
-          requestAnimationFrame(() => focusItem(targetId, 'end'))
-          return next
-        })
+        const prev = itemsRef.current
+        if (prev.length === 1) {
+          // Seul item → laisser BlockEditor gérer (merge avec le bloc précédent)
+          setTimeout(() => onBackspaceAtStart?.(), 0)
+          return
+        }
+        const idx = prev.findIndex((item) => item.id === id)
+        if (idx === -1) return
+        const next = prev.filter((item) => item.id !== id)
+        setItems(next)
+        emit(next)
+        const targetId = idx > 0 ? next[idx - 1].id : next[0].id
+        requestAnimationFrame(() => focusItem(targetId, 'end'))
       },
       [emit, focusItem, onBackspaceAtStart],
     )
@@ -263,6 +261,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
             item={item}
             idx={idx}
             ordered={node.ordered}
+            listStyle={listStyle}
             elRef={(el) => {
               if (el) itemRefs.current.set(item.id, el)
               else itemRefs.current.delete(item.id)
@@ -293,6 +292,7 @@ function ListItemRow({
   item,
   idx,
   ordered,
+  listStyle,
   elRef,
   onSave,
   onToggle,
@@ -305,6 +305,7 @@ function ListItemRow({
   item: Item
   idx: number
   ordered: boolean
+  listStyle: string
   elRef: (el: HTMLDivElement | null) => void
   onSave: (inlines: InlineNode[]) => void
   onToggle: () => void
@@ -434,14 +435,20 @@ function ListItemRow({
         {item.checked && <Check size={9} strokeWidth={3} className="text-white" />}
       </button>
     )
+    : listStyle === 'alpha'
+    ? (
+      <span className="min-w-[1.5rem] mt-[0.35em] shrink-0 select-none text-right text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
+        {String.fromCharCode(97 + (idx % 26))}.
+      </span>
+    )
     : ordered
     ? (
-      <span className="min-w-[1.5rem] shrink-0 select-none text-right tabular-nums text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
+      <span className="min-w-[1.5rem] mt-[0.5em] shrink-0 select-none text-right tabular-nums text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
         {idx + 1}.
       </span>
     )
     : (
-      <span className="mt-[0.55em] size-[5px] shrink-0 select-none rounded-full bg-current opacity-50" />
+      <span className="mt-[0.8em] size-[5px] bg-current rounded-full shrink-0 select-none opacity-50" />
     )
 
   return (

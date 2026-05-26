@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Bold, Code2, Italic, Link2, Link2Off, Strikethrough } from 'lucide-react'
+import { Bold, Code2, Italic, Link2, Link2Off, Strikethrough, Underline } from 'lucide-react'
 import { cn } from '../../utils/global'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -21,6 +21,7 @@ export interface FormatToolbarState {
   italic: boolean
   strike: boolean
   code: boolean
+  underline: boolean
   link: string | null
 }
 
@@ -30,6 +31,7 @@ interface FormatToolbarProps {
   onItalic: () => void
   onStrike: () => void
   onCode: () => void
+  onUnderline: () => void
   onLink: (url: string) => void
   onUnlink: () => void
 }
@@ -38,7 +40,7 @@ interface FormatToolbarProps {
 
 export function FormatToolbar({
   state,
-  onBold, onItalic, onStrike, onCode, onLink, onUnlink,
+  onBold, onItalic, onStrike, onCode, onUnderline, onLink, onUnlink,
 }: FormatToolbarProps) {
   const [linkMode, setLinkMode] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
@@ -164,6 +166,13 @@ export function FormatToolbar({
             label="Code inline (Ctrl+E)"
           >
             <Code2 size={14} />
+          </Btn>
+          <Btn
+            active={state.underline}
+            onMouseDown={(e) => { e.preventDefault(); onUnderline() }}
+            label="Souligné (Ctrl+U)"
+          >
+            <Underline size={14} />
           </Btn>
 
           <div className="mx-1 h-4 w-px shrink-0 bg-holo-border-soft" />

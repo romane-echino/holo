@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 export function useEditorOverlayState() {
   const imageDragDepthRef = useRef(0)
   const tableDndCounterRef = useRef(1)
-  const titleInputRef = useRef<HTMLInputElement | null>(null)
+  const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const wysiwygEditorRef = useRef<HTMLDivElement | null>(null)
   const rawEditorRef = useRef<HTMLTextAreaElement | null>(null)

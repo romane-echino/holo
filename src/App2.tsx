@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from './utils/global'
-import { FavoritePanel, AIPanel, Header, RecentPanel, Inspector, Sidebar, Onboarding } from "./parts/"
-import type { OnboardingWelcomeValue } from "./parts/"
+import { FavoritePanel, AIPanel, Header, RecentPanel, Inspector, Sidebar, Onboarding, HoloSettingsDialog } from "./parts/"
+import type { OnboardingWelcomeValue, HoloSettingsValue } from "./parts/"
 import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
@@ -10,9 +10,26 @@ import { getBaseName } from './lib/appUtils'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
-import type { SpaceFileNode } from './parts/SpacePanel'
+import type { SpaceFileNode, TreeFileMeta } from './parts/SpacePanel'
 import { Clock, Star, Bot, Folder, FileText, X } from 'lucide-react'
 import { EditorFrame } from './parts/EditorFrame'
+import { applyTheme, applyAccent } from './lib/themeUtils'
+
+// Extraction rapide des 3 champs frontmatter pour la mise à jour live de l'arborescence
+function extractFmMeta(md: string): TreeFileMeta {
+  const match = md.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const result: TreeFileMeta = {}
+  for (const line of match[1].split('\n')) {
+    const colon = line.indexOf(':')
+    if (colon === -1) continue
+    const key = line.slice(0, colon).trim()
+    if (key !== 'title' && key !== 'description' && key !== 'icon') continue
+    const value = line.slice(colon + 1).trim().replace(/^['"']|['"']$/g, '')
+    if (value) result[key as keyof TreeFileMeta] = value
+  }
+  return result
+}
 
 
 const PRIMARY_ITEMS = [
@@ -31,18 +48,54 @@ export default function App2() {
   // ─── Favoris d'espaces ────────────────────────────────────────────────────
   const [favoriteFolders, setFavoriteFolders] = useState<string[]>([])
 
+  // ─── Favoris de fichiers ──────────────────────────────────────────────────
+  const [favoriteFilePaths, setFavoriteFilePaths] = useState<string[]>([])
+
   // ─── Onboarding ───────────────────────────────────────────────────────────
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+  const [settingsValue, setSettingsValue] = useState<HoloSettingsValue | undefined>(undefined)
+  const [settingsSaved, setSettingsSaved] = useState(false)
 
   useEffect(() => {
-    if (import.meta.env.DEV) { setOnboardingDone(true); return }
     if (!window.holo) { setOnboardingDone(true); return }
     window.holo.getHoloConfig()
       .then(cfg => {
-        const hasAuthor = typeof cfg['app-author'] === 'string' && (cfg['app-author'] as string).trim().length > 0
-        setOnboardingDone(hasAuthor)
+        // Onboarding
+        if (import.meta.env.DEV) {
+          setOnboardingDone(true)
+        } else {
+          const hasAuthor = typeof cfg['app-author'] === 'string' && (cfg['app-author'] as string).trim().length > 0
+          setOnboardingDone(hasAuthor)
+        }
+        // Favoris
         const savedFavs = cfg['space-favorites']
         if (Array.isArray(savedFavs)) setFavoriteFolders(savedFavs as string[])
+        // Favoris fichiers
+        const savedFileFavs = cfg['file-favorites']
+        if (Array.isArray(savedFileFavs)) setFavoriteFilePaths(savedFileFavs as string[])
+        // Fichiers récents
+        const savedRecents = cfg['recent-file-paths']
+        if (Array.isArray(savedRecents)) setRecentFilePaths(savedRecents as string[])
+        // Apparence
+        const theme = (cfg['theme'] as HoloSettingsValue['theme']) ?? 'dark'
+        const accent = (cfg['accent'] as HoloSettingsValue['accent']) ?? 'violet'
+        applyTheme(theme)
+        applyAccent(accent)
+        // Valeurs settings
+        setSettingsValue({
+          firstName: cfg['app-author-first-name'] as string || '',
+          lastName: cfg['app-author-last-name'] as string || '',
+          gitEmail: cfg['git-email'] as string || '',
+          imageStorageMode: (cfg['image-storage-mode'] as HoloSettingsValue['imageStorageMode']) ?? 'local',
+          azureContainerUrl: cfg['azure-container-url'] as string || '',
+          azureSasToken: cfg['azure-sas-token'] as string || '',
+          aiProvider: (cfg['ai-provider'] as HoloSettingsValue['aiProvider']) ?? 'local',
+          geminiApiKey: cfg['gemini-api-key'] as string || '',
+          openAiApiKey: cfg['openai-api-key'] as string || '',
+          systemPrompt: cfg['ai-system-prompt'] as string || '',
+          theme,
+          accent,
+        })
       })
       .catch(() => setOnboardingDone(true))
   }, [])
@@ -66,7 +119,49 @@ export default function App2() {
     setOnboardingDone(true)
   }, [])
 
-  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, recentFolderIconByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
+  // ─── Sauvegarde des paramètres ────────────────────────────────────────────
+  const handleSettingsSave = useCallback(async (value: HoloSettingsValue) => {
+    const fullName = `${value.firstName?.trim() ?? ''} ${value.lastName?.trim() ?? ''}`.trim()
+    await Promise.all([
+      window.holo?.setHoloConfigValue('app-author', fullName),
+      window.holo?.setHoloConfigValue('app-author-first-name', value.firstName?.trim() ?? ''),
+      window.holo?.setHoloConfigValue('app-author-last-name', value.lastName?.trim() ?? ''),
+      window.holo?.setHoloConfigValue('git-email', value.gitEmail?.trim() ?? ''),
+      window.holo?.setHoloConfigValue('image-storage-mode', value.imageStorageMode ?? 'local'),
+      window.holo?.setHoloConfigValue('azure-container-url', value.azureContainerUrl ?? ''),
+      window.holo?.setHoloConfigValue('azure-sas-token', value.azureSasToken ?? ''),
+      window.holo?.setHoloConfigValue('ai-provider', value.aiProvider ?? 'local'),
+      window.holo?.setHoloConfigValue('gemini-api-key', value.geminiApiKey ?? ''),
+      window.holo?.setHoloConfigValue('openai-api-key', value.openAiApiKey ?? ''),
+      window.holo?.setHoloConfigValue('ai-system-prompt', value.systemPrompt ?? ''),
+      window.holo?.setHoloConfigValue('theme', value.theme ?? 'dark'),
+      window.holo?.setHoloConfigValue('accent', value.accent ?? 'violet'),
+    ])
+    if (fullName) setAppAuthor(fullName)
+    if (value.gitEmail) setGitEmail(value.gitEmail.trim())
+    applyTheme(value.theme ?? 'dark')
+    applyAccent(value.accent ?? 'violet')
+    setSettingsValue(value)
+    setSettingsSaved(true)
+    setTimeout(() => setSettingsSaved(false), 3000)
+  }, [setAppAuthor, setGitEmail])
+
+  // Listener pour le thème "system" (préférence OS)
+  useEffect(() => {
+    if (settingsValue?.theme !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => applyTheme('system')
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [settingsValue?.theme])
+
+  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
+
+  // Persistance des fichiers récents
+  useEffect(() => {
+    if (recentFilePaths.length === 0) return
+    window.holo?.setHoloConfigValue('recent-file-paths', recentFilePaths)
+  }, [recentFilePaths])
 
   // ─── Statuts git de tous les espaces ─────────────────────────────────────
   type SpaceStatus = 'local' | 'git-sync' | 'git-readonly'
@@ -118,6 +213,16 @@ export default function App2() {
     })
   }, [])
 
+  const handleFileFavorite = useCallback((filePath: string) => {
+    setFavoriteFilePaths(prev => {
+      const next = prev.includes(filePath)
+        ? prev.filter(p => p !== filePath)
+        : [...prev, filePath]
+      window.holo?.setHoloConfigValue('file-favorites', next)
+      return next
+    })
+  }, [])
+
   const handleSpaceRemove = useCallback((folderPath: string) => {
     window.holo?.removeRecentFolder(folderPath)
     setRecentFolders(prev => prev.filter(p => p !== folderPath))
@@ -135,6 +240,9 @@ export default function App2() {
   // ─── Inspecteur (popover < 3xl) ───────────────────────────────────────
   const [inspectorOpen, setInspectorOpen] = useState(false)
 
+  // ─── Paramètres ───────────────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
   // ─── Taille de police de l'éditeur ────────────────────────────────────
   const [editorFontSize, setEditorFontSize] = useState<number>(() => {
     const saved = localStorage.getItem('holo-editor-font-size')
@@ -147,7 +255,8 @@ export default function App2() {
 
   // ─── Navigation mobile (panel ↔ editor) ───────────────────────────────
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false)
-
+  // ─── Métadonnées live du fichier ouvert (pour mise à jour immédiate de l'arborescence)
+  const [currentFileMeta, setCurrentFileMeta] = useState<(TreeFileMeta & { path: string }) | undefined>(undefined)
   // ─── Fichier ouvert ────────────────────────────────────────────────────────
   type OpenedFile = { path: string; name: string; content: string }
   const [openedFile, setOpenedFile] = useState<OpenedFile | null>(null)
@@ -183,16 +292,6 @@ export default function App2() {
     [recentFilePaths, fileMetaByPath, recentFolders, openedFile?.path],
   )
 
-  const recentSpaces = useMemo<HoloDocument[]>(
-    () => recentFolders.map(folderPath => ({
-      title: getBaseName(folderPath),
-      to: `/space/${encodeURIComponent(folderPath)}`,
-      icon: recentFolderIconByPath[folderPath] || undefined,
-      active: pathname === `/space/${encodeURIComponent(folderPath)}`,
-    })),
-    [recentFolders, recentFolderIconByPath, pathname],
-  )
-
   const handleRecentDocumentSelect = useCallback((doc: HoloDocument) => {
     const filePath = doc.to
     const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
@@ -203,6 +302,29 @@ export default function App2() {
   const handleEmptyRecent = useCallback(() => {
     setRecentFilePaths([])
   }, [setRecentFilePaths])
+
+  // ─── Données pour le panel Favoris ────────────────────────────────────────
+  const favoriteDocuments = useMemo<HoloDocument[]>(
+    () => favoriteFilePaths.map(filePath => {
+      const meta = fileMetaByPath[filePath]
+      const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
+      return {
+        title: meta?.title || getBaseName(filePath).replace(/\.md$/i, ''),
+        to: filePath,
+        icon: '📄',
+        subtitle: spacePath ? getBaseName(spacePath) : undefined,
+        active: openedFile?.path === filePath,
+      }
+    }),
+    [favoriteFilePaths, fileMetaByPath, recentFolders, openedFile?.path],
+  )
+
+  const handleFavoriteDocumentSelect = useCallback((doc: HoloDocument) => {
+    const filePath = doc.to
+    const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
+    if (spacePath) navigate(`/space/${encodeURIComponent(spacePath)}`)
+    void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
+  }, [recentFolders, navigate, handleSelectFile])
 
   // ─── Sauvegarde git auto ────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
@@ -235,6 +357,8 @@ export default function App2() {
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
+    // Mettre à jour immédiatement les métadonnées live pour l'arborescence
+    setCurrentFileMeta({ path: file.path, ...extractFmMeta(markdown) })
     try {
       await window.holo?.writeFile(file.path, markdown)
       setSaveStatus('unsaved')
@@ -282,6 +406,7 @@ export default function App2() {
           <Header
             editorFontSize={editorFontSize}
             onEditorFontSizeChange={handleEditorFontSizeChange}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         </div>
 
@@ -311,16 +436,26 @@ export default function App2() {
               <Route path="/recent" element={
                 <RecentPanel
                   documents={recentDocuments}
-                  spaces={recentSpaces}
                   onSelectDocument={handleRecentDocumentSelect}
                   onEmptyRecent={handleEmptyRecent}
                 />
               } />
-              <Route path="/favorites" element={<FavoritePanel />} />
+              <Route path="/favorites" element={
+                <FavoritePanel
+                  documents={favoriteDocuments}
+                  onSelectDocument={handleFavoriteDocumentSelect}
+                />
+              } />
               <Route path="/space/:encodedPath" element={
                 <SpaceRoute
                   onSelectFile={handleSelectFile}
                   selectedFilePath={openedFile?.path}
+                  metaOverride={currentFileMeta}
+                  isFavorite={favoriteFolders.includes(rootPath ?? '')}
+                  onToggleFavorite={() => rootPath && handleSpaceFavorite(rootPath)}
+                  onDetach={() => rootPath && handleSpaceRemove(rootPath)}
+                  favoriteFilePaths={favoriteFilePaths}
+                  onToggleFileFavorite={handleFileFavorite}
                 />
               } />
 
@@ -389,6 +524,25 @@ export default function App2() {
       </div>
         </>
       )}
+
+      <HoloSettingsDialog
+        open={settingsOpen}
+        value={settingsValue}
+        saved={settingsSaved}
+        onSave={handleSettingsSave}
+        onChange={(value) => {
+          // Prévisualisation en temps réel (sans persister)
+          applyTheme(value.theme ?? 'dark')
+          applyAccent(value.accent ?? 'violet')
+        }}
+        onClose={() => {
+          // Revert à l'apparence sauvegardée si on ferme sans sauvegarder
+          applyTheme(settingsValue?.theme ?? 'dark')
+          applyAccent(settingsValue?.accent ?? 'violet')
+          setSettingsOpen(false)
+          setSettingsSaved(false)
+        }}
+      />
     </div>
   )
 }

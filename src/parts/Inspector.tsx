@@ -98,6 +98,17 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
   const { gitState } = useConfig();
 
   const headings = useMemo(() => (markdown ? extractHeadings(markdown) : []), [markdown]);
+  const tocNumbers = useMemo(() => {
+    const counters: Record<number, number> = {}
+    return headings.map(h => {
+      counters[h.level] = (counters[h.level] ?? 0) + 1
+      Object.keys(counters).forEach(k => { if (Number(k) > h.level) delete counters[Number(k)] })
+      const min = Math.min(...Object.keys(counters).map(Number))
+      const parts: number[] = []
+      for (let l = min; l <= h.level; l++) parts.push(counters[l] ?? 0)
+      return parts.join('.')
+    })
+  }, [headings]);
   const links = useMemo(() => (markdown ? extractLinks(markdown) : []), [markdown]);
 
   useEffect(() => {
@@ -142,16 +153,17 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
             {markdown ? "Aucun titre dans ce fichier." : "Ouvrez un fichier pour afficher la table des matières."}
           </p>
         ) : (
-          <ol className="space-y-3 text-sm text-holo-text-muted">
+          <ol className="space-y-1 text-sm text-holo-text-muted">
             {headings.map((h, i) => (
               <li
                 key={i}
                 className={cn(
-                  i === 0 && "rounded-holo-md bg-holo-glass px-3 py-2 text-holo-text",
-                  h.level >= 3 ? "pl-4 text-holo-text-faint" : h.level === 2 ? "pl-2" : undefined,
+                  "flex items-baseline gap-2 rounded-holo-md px-3 py-1.5 transition hover:bg-holo-glass",
+                  h.level >= 3 ? "pl-4 text-holo-text-faint" : h.level === 2 ? "pl-2" : "text-holo-text",
                 )}
               >
-                {h.text}
+                <span className="shrink-0 font-mono text-[10px] text-holo-text-faint/60">{tocNumbers[i]}</span>
+                <span className="truncate">{h.text}</span>
               </li>
             ))}
           </ol>

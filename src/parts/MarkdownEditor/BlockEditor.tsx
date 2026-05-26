@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
+import { Trash2, X } from 'lucide-react'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -20,6 +21,7 @@ import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
 import { ListBlock } from './blocks/ListBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
+import { domToInlines } from './lib/domToInlines'
 import { cn } from '../../utils/global'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode } from './lib/types'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -28,9 +30,25 @@ import type { InlineEditorHandle } from './InlineEditor'
 
 const parser = unified().use(remarkParse).use(remarkGfm)
 
+// Plugin de sérialisation pour les nœuds <underline> → <u>...</u> dans le markdown
+function remarkUnderlinePlugin(this: any) {
+  const data = this.data() as Record<string, any>
+  if (!data.toMarkdownExtensions) data.toMarkdownExtensions = []
+  data.toMarkdownExtensions.push({
+    handlers: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      underline(node: any, _: any, state: any, info: any) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return '<u>' + (state as any).containerPhrasing(node, info) + '</u>'
+      },
+    },
+  })
+}
+
 const serializer = unified()
   .use(remarkStringify, { bullet: '-', fence: '`', strong: '*', emphasis: '_' })
   .use(remarkGfm)
+  .use(remarkUnderlinePlugin)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -42,13 +60,60 @@ function markdownToBlocks(markdown: string): BlockState[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tree = parser.parse(markdown) as any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return tree.children.map((node: any) => ({ id: newId(), node }))
+  const children: any[] = tree.children
+  const result: BlockState[] = []
+  for (let i = 0; i < children.length; i++) {
+    const node = children[i]
+    // Détecte le commentaire HTML <!-- list-style:alpha --> suivi d'une liste
+    if (
+      node.type === 'html' && (node.value as string).trim() === '<!-- list-style:alpha -->' &&
+      i + 1 < children.length && children[i + 1].type === 'list'
+    ) {
+      const listNode = { ...children[i + 1], data: { ...(children[i + 1].data ?? {}), listStyle: 'alpha' } }
+      result.push({ id: newId(), node: convertHtmlUnderline(listNode) })
+      i++ // sauter la liste (déjà consommée)
+    } else {
+      result.push({ id: newId(), node: convertHtmlUnderline(node) })
+    }
+  }
+  return result.length > 0 ? result : [freshParagraph()]
+}
+
+// Convertit les nœuds HTML inline `<u>...</u>` en nœuds underline lors du chargement
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function convertHtmlUnderline(node: any): any {
+  if (!node) return node
+  if (node.type === 'html') {
+    const m = node.value.match(/^<u>([\s\S]*)<\/u>$/)
+    if (m) {
+      const tmp = document.createElement('div')
+      tmp.innerHTML = m[1]
+      return { type: 'underline', children: domToInlines(tmp) }
+    }
+  }
+  if (node.children) {
+    return { ...node, children: node.children.map(convertHtmlUnderline) }
+  }
+  return node
 }
 
 function blocksToMarkdown(blocks: BlockState[]): string {
+  // Développe les listes alpha en [commentaire HTML + liste standard]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const expanded: any[] = []
+  for (const b of blocks) {
+    if (b.node.type === 'list' && (b.node as ListNode).data?.listStyle === 'alpha') {
+      expanded.push({ type: 'html', value: '<!-- list-style:alpha -->' })
+      // Sérialiser sans le champ data pour éviter les avertissements remark
+      const { data: _d, ...nodeWithoutData } = b.node as ListNode
+      expanded.push(nodeWithoutData)
+    } else {
+      expanded.push(b.node)
+    }
+  }
   return serializer.stringify({
     type: 'root',
-    children: blocks.map((b) => b.node),
+    children: expanded,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as string
 }
@@ -110,6 +175,10 @@ export interface BlockEditorProps {
 export function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps) {
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
+  const selectedBlockIdsRef = useRef<Set<string>>(new Set())
+  selectedBlockIdsRef.current = selectedBlockIds
+  const lastSelectedRef = useRef<string | null>(null)
 
   // Refs impératifs vers chaque InlineEditor — pour la navigation inter-blocs
   const blockRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
@@ -140,6 +209,9 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
   // Changement externe du prop markdown → réinitialise sans émettre en retour
   useEffect(() => {
     if (markdown !== lastEmittedRef.current) {
+      console.log('[BlockEditor] ⚠️ EXTERNAL SYNC fired! markdown prop changed, resetting blocks. Blocks before reset:', blocksRef.current.length, '→', markdownToBlocks(markdown).length)
+      console.log('[BlockEditor] lastEmitted:', JSON.stringify(lastEmittedRef.current?.slice(0, 80)))
+      console.log('[BlockEditor] new markdown:', JSON.stringify(markdown?.slice(0, 80)))
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
       setBlocks(markdownToBlocks(markdown))
@@ -151,6 +223,7 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
     if (!blocksDirtyRef.current) return
     blocksDirtyRef.current = false
     const md = blocksToMarkdown(blocks)
+    console.log('[BlockEditor] 📤 EMIT', blocks.length, 'blocks →', JSON.stringify(md.slice(0, 120)))
     lastEmittedRef.current = md
     onChangeRef.current(md)
   }, [blocks])
@@ -227,6 +300,43 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
     [],
   )
 
+  const handleSmartPaste = useCallback(
+    (id: string, before: InlineNode[], after: InlineNode[], pastedMd: string) => {
+      const pastedBlocks = markdownToBlocks(pastedMd.trim())
+
+      // Fusionner before dans le premier bloc collé
+      const first = pastedBlocks[0]
+      if (first.node.type === 'paragraph') {
+        ;(first.node as ParagraphNode).children = [
+          ...before,
+          ...(first.node as ParagraphNode).children,
+        ]
+      } else if (before.length > 0) {
+        pastedBlocks.unshift({ id: newId(), node: { type: 'paragraph', children: before } as ParagraphNode })
+      }
+
+      // Fusionner after dans le dernier bloc collé
+      const last = pastedBlocks[pastedBlocks.length - 1]
+      if (last.node.type === 'paragraph') {
+        ;(last.node as ParagraphNode).children = [
+          ...(last.node as ParagraphNode).children,
+          ...after,
+        ]
+      } else if (after.length > 0) {
+        pastedBlocks.push({ id: newId(), node: { type: 'paragraph', children: after } as ParagraphNode })
+      }
+
+      pendingFocusRef.current = pastedBlocks[pastedBlocks.length - 1].id
+      blocksDirtyRef.current = true
+      setBlocks((prev) => {
+        const idx = prev.findIndex((b) => b.id === id)
+        if (idx === -1) return prev
+        return [...prev.slice(0, idx), ...pastedBlocks, ...prev.slice(idx + 1)]
+      })
+    },
+    [],
+  )
+
   const handleArrowUp = useCallback(
     (id: string, cursorX: number) => {
       const prev = blocksRef.current
@@ -252,52 +362,61 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
   // Conversion de type (raccourci markdown ou slash command)
   const handleConvert = useCallback(
     (id: string, targetType: string, children?: InlineNode[]) => {
-      const prev = blocksRef.current
-      const idx = prev.findIndex((b) => b.id === id)
-      if (idx === -1) return
-      const current = prev[idx].node
-      const kids = children ?? ('children' in current ? (current as ParagraphNode).children : [])
-      let newNode: BlockNode
-
-      if (targetType === 'paragraph') {
-        newNode = { type: 'paragraph', children: kids }
-      } else if (targetType.startsWith('heading-')) {
-        const depth = parseInt(targetType.split('-')[1]) as 1|2|3|4
-        newNode = { type: 'heading', depth, children: kids }
-      } else if (targetType === 'table') {
-        const cell = () => ({ type: 'tableCell' as const, children: [] })
-        const row  = () => ({ type: 'tableRow'  as const, children: [cell(), cell(), cell()] })
-        newNode = { type: 'table', align: ['left', 'left', 'left'], children: [row(), row(), row()] } as TableNode
-      } else if (targetType === 'list-bullet' || targetType === 'list-ordered') {
-        const ordered = targetType === 'list-ordered'
-        const lines = splitAtBreaks(kids)
-        newNode = {
-          type: 'list', ordered, start: ordered ? 1 : null, spread: false,
-          children: lines.map((line) => ({
-            type: 'listItem' as const, spread: false, checked: null,
-            children: [{ type: 'paragraph' as const, children: line }],
-          })),
-        } as ListNode
-      } else if (targetType === 'checklist') {
-        const lines = splitAtBreaks(kids)
-        newNode = {
-          type: 'list', ordered: false, start: null, spread: false,
-          children: lines.map((line) => ({
-            type: 'listItem' as const, spread: false, checked: false,
-            children: [{ type: 'paragraph' as const, children: line }],
-          })),
-        } as ListNode
-      } else {
-        return
-      }
-
-      let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
-      // Si le tableau est inséré en dernière position, ajouter un paragraphe vide
-      if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'checklist') && idx === prev.length - 1) {
-        updated = [...updated, freshParagraph()]
-      }
       blocksDirtyRef.current = true
-      setBlocks(updated)
+      setBlocks((prev) => {
+        console.log('[BlockEditor] 🔄 handleConvert setBlocks updater called — prev.length=', prev.length, 'targetType=', targetType, 'id=', id.slice(0,8))
+        const idx = prev.findIndex((b) => b.id === id)
+        if (idx === -1) {
+          console.warn('[BlockEditor] ❌ handleConvert: block id not found in prev!')
+          return prev
+        }
+        const current = prev[idx].node
+        const kids = children ?? ('children' in current ? (current as ParagraphNode).children : [])
+        let newNode: BlockNode
+
+        if (targetType === 'paragraph') {
+          newNode = { type: 'paragraph', children: kids }
+        } else if (targetType.startsWith('heading-')) {
+          const depth = parseInt(targetType.split('-')[1]) as 1|2|3|4
+          newNode = { type: 'heading', depth, children: kids }
+        } else if (targetType === 'table') {
+          const cell = () => ({ type: 'tableCell' as const, children: [] })
+          const row  = () => ({ type: 'tableRow'  as const, children: [cell(), cell(), cell()] })
+          newNode = { type: 'table', align: ['left', 'left', 'left'], children: [row(), row(), row()] } as TableNode
+        } else if (targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha') {
+          const ordered = targetType !== 'list-bullet'
+          const lines = splitAtBreaks(kids)
+          const listData = targetType === 'list-alpha' ? { listStyle: 'alpha' } : undefined
+          newNode = {
+            type: 'list', ordered, start: ordered ? 1 : null, spread: false,
+            ...(listData ? { data: listData } : {}),
+            children: lines.map((line) => ({
+              type: 'listItem' as const, spread: false, checked: null,
+              children: [{ type: 'paragraph' as const, children: line }],
+            })),
+          } as ListNode
+        } else if (targetType === 'checklist') {
+          const lines = splitAtBreaks(kids)
+          newNode = {
+            type: 'list', ordered: false, start: null, spread: false,
+            children: lines.map((line) => ({
+              type: 'listItem' as const, spread: false, checked: false,
+              children: [{ type: 'paragraph' as const, children: line }],
+            })),
+          } as ListNode
+        } else {
+          return prev
+        }
+
+        let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
+        // Si le tableau/liste est inséré en dernière position, ajouter un paragraphe vide
+        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist') && idx === prev.length - 1) {
+          updated = [...updated, freshParagraph()]
+        }
+        console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
+        updated.forEach((b, i) => console.log(`  [${i}] id=${b.id.slice(0,8)} type=${b.node.type}`))
+        return updated
+      })
       setTimeout(() => blockRefs.current.get(id)?.focus(), 0)
     },
     [],
@@ -305,6 +424,8 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
 
   const handleSlashCommand = useCallback(
     (blockId: string) => {
+      console.log('[BlockEditor] 🔪 SLASH COMMAND opened for block', blockId, '— total blocks:', blocksRef.current.length)
+      blocksRef.current.forEach((b, i) => console.log(`  [${i}] id=${b.id.slice(0,8)} type=${b.node.type}`))
       setSlashCommand({ blockId })
     },
     [],
@@ -326,15 +447,61 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
     (blockType: string) => {
       if (!slashCommand) return
       const { blockId } = slashCommand
+      console.log('[BlockEditor] ✅ SLASH SELECT', blockType, 'for block', blockId, '— total blocks before convert:', blocksRef.current.length)
       setSlashCommand(null)
       // Supprimer le "/" du DOM et récupérer le contenu restant
       const children = blockRefs.current.get(blockId)?.clearSlash() ?? []
+      console.log('[BlockEditor] clearSlash returned', children.length, 'inline nodes')
       handleConvert(blockId, blockType, children)
     },
     [slashCommand, handleConvert],
   )
 
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // ─── Sélection multi-blocs ────────────────────────────────────────────────
+
+  const handleBlockSelect = useCallback((id: string, shift: boolean) => {
+    setSelectedBlockIds((prev) => {
+      const next = new Set(prev)
+      if (shift && lastSelectedRef.current) {
+        const allBlocks = blocksRef.current
+        const fromIdx = allBlocks.findIndex((b) => b.id === lastSelectedRef.current)
+        const toIdx = allBlocks.findIndex((b) => b.id === id)
+        if (fromIdx !== -1 && toIdx !== -1) {
+          const [start, end] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx]
+          for (let i = start; i <= end; i++) next.add(allBlocks[i].id)
+          return next
+        }
+      }
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      lastSelectedRef.current = id
+      return next
+    })
+  }, [])
+
+  const handleDeleteSelected = useCallback(() => {
+    const toDelete = selectedBlockIdsRef.current
+    if (toDelete.size === 0) return
+    blocksDirtyRef.current = true
+    setBlocks((current) => {
+      const remaining = current.filter((b) => !toDelete.has(b.id))
+      return remaining.length > 0 ? remaining : [freshParagraph()]
+    })
+    setSelectedBlockIds(new Set())
+  }, [])
+
+  // Escape → désélectionner tous les blocs
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedBlockIdsRef.current.size > 0) {
+        setSelectedBlockIds(new Set())
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   // Ctrl+A → sélectionne tout le contenu de tous les blocs
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -351,26 +518,77 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
   }, [])
 
   return (
-    <div ref={containerRef} className={cn('holo-markdown', className)} style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined} onKeyDown={handleContainerKeyDown}>
+    <div ref={containerRef} data-testid="block-editor" className={cn('holo-markdown', className)} style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined} onKeyDown={handleContainerKeyDown}>
+      {selectedBlockIds.size > 0 && (
+        <div className="mb-3 flex items-center justify-between rounded-holo-lg border border-holo-primary/30 bg-holo-primary-surface/20 px-3 py-2 text-xs">
+          <span className="text-holo-text-muted">
+            {selectedBlockIds.size} bloc{selectedBlockIds.size > 1 ? 's' : ''} sélectionné{selectedBlockIds.size > 1 ? 's' : ''}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); setSelectedBlockIds(new Set()) }}
+              className="flex items-center gap-1 text-holo-text-faint transition-colors hover:text-holo-text"
+            >
+              <X size={11} />
+              <span>Annuler</span>
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); handleDeleteSelected() }}
+              className="flex items-center gap-1 text-red-400 transition-colors hover:text-red-300"
+            >
+              <Trash2 size={11} />
+              <span>Supprimer</span>
+            </button>
+          </div>
+        </div>
+      )}
       {blocks.map((block, idx) => (
-        <BlockDispatcher
+        <div
           key={block.id}
-          block={block}
-          isFirst={idx === 0}
-          blockRef={(handle) => {
-            if (handle) blockRefs.current.set(block.id, handle)
-            else blockRefs.current.delete(block.id)
-          }}
-          onChange={(node) => handleBlockChange(block.id, node)}
-          onEnterAtStart={() => handleEnterAtStart(block.id)}
-          onEnterAtEnd={() => handleEnterAtEnd(block.id)}
-          onBackspaceAtStart={() => handleBackspaceAtStart(block.id)}
-          onArrowUp={(x) => handleArrowUp(block.id, x)}
-          onArrowDown={(x) => handleArrowDown(block.id, x)}
-          onConvert={(type, children) => handleConvert(block.id, type, children)}
-          onSlashCommand={() => handleSlashCommand(block.id)}
-          onSplit={(after) => handleSplit(block.id, after)}
-        />
+          data-block-id={block.id}
+          data-block-type={block.node.type}
+          className={cn(
+            'group/block relative',
+            selectedBlockIds.has(block.id) && 'rounded-sm bg-holo-primary-surface/15 outline outline-1 outline-holo-primary/20',
+          )}
+        >
+          {/* Sélecteur de bloc */}
+          <div
+            className={cn(
+              'absolute -left-5 top-1 flex cursor-pointer items-center justify-center transition-opacity',
+              selectedBlockIds.has(block.id) ? 'opacity-100' : 'opacity-0 group-hover/block:opacity-40 hover:!opacity-100',
+            )}
+            onMouseDown={(e) => { e.preventDefault(); handleBlockSelect(block.id, e.shiftKey) }}
+            title="Sélectionner le bloc"
+          >
+            <div
+              className={cn(
+                'size-3.5 rounded-sm border transition-colors',
+                selectedBlockIds.has(block.id)
+                  ? 'border-holo-primary-soft bg-holo-primary-soft'
+                  : 'border-holo-border-muted bg-transparent',
+              )}
+            />
+          </div>
+          <BlockDispatcher
+            block={block}
+            isFirst={idx === 0}
+            blockRef={(handle) => {
+              if (handle) blockRefs.current.set(block.id, handle)
+              else blockRefs.current.delete(block.id)
+            }}
+            onChange={(node) => handleBlockChange(block.id, node)}
+            onEnterAtStart={() => handleEnterAtStart(block.id)}
+            onEnterAtEnd={() => handleEnterAtEnd(block.id)}
+            onBackspaceAtStart={() => handleBackspaceAtStart(block.id)}
+            onArrowUp={(x) => handleArrowUp(block.id, x)}
+            onArrowDown={(x) => handleArrowDown(block.id, x)}
+            onConvert={(type, children) => handleConvert(block.id, type, children)}
+            onSlashCommand={() => handleSlashCommand(block.id)}
+            onSplit={(after) => handleSplit(block.id, after)}
+            onSmartPaste={(before, after, md) => handleSmartPaste(block.id, before, after, md)}
+          />
+        </div>
       ))}
       {slashCommand && (
         <SlashCommandPopup
@@ -399,6 +617,7 @@ function BlockDispatcher({
   onConvert,
   onSlashCommand,
   onSplit,
+  onSmartPaste,
 }: {
   block: BlockState
   blockRef: React.Ref<InlineEditorHandle>
@@ -412,6 +631,7 @@ function BlockDispatcher({
   onConvert: (type: string, children: InlineNode[]) => void
   onSlashCommand: () => void
   onSplit: (after: InlineNode[]) => void
+  onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
 }) {
   switch (block.node.type) {
     case 'paragraph':
@@ -428,6 +648,7 @@ function BlockDispatcher({
           onConvert={onConvert}
           onSlashCommand={onSlashCommand}
           onSplit={onSplit}
+          onSmartPaste={onSmartPaste}
           alwaysShowPlaceholder={isFirst}
         />
       )
@@ -446,6 +667,7 @@ function BlockDispatcher({
           onConvert={onConvert}
           onSlashCommand={onSlashCommand}
           onSplit={onSplit}
+          onSmartPaste={onSmartPaste}
           alwaysShowPlaceholder={isFirst}
         />
       )

@@ -72,6 +72,8 @@ export interface InlineEditorProps {
   onSlashCommand?: () => void
   /** Shift+Enter : scinde le bloc au curseur — le contenu après va dans un nouveau bloc */
   onSplit?: (after: InlineNode[]) => void
+  /** Coller du texte multi-paragraphe : délègue la création des blocs au parent */
+  onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
   className?: string
 }
 
@@ -89,6 +91,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   onConvert,
   onSlashCommand,
   onSplit,
+  onSmartPaste,
   className,
 }, ref) {
   const divRef = useRef<HTMLDivElement>(null)
@@ -133,6 +136,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         italic: document.queryCommandState('italic'),
         strike: document.queryCommandState('strikeThrough'),
         code:   isInsideTag(range, el, 'code'),
+        underline: isInsideTag(range, el, 'u'),
         link:   getLinkHref(range, el),
       })
     }
@@ -190,18 +194,25 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (slashRange) {
         try {
           const deleteRange = document.createRange()
-          // Effacer depuis le '/' jusqu'à la position courante du curseur
-          // (inclut le texte de recherche tapé après le '/')
+          // Effacer depuis le '/' jusqu'à la position courante du curseur.
+          // IMPORTANT : window.getSelection() peut pointer vers l'input du popup
+          // (qui a le focus), pas vers ce div. Si le curseur n'est pas dans ce
+          // div, on revient à la position juste après le '/' (slashRange) pour
+          // éviter de créer un Range cross-éléments qui détruirait le DOM.
           deleteRange.setStart(slashRange.startContainer, slashRange.startOffset - 1)
           const sel = window.getSelection()
-          if (sel?.rangeCount) {
+          if (sel?.rangeCount && el.contains(sel.getRangeAt(0).startContainer)) {
             const cur = sel.getRangeAt(0)
+            console.log('[InlineEditor] clearSlash: cursor is inside el, deleting up to cursor')
             deleteRange.setEnd(cur.startContainer, cur.startOffset)
           } else {
+            console.log('[InlineEditor] clearSlash: cursor is OUTSIDE el (popup input has focus), deleting only "/"')
             deleteRange.setEnd(slashRange.startContainer, slashRange.startOffset)
           }
           deleteRange.deleteContents()
-        } catch { /* ignore */ }
+        } catch (err) {
+          console.error('[InlineEditor] clearSlash deleteContents error:', err)
+        }
         slashRangeRef.current = null
       }
       syncEmpty(el)
@@ -242,6 +253,40 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     range.collapse(true)
     sel.removeAllRanges()
     sel.addRange(range)
+    syncEmpty(el); savedRef.current = false
+  }, [syncEmpty])
+
+  // Bascule le formatage <u> sur la sélection
+  const toggleUnderline = useCallback(() => {
+    const sel = window.getSelection()
+    const el = divRef.current
+    if (!sel?.rangeCount || !el) return
+    const range = sel.getRangeAt(0)
+    if (range.collapsed) return
+    // Désencapsuler si déjà dans <u>
+    let node: Node | null = range.commonAncestorContainer
+    while (node && node !== el) {
+      if ((node as Element).tagName?.toLowerCase() === 'u') {
+        const frag = document.createDocumentFragment()
+        while ((node as Element).firstChild) frag.appendChild((node as Element).firstChild!)
+        node.parentNode?.replaceChild(frag, node)
+        syncEmpty(el); savedRef.current = false
+        return
+      }
+      node = node.parentNode
+    }
+    // Encapsuler dans <u> en préservant la mise en forme intérieure
+    try {
+      const frag = range.extractContents()
+      const u = document.createElement('u')
+      u.appendChild(frag)
+      range.insertNode(u)
+      const after = document.createRange()
+      after.setStartAfter(u)
+      after.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(after)
+    } catch { /* ignore */ }
     syncEmpty(el); savedRef.current = false
   }, [syncEmpty])
 
@@ -354,18 +399,21 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       }
     }
 
-    // Commande slash — ouvre le menu à tout moment
+    // Commande slash — ouvre le menu seulement si le bloc est vide
+    // Pour déclencher en milieu de texte : utiliser Ctrl+Espace
     if (e.key === '/' && onSlashCommand) {
       const el = divRef.current
       if (el) {
-        // Laisser le "/" s’insérer, puis capturer la position et ouvrir le popup
-        setTimeout(() => {
-          const sel = window.getSelection()
-          if (!sel?.rangeCount) return
-          const range = sel.getRangeAt(0)
-          slashRangeRef.current = range.cloneRange()
-          onSlashCommand()
-        }, 0)
+        const isEmpty = !el.textContent?.trim()
+        if (isEmpty) {
+          setTimeout(() => {
+            const sel = window.getSelection()
+            if (!sel?.rangeCount) return
+            const range = sel.getRangeAt(0)
+            slashRangeRef.current = range.cloneRange()
+            onSlashCommand()
+          }, 0)
+        }
       }
     }
 
@@ -377,39 +425,62 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       onSlashCommand()
     }
 
-    // Enter → bloc avant si curseur au début d'un bloc non vide, sinon bloc après
+    // Enter → scinde le bloc au curseur (milieu) ou crée un nouveau bloc (fin/début)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      const blockIsEmpty = !divRef.current?.textContent?.trim()
+      const el = divRef.current
+      const blockIsEmpty = !el?.textContent?.trim()
       if (!blockIsEmpty && isAtStart() && onEnterAtStart) {
         save()
         onEnterAtStart()
-      } else if (onEnterAtEnd) {
-        save()
-        onEnterAtEnd()
+        return
       }
+      // Tenter de scinder si curseur au milieu du bloc
+      if (onSplit && el && !blockIsEmpty) {
+        const sel = window.getSelection()
+        if (sel?.rangeCount) {
+          try {
+            const cursor = sel.getRangeAt(0)
+            const afterRange = document.createRange()
+            afterRange.setStart(cursor.endContainer, cursor.endOffset)
+            afterRange.setEnd(el, el.childNodes.length)
+            const extracted = afterRange.extractContents()
+            const tmp = document.createElement('div')
+            tmp.appendChild(extracted)
+            if (tmp.textContent?.trim()) {
+              const afterNodes = domToInlines(tmp)
+              syncEmpty(el)
+              savedRef.current = false
+              save()
+              onSplit(afterNodes)
+              return
+            }
+            // Contenu après vide (fin du bloc) → laisser tomber et créer bloc après
+          } catch { /* fall through */ }
+        }
+      }
+      save()
+      onEnterAtEnd?.()
       return
     }
 
-    // Shift+Enter → scinde le bloc au curseur
+    // Shift+Enter → saut de ligne doux dans le bloc
     if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault()
-      if (!onSplit) return
-      const el = divRef.current
       const sel = window.getSelection()
-      if (!el || !sel?.rangeCount) return
-      const cursor = sel.getRangeAt(0)
-      // Extraire le contenu après le curseur dans un div temporaire
-      const afterRange = document.createRange()
-      afterRange.setStart(cursor.endContainer, cursor.endOffset)
-      afterRange.setEnd(el, el.childNodes.length)
-      const tmp = document.createElement('div')
-      tmp.appendChild(afterRange.extractContents())
-      const afterNodes = domToInlines(tmp)
+      const el = divRef.current
+      if (!sel?.rangeCount || !el) return
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      const br = document.createElement('br')
+      range.insertNode(br)
+      const after = document.createRange()
+      after.setStartAfter(br)
+      after.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(after)
       syncEmpty(el)
       savedRef.current = false
-      save()
-      onSplit(afterNodes)
       return
     }
 
@@ -454,6 +525,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (e.key === 'b') { e.preventDefault(); document.execCommand('bold');              return }
       if (e.key === 'i') { e.preventDefault(); document.execCommand('italic');            return }
       if (e.key === 'e') { e.preventDefault(); toggleCode();                              return }
+      if (e.key === 'u') { e.preventDefault(); toggleUnderline();                        return }
       if (e.key === 's' && e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); return }
     }
   }
@@ -482,7 +554,35 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           e.preventDefault()
           const text = e.clipboardData.getData('text/plain')
           if (!text) return
-          // Insérer le texte brut à la position du curseur (préserve l'historique undo)
+
+          // Smart paste — plusieurs paragraphes → déléguer au BlockEditor
+          if (onSmartPaste && text.includes('\n\n')) {
+            const el = divRef.current
+            const sel = window.getSelection()
+            if (el && sel?.rangeCount) {
+              try {
+                const cursor = sel.getRangeAt(0)
+                const beforeRange = document.createRange()
+                beforeRange.setStart(el, 0)
+                beforeRange.setEnd(cursor.startContainer, cursor.startOffset)
+                const beforeTmp = document.createElement('div')
+                beforeTmp.appendChild(beforeRange.cloneContents())
+                const beforeNodes = domToInlines(beforeTmp)
+
+                const afterRange = document.createRange()
+                afterRange.setStart(cursor.endContainer, cursor.endOffset)
+                afterRange.setEnd(el, el.childNodes.length)
+                const afterTmp = document.createElement('div')
+                afterTmp.appendChild(afterRange.cloneContents())
+                const afterNodes = domToInlines(afterTmp)
+
+                onSmartPaste(beforeNodes, afterNodes, text)
+                return
+              } catch { /* fall through */ }
+            }
+          }
+
+          // Paste simple — insérer le texte brut à la position du curseur
           document.execCommand('insertText', false, text)
         }}
         onInput={(e) => { syncEmpty(e.currentTarget); savedRef.current = false }}
@@ -495,6 +595,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           onItalic={()  => document.execCommand('italic')}
           onStrike={()  => document.execCommand('strikeThrough')}
           onCode={toggleCode}
+          onUnderline={toggleUnderline}
           onLink={(url) => document.execCommand('createLink', false, url)}
           onUnlink={()  => document.execCommand('unlink')}
         />

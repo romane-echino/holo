@@ -3,10 +3,13 @@ import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
 import { getBaseName } from '../lib/appUtils'
 import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useConfig } from '../contexts/ConfigContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
 import type { TreeNode } from '../types/app'
-import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X } from 'lucide-react'
+import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch } from 'lucide-react'
+import { ContextMenu } from '../components/ContextMenu'
+import type { ContextMenuAction } from '../components/ContextMenu'
 import type { LucideIcon } from 'lucide-react'
 import { AbstractPanel } from './AbstractPanel'
 
@@ -36,10 +39,25 @@ type SpacePanelProps = {
   favoriteItems?: SpacePanelItem[]
   selectedPath?: string
   rootPath?: string
+  /** Métadonnées live du fichier actuellement ouvert (override du cache) */
+  metaOverride?: TreeFileMeta & { path: string }
   onSelectFile?: (node: SpaceFileNode) => void
   onAddItem?: (type: 'file' | 'folder', name: string, parentPath?: string) => void
   onMoveItem?: (sourcePath: string, targetFolderPath: string) => void
+  onRenameItem?: (path: string, newName: string) => void
+  onDeleteItem?: (path: string) => void
   onSearch?: (query: string) => void
+  // "…" menu
+  isFavorite?: boolean
+  onToggleFavorite?: () => void
+  onDetach?: () => void
+  isGitRepo?: boolean
+  gitAhead?: number
+  gitBehind?: number
+  onGitSync?: () => void
+  // Favoris fichiers
+  favoriteFilePaths?: string[]
+  onToggleFileFavorite?: (path: string) => void
 }
 
 
@@ -49,7 +67,7 @@ const tabClassName =
 
 // ─── Métadonnées fichier (frontmatter) ───────────────────────────────────────
 
-type TreeFileMeta = { title?: string; description?: string; icon?: string }
+export type TreeFileMeta = { title?: string; description?: string; icon?: string }
 
 function parseFrontmatterQuick(content: string): TreeFileMeta {
   const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
@@ -73,6 +91,18 @@ function collectMdPaths(nodes: SpaceFileNode[]): string[] {
     if (node.children?.length) paths.push(...collectMdPaths(node.children))
   }
   return paths
+}
+
+// Collecte tous les dossiers (chemin + nom indenté) pour le picker
+function getAllFolders(nodes: SpaceFileNode[], depth = 0): { path: string; label: string }[] {
+  const result: { path: string; label: string }[] = []
+  for (const node of nodes) {
+    if (node.type === 'folder') {
+      result.push({ path: node.path, label: '\u00a0'.repeat(depth * 3) + node.name })
+      if (node.children?.length) result.push(...getAllFolders(node.children, depth + 1))
+    }
+  }
+  return result
 }
 
 function getFileIcon(node: SpaceFileNode): LucideIcon {
@@ -101,6 +131,8 @@ function TreeNode({
   onSelectFolder,
   drag,
   fileMeta,
+  metaOverride,
+  onContextMenu,
 }: {
   node: SpaceFileNode
   level: number
@@ -111,6 +143,8 @@ function TreeNode({
   onSelectFolder?: (path: string) => void
   drag?: DragProps
   fileMeta?: Record<string, TreeFileMeta>
+  metaOverride?: TreeFileMeta & { path: string }
+  onContextMenu?: (node: SpaceFileNode, e: React.MouseEvent) => void
 }) {
   const isFolder = node.type === 'folder'
   const isExpanded = expanded.has(node.path)
@@ -118,10 +152,11 @@ function TreeNode({
   const hasChildren = Boolean(node.children?.length)
   const FileIcon = getFileIcon(node)
   const isDragOver = drag?.dragOverPath === node.path && isFolder
-  const meta = !isFolder ? fileMeta?.[node.path] : undefined
-  const displayTitle = meta?.title || node.name
-  const displayIcon = meta?.icon
-  const displayDesc = meta?.description
+  // Utiliser l'override si disponible (mise à jour immédiate sans attendre le cache)
+  const metaRaw = metaOverride?.path === node.path ? metaOverride : (!isFolder ? fileMeta?.[node.path] : undefined)
+  const displayTitle = metaRaw?.title || node.name
+  const displayIcon = metaRaw?.icon
+  const displayDesc = metaRaw?.description
 
   const handleClick = () => {
     if (isFolder) {
@@ -144,6 +179,7 @@ function TreeNode({
         draggable={!!drag}
         onDragStart={drag ? (e) => drag.onDragStart(node.path, e) : undefined}
         onDragEnd={drag ? drag.onDragEnd : undefined}
+        onContextMenu={(e) => onContextMenu?.(node, e)}
         className={cn(
           'group flex min-h-9 w-full items-center gap-2 rounded-holo-md py-2 pr-2 text-left text-sm transition hover:bg-holo-glass-hover hover:text-holo-text',
           isSelected
@@ -191,6 +227,8 @@ function TreeNode({
               onSelectFolder={onSelectFolder}
               drag={drag}
               fileMeta={fileMeta}
+              metaOverride={metaOverride}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -260,10 +298,22 @@ export function SpacePanel({
   favoriteItems,
   selectedPath,
   rootPath,
+  metaOverride,
   onSelectFile,
   onAddItem,
   onMoveItem,
+  onRenameItem,
+  onDeleteItem,
   onSearch,
+  isFavorite,
+  onToggleFavorite,
+  onDetach,
+  isGitRepo,
+  gitAhead = 0,
+  gitBehind = 0,
+  onGitSync,
+  favoriteFilePaths = [],
+  onToggleFileFavorite,
 }: SpacePanelProps) {
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
@@ -387,34 +437,65 @@ export function SpacePanel({
   const [addOpen, setAddOpen] = useState(false)
   const [addType, setAddType] = useState<'file' | 'folder'>('file')
   const [addName, setAddName] = useState('')
+  const [addParentOverride, setAddParentOverride] = useState<string | undefined>(undefined)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
   const addInputRef = useRef<HTMLInputElement>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
+  const [moreMenuAnchorEl, setMoreMenuAnchorEl] = useState<HTMLElement | null>(null)
+  const [gitSyncing, setGitSyncing] = useState(false)
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const onMouseDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
-  }, [menuOpen])
+  // ─── Menu contextuel clic-droit ────────────────────────────────────────────
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; node: SpaceFileNode } | null>(null)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renamePath, setRenamePath] = useState('')
+  const [renameName, setRenameName] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const openAddDialog = useCallback((type: 'file' | 'folder') => {
+  const handleContextMenu = useCallback((node: SpaceFileNode, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCtxMenu({ x: e.clientX, y: e.clientY, node })
+  }, [])
+
+  const openRenameDialog = useCallback((node: SpaceFileNode) => {
+    setRenamePath(node.path)
+    setRenameName(node.name.replace(/\.md$/, ''))
+    setCtxMenu(null)
+    setRenameOpen(true)
+    setTimeout(() => renameInputRef.current?.focus(), 50)
+  }, [])
+
+  const handleRenameConfirm = useCallback(() => {
+    const name = renameName.trim()
+    if (!name || !renamePath) return
+    const original = renamePath.split('/').pop() ?? ''
+    const ext = original.includes('.') && !original.startsWith('.') ? original.slice(original.lastIndexOf('.')) : ''
+    const finalName = name.includes('.') ? name : name + ext
+    onRenameItem?.(renamePath, finalName)
+    setRenameOpen(false)
+    setRenameName('')
+    setRenamePath('')
+  }, [renameName, renamePath, onRenameItem])
+
+  const openAddDialog = useCallback((type: 'file' | 'folder', parentPath?: string) => {
     setAddType(type)
     setAddName('')
+    setAddParentOverride((parentPath ?? selectedFolderPath) || undefined)
+    setFolderPickerOpen(false)
     setAddOpen(true)
     setTimeout(() => addInputRef.current?.focus(), 50)
-  }, [])
+  }, [selectedFolderPath])
 
   const handleAddConfirm = useCallback(() => {
     let name = addName.trim()
     if (!name) return
     if (addType === 'file' && !name.includes('.')) name += '.md'
-    onAddItem?.(addType, name, selectedFolderPath || undefined)
+    onAddItem?.(addType, name, addParentOverride || undefined)
     setAddOpen(false)
     setAddName('')
-  }, [addName, addType, onAddItem, selectedFolderPath])
+    setAddParentOverride(undefined)
+    setFolderPickerOpen(false)
+  }, [addName, addType, onAddItem, addParentOverride])
 
   const filteredFiles = useMemo(() => {
     if (!query.trim()) return files
@@ -459,34 +540,25 @@ export function SpacePanel({
     <AbstractPanel
       title={spaceName}
       actions={
-        <div ref={menuRef} className="relative">
+        <div className="flex items-center gap-1">
           <button
-            onClick={() => setMenuOpen((o) => !o)}
-            className="flex size-8 shrink-0 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-primary-soft active:scale-[0.98]"
+            onClick={(e) => setMoreMenuAnchorEl(e.currentTarget)}
+            className="flex size-8 shrink-0 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft active:scale-[0.98]"
+            title="Options de l'espace"
+            aria-label="Options"
+          >
+            <MoreHorizontal size={13} />
+          </button>
+          <button
+            onClick={(e) => setMenuAnchorEl(e.currentTarget)}
+            className={`flex size-8 shrink-0 items-center justify-center rounded-holo-md border border-holo-border-soft 
+            ${files?.length === 0 ? 'bg-holo-primary/80 text-white hover:bg-holo-primary/80' : 'bg-holo-glass text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text'}
+            text-holo-text-muted transition hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft active:scale-[0.98]`}
             title="Nouveau…"
             aria-label="Nouveau…"
           >
             <Plus size={13} />
           </button>
-
-          {menuOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated shadow-[0_12px_40px_rgba(0,0,0,.4)]">
-              <button
-                onClick={() => { setMenuOpen(false); openAddDialog('file') }}
-                className="flex w-full items-center gap-3 px-3.5 py-2.5 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
-              >
-                <FileText size={13} className="shrink-0 text-holo-text-faint" />
-                Nouveau fichier
-              </button>
-              <button
-                onClick={() => { setMenuOpen(false); openAddDialog('folder') }}
-                className="flex w-full items-center gap-3 px-3.5 py-2.5 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
-              >
-                <Folder size={13} className="shrink-0 text-holo-text-faint" />
-                Nouveau dossier
-              </button>
-            </div>
-          )}
         </div>
       }
       subHeader={
@@ -545,6 +617,8 @@ export function SpacePanel({
                   onSelectFolder={setSelectedFolderPath}
                   drag={dragProps}
                   fileMeta={fileMeta}
+                  metaOverride={metaOverride}
+                  onContextMenu={handleContextMenu}
                 />
               ))}
             </div>
@@ -578,10 +652,10 @@ export function SpacePanel({
     {addOpen && (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        onClick={() => setAddOpen(false)}
+        onClick={() => { setAddOpen(false); setFolderPickerOpen(false) }}
       >
         <div
-          className="w-[320px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
+          className="w-[340px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
@@ -589,19 +663,59 @@ export function SpacePanel({
               {addType === 'file' ? 'Nouveau fichier' : 'Nouveau dossier'}
             </h3>
             <button
-              onClick={() => setAddOpen(false)}
+              onClick={() => { setAddOpen(false); setFolderPickerOpen(false) }}
               className="flex size-7 items-center justify-center rounded-holo-md text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
             >
               <X size={14} />
             </button>
           </div>
 
-          {selectedFolderPath && (
-            <div className="mb-3 flex items-center gap-1.5 rounded-holo-md bg-holo-glass px-2.5 py-1.5 text-xs text-holo-text-faint">
-              <Folder size={11} className="shrink-0" />
-              <span className="truncate">{selectedFolderPath.split('/').filter(Boolean).at(-1)}</span>
-            </div>
-          )}
+          {/* Picker dossier parent */}
+          <div className="mb-3">
+            <p className="mb-1.5 text-xs text-holo-text-faint">Créer dans</p>
+            <button
+              type="button"
+              onClick={() => setFolderPickerOpen((o) => !o)}
+              className="flex w-full items-center gap-1.5 rounded-holo-md border border-holo-border-soft bg-holo-glass px-2.5 py-1.5 text-xs text-holo-text-muted transition hover:border-holo-primary/40 hover:bg-holo-glass-hover"
+            >
+              <Folder size={11} className="shrink-0 text-holo-text-faint" />
+              <span className="flex-1 truncate text-left">
+                {addParentOverride
+                  ? addParentOverride.split('/').filter(Boolean).at(-1)
+                  : 'Racine de l\'espace'}
+              </span>
+              <ChevronDown size={11} className={cn('shrink-0 text-holo-text-faint transition-transform', folderPickerOpen && 'rotate-180')} />
+            </button>
+            {folderPickerOpen && (
+              <div className="mt-1 max-h-[160px] overflow-y-auto rounded-holo-lg border border-holo-border-soft bg-holo-bg-elevated shadow-holo-md holo-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => { setAddParentOverride(undefined); setFolderPickerOpen(false) }}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-3 py-1.5 text-xs transition hover:bg-holo-glass-hover',
+                    !addParentOverride ? 'text-holo-primary-soft font-medium' : 'text-holo-text-muted',
+                  )}
+                >
+                  <FolderOpen size={11} className="shrink-0" />
+                  <span>Racine de l'espace</span>
+                </button>
+                {getAllFolders(files ?? []).map((folder) => (
+                  <button
+                    key={folder.path}
+                    type="button"
+                    onClick={() => { setAddParentOverride(folder.path); setFolderPickerOpen(false) }}
+                    className={cn(
+                      'flex w-full items-center gap-2 px-3 py-1.5 text-xs transition hover:bg-holo-glass-hover',
+                      addParentOverride === folder.path ? 'text-holo-primary-soft font-medium' : 'text-holo-text-muted',
+                    )}
+                  >
+                    <Folder size={11} className="shrink-0" />
+                    <span className="truncate">{folder.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <input
             ref={addInputRef}
@@ -609,7 +723,7 @@ export function SpacePanel({
             onChange={(e) => setAddName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAddConfirm()
-              if (e.key === 'Escape') setAddOpen(false)
+              if (e.key === 'Escape') { setAddOpen(false); setFolderPickerOpen(false) }
             }}
             placeholder={addType === 'file' ? 'nom-du-fichier.md' : 'nom-du-dossier'}
             className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
@@ -617,7 +731,7 @@ export function SpacePanel({
 
           <div className="flex justify-end gap-2">
             <button
-              onClick={() => setAddOpen(false)}
+              onClick={() => { setAddOpen(false); setFolderPickerOpen(false) }}
               className="rounded-holo-md px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
             >
               Annuler
@@ -628,6 +742,132 @@ export function SpacePanel({
               className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]"
             >
               Créer
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Menu contextuel clic-droit */}
+    {ctxMenu && (
+      <ContextMenu
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        onClose={() => setCtxMenu(null)}
+        items={[
+          { type: 'header', label: `${ctxMenu.node.type === 'folder' ? 'Dossier' : 'Fichier'} · ${ctxMenu.node.name}` },
+          { type: 'separator' },
+          { type: 'item', label: 'Renommer', icon: Pencil, onClick: () => openRenameDialog(ctxMenu.node) },
+          ...(ctxMenu.node.type === 'file' && onToggleFileFavorite ? [{
+            type: 'item' as const,
+            label: favoriteFilePaths.includes(ctxMenu.node.path) ? 'Retirer des favoris' : 'Mettre en favori',
+            icon: Star,
+            onClick: () => onToggleFileFavorite(ctxMenu.node.path),
+          }] : []),
+          ...(ctxMenu.node.type === 'folder' ? [
+            { type: 'item' as const, label: 'Nouveau fichier ici', icon: FilePlus, onClick: () => openAddDialog('file', ctxMenu.node.path) },
+            { type: 'item' as const, label: 'Nouveau dossier ici', icon: FolderPlus, onClick: () => openAddDialog('folder', ctxMenu.node.path) },
+          ] : []),
+          { type: 'separator' },
+          { type: 'item', label: 'Supprimer', icon: Trash2, variant: 'danger', onClick: () => onDeleteItem?.(ctxMenu.node.path) },
+        ] satisfies ContextMenuAction[]}
+      />
+    )}
+
+    {/* Dropdown bouton + */}
+    {menuAnchorEl && (
+      <ContextMenu
+        anchorEl={menuAnchorEl}
+        anchorAlign="right"
+        onClose={() => setMenuAnchorEl(null)}
+        items={[
+          { type: 'item', label: 'Nouveau fichier', icon: FileText, onClick: () => openAddDialog('file') },
+          { type: 'item', label: 'Nouveau dossier', icon: Folder, onClick: () => openAddDialog('folder') },
+        ] satisfies ContextMenuAction[]}
+      />
+    )}
+
+    {/* Dropdown bouton … */}
+    {moreMenuAnchorEl && (
+      <ContextMenu
+        anchorEl={moreMenuAnchorEl}
+        anchorAlign="right"
+        onClose={() => setMoreMenuAnchorEl(null)}
+        items={[
+          { type: 'header', label: spaceName },
+          { type: 'separator' },
+          ...(onToggleFavorite ? [{
+            type: 'item' as const,
+            label: isFavorite ? 'Retirer des favoris' : 'Mettre en favori',
+            icon: Star,
+            onClick: () => onToggleFavorite(),
+          }] : []),
+          ...(isGitRepo && onGitSync ? [{
+            type: 'item' as const,
+            label: gitSyncing
+              ? 'Synchronisation…'
+              : `Synchroniser git${gitAhead || gitBehind ? ` ↑${gitAhead} ↓${gitBehind}` : ''}`,
+            icon: gitSyncing ? RefreshCw : GitBranch,
+            onClick: async () => {
+              setGitSyncing(true)
+              try { await onGitSync() } finally { setGitSyncing(false) }
+            },
+          }] : []),
+          { type: 'separator' },
+          ...(onDetach ? [{
+            type: 'item' as const,
+            label: 'Dissocier l\'espace',
+            icon: Unlink,
+            variant: 'danger' as const,
+            onClick: () => onDetach(),
+          }] : []),
+        ] satisfies ContextMenuAction[]}
+      />
+    )}
+
+    {/* Dialog renommer */}
+    {renameOpen && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onClick={() => setRenameOpen(false)}
+      >
+        <div
+          className="w-[320px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-holo-text">Renommer</h3>
+            <button
+              onClick={() => setRenameOpen(false)}
+              className="flex size-7 items-center justify-center rounded-holo-md text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <input
+            ref={renameInputRef}
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameConfirm()
+              if (e.key === 'Escape') setRenameOpen(false)
+            }}
+            placeholder="Nouveau nom…"
+            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setRenameOpen(false)}
+              className="rounded-holo-md px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={handleRenameConfirm}
+              disabled={!renameName.trim()}
+              className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]"
+            >
+              Renommer
             </button>
           </div>
         </div>
@@ -656,9 +896,21 @@ function treeNodeToSpaceFile(node: TreeNode): SpaceFileNode {
 export function SpaceRoute({
   onSelectFile,
   selectedFilePath,
+  metaOverride,
+  isFavorite,
+  onToggleFavorite,
+  onDetach,
+  favoriteFilePaths,
+  onToggleFileFavorite,
 }: {
   onSelectFile?: (node: SpaceFileNode) => void
   selectedFilePath?: string
+  metaOverride?: TreeFileMeta & { path: string }
+  isFavorite?: boolean
+  onToggleFavorite?: () => void
+  onDetach?: () => void
+  favoriteFilePaths?: string[]
+  onToggleFileFavorite?: (path: string) => void
 }) {
   const { encodedPath } = useParams()
   const folderPath = encodedPath ? decodeURIComponent(encodedPath) : null
@@ -667,6 +919,18 @@ export function SpaceRoute({
   const { rootPath, tree, recentFilePaths, fileMetaByPath, setTree } = useWorkspace()
   const { getHoloApi } = useGetHoloApi()
   const { openRecentFolder } = useWorkspaceFolders({ getHoloApi })
+
+  // Récupération du gitState depuis le ConfigContext
+  const { gitState } = useConfig()
+  const isGitRepo = gitState.isRepo && gitState.hasRemote
+
+  const handleGitSync = useCallback(async () => {
+    try {
+      await window.holo?.gitSync()
+    } catch (err) {
+      console.error('[SpaceRoute] Erreur sync git :', err)
+    }
+  }, [])
 
   const handleAddItem = useCallback(async (type: 'file' | 'folder', name: string, parentPath?: string) => {
     const parent = parentPath || rootPath
@@ -696,6 +960,26 @@ export function SpaceRoute({
       if (result) setTree(result.tree)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de déplacer :', err)
+    }
+  }, [setTree])
+
+  const handleRenameItem = useCallback(async (path: string, newName: string) => {
+    try {
+      await window.holo?.renamePath(path, newName)
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible de renommer :', err)
+    }
+  }, [setTree])
+
+  const handleDeleteItem = useCallback(async (path: string) => {
+    try {
+      await window.holo?.archivePath(path)
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible de supprimer :', err)
     }
   }, [setTree])
 
@@ -734,10 +1018,22 @@ export function SpaceRoute({
       recentItems={recentItems}
       favoriteItems={[]}
       selectedPath={selectedFilePath}
+      metaOverride={metaOverride}
       onSelectFile={onSelectFile}
       onAddItem={handleAddItem}
       onMoveItem={handleMoveItem}
+      onRenameItem={handleRenameItem}
+      onDeleteItem={handleDeleteItem}
       rootPath={folderPath ?? undefined}
+      isFavorite={isFavorite}
+      onToggleFavorite={onToggleFavorite}
+      onDetach={onDetach}
+      isGitRepo={isGitRepo}
+      gitAhead={gitState.outgoing}
+      gitBehind={gitState.incoming}
+      onGitSync={isGitRepo ? handleGitSync : undefined}
+      favoriteFilePaths={favoriteFilePaths}
+      onToggleFileFavorite={onToggleFileFavorite}
     />
   )
 }

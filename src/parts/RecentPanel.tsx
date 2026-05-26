@@ -4,7 +4,6 @@ import { cn } from "../utils/global"
 import { Trash2 } from 'lucide-react'
 
 type HoloDocumentListProps = {
-  spaces?: HoloDocument[];
   documents?: HoloDocument[];
   onEmptyRecent?: () => void;
   onSelectDocument?: (doc: HoloDocument) => void;
@@ -37,7 +36,7 @@ export function DocumentButton({ doc, onSelect }: { doc: HoloDocument; onSelect?
   );
 }
 
-export function RecentPanel({ documents = [], spaces = [], onEmptyRecent, onSelectDocument }: HoloDocumentListProps) {
+export function RecentPanel({ documents = [], onEmptyRecent, onSelectDocument }: HoloDocumentListProps) {
   return (
     <AbstractPanel
       title="Récents"
@@ -53,16 +52,9 @@ export function RecentPanel({ documents = [], spaces = [], onEmptyRecent, onSele
         ) : null
       }
     >
-      <div className="mb-2 text-[11px] uppercase tracking-wider text-holo-text-faint">Documents</div>
       <div className="space-y-1">
         {documents.map((doc) => <DocumentButton key={doc.to} doc={doc} onSelect={onSelectDocument} />)}
         {documents.length === 0 && <div className="px-3 py-2 text-sm text-holo-text-faint">Aucun document récent</div>}
-      </div>
-
-      <div className="mb-2 mt-7 text-[11px] uppercase tracking-wider text-holo-text-faint">Espaces</div>
-      <div className="space-y-1">
-        {spaces.map((doc) => <DocumentButton key={doc.to} doc={doc} />)}
-        {spaces.length === 0 && <div className="px-3 py-2 text-sm text-holo-text-faint">Aucun espace récent</div>}
       </div>
     </AbstractPanel>
   )

@@ -14,10 +14,11 @@ export type InlineCodeNode = { type: 'inlineCode'; value: string }
 export type LinkNode      = { type: 'link';       url: string; title: string | null; children: InlineNode[] }
 export type DeleteNode    = { type: 'delete';     children: InlineNode[] }
 export type BreakNode     = { type: 'break' }
+export type UnderlineNode = { type: 'underline';  children: InlineNode[] }
 
 export type InlineNode =
   | TextNode | StrongNode | EmphasisNode | InlineCodeNode
-  | LinkNode | DeleteNode | BreakNode
+  | LinkNode | DeleteNode | BreakNode | UnderlineNode
 
 // ─── Block nodes ────────────────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ export type HeadingNode      = { type: 'heading';      depth: 1|2|3|4|5|6; child
 export type CodeNode         = { type: 'code';         lang: string | null; value: string }
 export type BlockquoteNode   = { type: 'blockquote';   children: BlockNode[] }
 export type ListItemNode     = { type: 'listItem';     spread: boolean; checked: boolean | null; children: BlockNode[] }
-export type ListNode         = { type: 'list';         ordered: boolean; start: number | null; spread: boolean; children: ListItemNode[] }
+export type ListNode         = { type: 'list';         ordered: boolean; start: number | null; spread: boolean; children: ListItemNode[]; data?: Record<string, unknown> }
 export type ThematicBreakNode = { type: 'thematicBreak' }
 export type ImageNode        = { type: 'image';        url: string; alt: string; title: string | null }
 

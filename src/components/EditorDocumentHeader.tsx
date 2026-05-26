@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import EmojiPicker, { Theme } from 'emoji-picker-react'
 import type { EditableMarkdownHeader, FilePathStats } from '../types/editor'
 
@@ -8,7 +8,7 @@ export type EditorDocumentHeaderProps = {
   isEditorReadOnly: boolean
   showEmojiPicker: boolean
   setShowEmojiPicker: React.Dispatch<React.SetStateAction<boolean>>
-  titleInputRef: React.RefObject<HTMLInputElement | null>
+  titleInputRef: React.RefObject<HTMLTextAreaElement | null>
   activePathStats?: FilePathStats | null
   formatReadonlyDate: (value?: string | null) => string
   updateEditableHeader: (field: keyof EditableMarkdownHeader, value: string) => void
@@ -35,6 +35,14 @@ export const EditorDocumentHeader: React.FC<EditorDocumentHeaderProps> = ({
   tagInput,
   setTagInput,
 }) => {
+  // Auto-resize textarea when title changes from outside (file switch)
+  useEffect(() => {
+    const el = titleInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [editableHeader.title, titleInputRef])
+
   return (
     <>
       <div className="mb-3">
@@ -91,12 +99,18 @@ export const EditorDocumentHeader: React.FC<EditorDocumentHeaderProps> = ({
           )}
         </div>
 
-        <input
+        <textarea
           ref={titleInputRef}
-          className={`w-full bg-transparent font-bold leading-tight text-white outline-none placeholder:text-white/20 ${isCompactLayout ? 'text-[1.8rem]' : 'text-[2.15rem]'}`}
+          className={`w-full resize-none overflow-hidden bg-transparent font-bold leading-tight text-white outline-none placeholder:text-white/20 ${isCompactLayout ? 'text-[1.8rem]' : 'text-[2.15rem]'}`}
           value={editableHeader.title}
           readOnly={isEditorReadOnly}
+          rows={1}
           onChange={(event) => updateEditableHeader('title', event.target.value)}
+          onInput={(event) => {
+            const el = event.currentTarget
+            el.style.height = 'auto'
+            el.style.height = `${el.scrollHeight}px`
+          }}
           placeholder="Sans titre"
         />
       </div>

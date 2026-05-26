@@ -32,9 +32,11 @@ function WorkspaceStatusIcon({ status }: { status: WorkspaceStatus }) {
 export function Header({
   editorFontSize = 100,
   onEditorFontSizeChange,
+  onOpenSettings,
 }: {
   editorFontSize?: number
   onEditorFontSizeChange?: (v: number) => void
+  onOpenSettings?: () => void
 }) {
   const { rootPath } = useWorkspace()
   const [status, setStatus] = useState<WorkspaceStatus | null>(null)
@@ -105,7 +107,10 @@ export function Header({
           )}
         </div>
 
-        <button className="rounded-holo-md px-2 py-1.5 hover:bg-holo-glass-hover hover:text-holo-text-muted sm:px-3">
+        <button
+          className="rounded-holo-md px-2 py-1.5 hover:bg-holo-glass-hover hover:text-holo-text-muted sm:px-3"
+          onClick={onOpenSettings}
+        >
           <Settings size={16} />
         </button>
 
