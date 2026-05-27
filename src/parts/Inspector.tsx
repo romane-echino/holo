@@ -267,9 +267,14 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
             </p>
           ) : (
             <div className="space-y-3">
-              {commits.map((c) => (
+              {commits.slice(0, 5).map((c) => (
                 <CommitCard key={c.hash} commit={c} />
               ))}
+              {commits.length > 5 && (
+                <p className="text-[11px] text-holo-text-faint">
+                  {commits.length - 5} autre{commits.length - 5 > 1 ? 's' : ''} activité{commits.length - 5 > 1 ? 's' : ''}
+                </p>
+              )}
             </div>
           )}
         </div>

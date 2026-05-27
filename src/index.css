@@ -441,15 +441,6 @@
     font-family: var(--font-mono);
   }
 
-  .holo-markdown pre {
-    overflow-x: auto;
-    margin: 2rem 0;
-    border: 1px solid var(--color-holo-border-soft);
-    background: var(--holo-markdown-muted-surface);
-    padding: 1.25rem;
-    border-radius: 1.25rem;
-    box-shadow: 0 12px 40px rgb(0 0 0 / 0.12);
-  }
 
   .holo-markdown pre code {
     border: none;

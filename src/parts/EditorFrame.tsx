@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, Archive, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight, Save, Star } from 'lucide-react'
+import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor } from './MarkdownEditor/BlockEditor'
@@ -24,6 +24,7 @@ type EditorFrameProps = {
   isFavorite?: boolean
   onToggleFavorite?: () => void
   onArchive?: () => void
+  onRestore?: () => void
 }
 
 function filenameFromPath(filepath: string) {
@@ -411,6 +412,7 @@ export function EditorFrame({
   isFavorite,
   onToggleFavorite,
   onArchive,
+  onRestore,
 }: EditorFrameProps) {
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
@@ -654,7 +656,7 @@ export function EditorFrame({
                   <Ellipsis size={14} />
                 </button>
 
-                {menuAnchorEl && (
+                {menuAnchorEl && createPortal(
                   <ContextMenu
                     anchorEl={menuAnchorEl}
                     anchorAlign="right"
@@ -678,8 +680,15 @@ export function EditorFrame({
                         icon: Archive,
                         onClick: () => { onArchive(); setMenuAnchorEl(null) },
                       }] : []),
+                      ...(onRestore ? [{
+                        type: 'item' as const,
+                        label: 'Sortir des archives',
+                        icon: ArchiveRestore,
+                        onClick: () => { onRestore(); setMenuAnchorEl(null) },
+                      }] : []),
                     ] satisfies ContextMenuAction[]}
-                  />
+                  />,
+                  document.body
                 )}
               </div>
             </div>

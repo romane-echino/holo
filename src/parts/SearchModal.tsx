@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Search, X, File } from 'lucide-react'
+import { Search, X, File, Archive } from 'lucide-react'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { getBaseName } from '../lib/appUtils'
 import { cn } from '../utils/global'
@@ -16,6 +16,7 @@ type SearchMatch = {
   path: string
   title: string
   subtitle: string
+  spaceName?: string
   matchKind: 'filename' | 'title' | 'tag' | 'description'
   matchText?: string
   icon?: string
@@ -48,11 +49,27 @@ type SearchModalProps = {
 }
 
 export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
-  const { fileMetaByPath, recentFilePaths, rootPath, tree } = useWorkspace()
+  const { fileMetaByPath, recentFilePaths, rootPath, tree, recentFolders } = useWorkspace()
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [archivedPaths, setArchivedPaths] = useState<string[]>([])
+  const [allSpacePaths, setAllSpacePaths] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Charger les fichiers archivés + tous les espaces à l'ouverture
+  useEffect(() => {
+    if (!open) return
+    window.holo?.listArchivedFiles().then(files => {
+      setArchivedPaths(files.map(f => f.archivedPath))
+    }).catch(() => {})
+    // Scanner tous les espaces récents (pas seulement l'espace courant)
+    const otherFolders = recentFolders.filter(f => f !== rootPath)
+    if (otherFolders.length === 0) { setAllSpacePaths([]); return }
+    Promise.all(otherFolders.map(f => window.holo?.scanMdFiles(f) ?? Promise.resolve([]))).then(results => {
+      setAllSpacePaths(results.flat())
+    }).catch(() => {})
+  }, [open, recentFolders, rootPath])
 
   // Reset à l'ouverture
   useEffect(() => {
@@ -68,6 +85,8 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     const paths = new Set<string>()
     for (const p of Object.keys(fileMetaByPath)) paths.add(p)
     for (const p of recentFilePaths) paths.add(p)
+    for (const p of archivedPaths) paths.add(p)
+    for (const p of allSpacePaths) paths.add(p)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function walk(node: any) {
       if (!node) return
@@ -76,7 +95,7 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     }
     walk(tree)
     return [...paths].filter((p) => p.endsWith('.md'))
-  }, [fileMetaByPath, recentFilePaths, tree])
+  }, [fileMetaByPath, recentFilePaths, archivedPaths, allSpacePaths, tree])
 
   const results = useMemo((): SearchMatch[] => {
     const q = query.trim().toLowerCase()
@@ -96,33 +115,37 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tags: string[] = (meta as any)?.tags ?? []
 
-      const spaceRelative = rootPath && path.startsWith(rootPath + '/')
-        ? path.slice(rootPath.length + 1)
-        : path
+      const spaceFolder = recentFolders.find(f => path.startsWith(f + '/'))
+      const spaceName = spaceFolder ? getBaseName(spaceFolder) : undefined
+      const spaceRelative = spaceFolder
+        ? path.slice(spaceFolder.length + 1)
+        : rootPath && path.startsWith(rootPath + '/')
+          ? path.slice(rootPath.length + 1)
+          : path
 
       if (isTagSearch && tagQuery) {
         const tagHit = tags.find((t) => t.toLowerCase().includes(tagQuery))
-        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
+        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
         continue
       }
 
       if (filenameNoExt.toLowerCase().includes(q)) {
-        matches.push({ path, title, subtitle: spaceRelative, matchKind: 'filename', icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'filename', icon: (meta as any)?.icon })
         continue
       }
       if (title.toLowerCase().includes(q) && title !== filenameNoExt) {
-        matches.push({ path, title, subtitle: spaceRelative, matchKind: 'title', icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'title', icon: (meta as any)?.icon })
         continue
       }
       const tagHit = tags.find((t) => t.toLowerCase().includes(q))
       if (tagHit) {
-        matches.push({ path, title, subtitle: spaceRelative, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
         continue
       }
       if (description.toLowerCase().includes(q)) {
         const idx = description.toLowerCase().indexOf(q)
         const excerpt = description.slice(Math.max(0, idx - 20), idx + 60)
-        matches.push({ path, title, subtitle: spaceRelative, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon })
       }
     }
 
@@ -223,14 +246,30 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
                   )}
                 >
                   <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center text-holo-text-faint">
-                    {r.icon ? <span className="text-sm leading-none">{r.icon}</span> : <File size={13} />}
+                    {r.path.includes('/.archive/')
+                      ? <Archive size={13} className="text-amber-400/60" />
+                      : r.icon ? <span className="text-sm leading-none">{r.icon}</span> : <File size={13} />}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm text-holo-text">{r.title}</span>
+                      <span className={cn('truncate text-sm', r.path.includes('/.archive/') ? 'text-holo-text-muted' : 'text-holo-text')}>{r.title}</span>
+                      {r.path.includes('/.archive/') && (
+                        <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-px text-[9px] font-medium text-amber-400">
+                          <Archive size={8} />
+                          archivé
+                        </span>
+                      )}
                       <MatchBadge kind={r.matchKind} />
                     </div>
-                    <div className="mt-0.5 truncate text-[11px] text-holo-text-faint">{r.subtitle}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-holo-text-faint">
+                      {r.spaceName && (
+                        <>
+                          <span className="shrink-0 rounded bg-holo-glass px-1.5 py-px font-medium text-holo-text-muted">{r.spaceName}</span>
+                          <span className="text-holo-text-faint/40">›</span>
+                        </>
+                      )}
+                      <span className="truncate">{r.subtitle}</span>
+                    </div>
                     {r.matchText && r.matchKind !== 'filename' && r.matchKind !== 'title' && (
                       <div className="mt-0.5 truncate text-[11px] italic text-holo-text-faint/70">{r.matchText}</div>
                     )}

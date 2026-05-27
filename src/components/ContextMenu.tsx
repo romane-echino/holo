@@ -56,6 +56,7 @@ export function ContextMenu({
       if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8
       if (left < 8) left = 8
       if (top + menuH > window.innerHeight - 8) top = rect.top - menuH - 6
+      if (top < 8) top = 8
       setPos({ left, top })
     } else if (x !== undefined && y !== undefined) {
       const menuW = minWidth

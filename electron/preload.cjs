@@ -42,6 +42,9 @@ contextBridge.exposeInMainWorld('holo', {
   listArchivedFiles: () => ipcRenderer.invoke('fs:list-archived-files'),
   restoreArchivedPath: (archivedPath) => ipcRenderer.invoke('fs:restore-archived-path', archivedPath),
   deletePath: (targetPath) => ipcRenderer.invoke('fs:delete-path', targetPath),
+  filterExistingPaths: (paths) => ipcRenderer.invoke('fs:filter-existing-paths', paths),
+  scanMdFiles: (folderPath) => ipcRenderer.invoke('fs:scan-md-files', folderPath),
+  registerKnownRoots: (paths) => ipcRenderer.invoke('fs:register-known-roots', paths),
   renamePath: (targetPath, newName) => ipcRenderer.invoke('fs:rename-path', targetPath, newName),
   movePath: (sourcePath, targetDirectoryPath) =>
     ipcRenderer.invoke('fs:move-path', sourcePath, targetDirectoryPath),

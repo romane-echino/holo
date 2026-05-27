@@ -11,7 +11,7 @@ import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
 import type { SpaceFileNode, TreeFileMeta } from './parts/SpacePanel'
-import { Clock, Star, Bot, Folder, FileText, X } from 'lucide-react'
+import { Clock, Star, Bot, Archive, Folder, FileText, X } from 'lucide-react'
 import { EditorFrame } from './parts/EditorFrame'
 import { applyTheme, applyAccent } from './lib/themeUtils'
 
@@ -62,7 +62,7 @@ export default function App2() {
   useEffect(() => {
     if (!window.holo) { setOnboardingDone(true); return }
     window.holo.getHoloConfig()
-      .then(cfg => {
+      .then(async cfg => {
         // Onboarding
         if (import.meta.env.DEV) {
           setOnboardingDone(true)
@@ -76,9 +76,16 @@ export default function App2() {
         // Favoris fichiers
         const savedFileFavs = cfg['file-favorites']
         if (Array.isArray(savedFileFavs)) setFavoriteFilePaths(savedFileFavs as string[])
-        // Fichiers récents
+        // Fichiers récents — purger les chemins qui n'existent plus (archivés, supprimés)
         const savedRecents = cfg['recent-file-paths']
-        if (Array.isArray(savedRecents)) setRecentFilePaths(savedRecents as string[])
+        if (Array.isArray(savedRecents)) {
+          try {
+            const existing = await window.holo?.filterExistingPaths(savedRecents as string[])
+            setRecentFilePaths(existing ?? (savedRecents as string[]))
+          } catch {
+            setRecentFilePaths(savedRecents as string[])
+          }
+        }
         // Apparence
         const theme = (cfg['theme'] as HoloSettingsValue['theme']) ?? 'dark'
         const accent = (cfg['accent'] as HoloSettingsValue['accent']) ?? 'violet'
@@ -175,7 +182,13 @@ export default function App2() {
   useEffect(() => {
     if (!window.holo) return
     window.holo.getRecentFolders()
-      .then(folders => { if (Array.isArray(folders)) setRecentFolders(folders) })
+      .then(folders => {
+        if (Array.isArray(folders)) {
+          setRecentFolders(folders)
+          // Enregistrer tous les espaces connus dans main.js pour autoriser la lecture cross-espace
+          window.holo?.registerKnownRoots(folders).catch(() => {})
+        }
+      })
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -289,6 +302,18 @@ export default function App2() {
 
   // ─── Navigation mobile (panel ↔ editor) ───────────────────────────────
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false)
+  const [pendingArchivePath, setPendingArchivePath] = useState<string | null>(null)
+
+  const handleRestoreFile = useCallback(async (path: string) => {
+    try {
+      await window.holo?.restoreArchivedPath(path)
+      window.dispatchEvent(new CustomEvent('holo:close-file', { detail: { path } }))
+      window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
+      void window.holo?.gitAutoSave(null as unknown as string)
+    } catch (err) {
+      console.error('[App2] Impossible de restaurer :', err)
+    }
+  }, [])
   // ─── Métadonnées live du fichier ouvert (pour mise à jour immédiate de l'arborescence)
   const [currentFileMeta, setCurrentFileMeta] = useState<(TreeFileMeta & { path: string }) | undefined>(undefined)
   // ─── Fichier ouvert ────────────────────────────────────────────────────────
@@ -487,6 +512,21 @@ export default function App2() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
+  // Fermer le fichier ouvert s'il est supprimé ou archivé depuis SpacePanel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const path = (e as CustomEvent<{ path: string }>).detail?.path
+      if (!path) return
+      if (openedFileRef.current?.path === path) {
+        setOpenedFile(null)
+      }
+      // Retirer aussi des recents pour qu'il ne réapparaisse pas dans la recherche
+      setRecentFilePaths(prev => prev.filter(p => p !== path))
+    }
+    window.addEventListener('holo:close-file', handler)
+    return () => window.removeEventListener('holo:close-file', handler)
+  }, [setRecentFilePaths])
+
   return (
     <div className="holo-window">
       {onboardingDone === null ? null : !onboardingDone ? (
@@ -584,17 +624,8 @@ export default function App2() {
               contentFontScale={editorFontSize / 100}
               isFavorite={favoriteFilePaths.includes(openedFile.path)}
               onToggleFavorite={() => handleFileFavorite(openedFile.path)}
-              onArchive={async () => {
-                const path = openedFile.path
-                try {
-                  await window.holo?.archivePath(path)
-                  setOpenedFile(null)
-                  window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
-                  void window.holo?.gitAutoSave(null as unknown as string)
-                } catch (err) {
-                  console.error('[App2] Impossible d\'archiver :', err)
-                }
-              }}
+              onArchive={openedFile.path.includes('/.archive/') ? undefined : () => setPendingArchivePath(openedFile.path)}
+              onRestore={openedFile.path.includes('/.archive/') ? () => handleRestoreFile(openedFile.path) : undefined}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-holo-text-faint">
@@ -661,6 +692,48 @@ export default function App2() {
           setSettingsSaved(false)
         }}
       />
+
+      {/* Confirmation d'archivage */}
+      {pendingArchivePath && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg p-6 shadow-[0_24px_80px_rgba(0,0,0,.6)]">
+            <div className="mb-1 flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-holo-lg bg-amber-500/10 text-amber-400">
+                <Archive size={16} />
+              </div>
+              <p className="text-sm font-semibold text-holo-text">Archiver ce fichier ?</p>
+            </div>
+            <p className="mb-5 ml-12 text-xs text-holo-text-faint">
+              « {pendingArchivePath.split('/').at(-1)} » sera déplacé dans l'archive et pourra être restauré.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPendingArchivePath(null)}
+                className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={async () => {
+                  const path = pendingArchivePath
+                  setPendingArchivePath(null)
+                  try {
+                    await window.holo?.archivePath(path)
+                    setOpenedFile(null)
+                    window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
+                    void window.holo?.gitAutoSave(null as unknown as string)
+                  } catch (err) {
+                    console.error('[App2] Impossible d\'archiver :', err)
+                  }
+                }}
+                className="rounded-holo-md bg-amber-500/80 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
+              >
+                Archiver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Recherche modale (Ctrl+K) */}
       <SearchModal

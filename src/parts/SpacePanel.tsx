@@ -37,6 +37,7 @@ type SpacePanelProps = {
   files?: SpaceFileNode[]
   recentItems?: SpacePanelItem[]
   favoriteItems?: SpacePanelItem[]
+  archivedItems?: SpacePanelItem[]
   selectedPath?: string
   rootPath?: string
   /** Métadonnées live du fichier actuellement ouvert (override du cache) */
@@ -262,10 +263,14 @@ function ItemList({
   items,
   emptyTitle,
   emptyDescription,
+  onSelect,
+  archived = false,
 }: {
   items?: SpacePanelItem[]
   emptyTitle: string
   emptyDescription: string
+  onSelect?: (path: string) => void
+  archived?: boolean
 }) {
   if (!items?.length) {
     return <EmptyState icon={FileText} title={emptyTitle} description={emptyDescription} />
@@ -274,15 +279,16 @@ function ItemList({
   return (
     <div className="space-y-1">
       {items?.map((item) => {
-        const ItemIcon = item.icon ?? FileText
+        const ItemIcon = archived ? Archive : (item.icon ?? FileText)
         return (
         <button
           key={item.id}
+          onClick={() => onSelect?.(item.path)}
           className="group w-full rounded-holo-md px-3 py-2 text-left transition hover:bg-holo-glass-hover"
           title={item.path}
         >
           <div className="flex items-center gap-2">
-            <span className="flex size-5 shrink-0 items-center justify-center text-holo-text-faint group-hover:text-holo-text-muted">
+            <span className={cn('flex size-5 shrink-0 items-center justify-center', archived ? 'text-amber-400/60 group-hover:text-amber-400' : 'text-holo-text-faint group-hover:text-holo-text-muted')}>
               <ItemIcon size={14} />
             </span>
             <span className="min-w-0 flex-1 truncate text-sm text-holo-text-muted group-hover:text-holo-text">
@@ -305,6 +311,7 @@ export function SpacePanel({
   files,
   recentItems,
   favoriteItems,
+  archivedItems,
   selectedPath,
   rootPath,
   metaOverride,
@@ -644,11 +651,29 @@ export function SpacePanel({
       )}
 
       {tab === 'recent' && (
-        <ItemList
-          items={recentItems}
-          emptyTitle="Aucun fichier récent"
-          emptyDescription="Les documents ouverts récemment apparaîtront ici."
-        />
+        <div className="space-y-4">
+          <ItemList
+            items={recentItems}
+            emptyTitle="Aucun fichier récent"
+            emptyDescription="Les documents ouverts récemment apparaîtront ici."
+            onSelect={(path) => onSelectFile?.({ id: path, name: getBaseName(path), type: 'file', path })}
+          />
+          {(archivedItems?.length ?? 0) > 0 && (
+            <div>
+              <div className="mb-1.5 flex items-center gap-2 px-1">
+                <Archive size={11} className="text-amber-400/60" />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400/60">Archivés récemment</span>
+              </div>
+              <ItemList
+                items={archivedItems}
+                emptyTitle=""
+                emptyDescription=""
+                onSelect={(path) => onSelectFile?.({ id: path, name: getBaseName(path), type: 'file', path })}
+                archived
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'favorites' && (
@@ -656,6 +681,7 @@ export function SpacePanel({
           items={favoriteItems}
           emptyTitle="Aucun favori"
           emptyDescription="Marque des documents comme favoris pour les retrouver rapidement."
+          onSelect={(path) => onSelectFile?.({ id: path, name: getBaseName(path), type: 'file', path })}
         />
       )}
     </AbstractPanel>
@@ -941,6 +967,18 @@ export function SpaceRoute({
   const { gitState } = useConfig()
   const isGitRepo = gitState.isRepo && gitState.hasRemote
 
+  // ─── Fichiers archivés ────────────────────────────────────────────────────
+  const [archivedEntries, setArchivedEntries] = useState<{ archivedPath: string; name: string }[]>([])
+
+  const refreshArchivedEntries = useCallback(async () => {
+    try {
+      const files = await window.holo?.listArchivedFiles()
+      setArchivedEntries(files?.map(f => ({ archivedPath: f.archivedPath, name: f.name })) ?? [])
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { void refreshArchivedEntries() }, [refreshArchivedEntries])
+
   const handleGitSync = useCallback(async () => {
     try {
       await window.holo?.gitSync()
@@ -965,6 +1003,7 @@ export function SpaceRoute({
         const newPath = `${parent}/${name}`
         onSelectFile?.({ id: newPath, path: newPath, name, type: 'file' })
       }
+      void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de créer :', err)
     }
@@ -975,6 +1014,7 @@ export function SpaceRoute({
       await window.holo?.movePath(sourcePath, targetFolderPath)
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de déplacer :', err)
     }
@@ -985,6 +1025,7 @@ export function SpaceRoute({
       await window.holo?.renamePath(path, newName)
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de renommer :', err)
     }
@@ -995,6 +1036,7 @@ export function SpaceRoute({
       await window.holo?.deletePath(path)
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      window.dispatchEvent(new CustomEvent('holo:close-file', { detail: { path } }))
       // Git : stage la suppression et synchronise
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
@@ -1007,16 +1049,23 @@ export function SpaceRoute({
       await window.holo?.archivePath(path)
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      window.dispatchEvent(new CustomEvent('holo:close-file', { detail: { path } }))
+      void refreshArchivedEntries()
       // Git : stage le déplacement vers l'archive et synchronise
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible d\'archiver :', err)
     }
-  }, [setTree])
+  }, [setTree, refreshArchivedEntries])
 
   const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null)
   const requestDeleteItem = useCallback((path: string) => {
     setPendingDeletePath(path)
+  }, [])
+
+  const [pendingArchivePath, setPendingArchivePath] = useState<string | null>(null)
+  const requestArchiveItem = useCallback((path: string) => {
+    setPendingArchivePath(path)
   }, [])
 
   // Écoute l'événement de rafraîchissement déclenché depuis l'extérieur (ex: archive depuis EditorFrame)
@@ -1073,6 +1122,20 @@ export function SpaceRoute({
     [favoriteFilePaths, folderPath, fileMetaByPath],
   )
 
+  const archivedItems = useMemo(
+    () =>
+      archivedEntries
+        .filter((e) => folderPath === null || e.archivedPath.includes(folderPath ? getBaseName(folderPath) : ''))
+        .slice(0, 10)
+        .map((e) => ({
+          id: e.archivedPath,
+          title: e.name.replace(/\.md$/i, ''),
+          path: e.archivedPath,
+          subtitle: '.archive/' + e.name,
+        } satisfies SpacePanelItem)),
+    [archivedEntries, folderPath],
+  )
+
   return (
     <>
       <SpacePanel
@@ -1080,6 +1143,7 @@ export function SpaceRoute({
         files={files}
         recentItems={recentItems}
         favoriteItems={favoriteItems}
+        archivedItems={archivedItems}
         selectedPath={selectedFilePath}
         metaOverride={metaOverride}
         onSelectFile={onSelectFile}
@@ -1087,7 +1151,7 @@ export function SpaceRoute({
         onMoveItem={handleMoveItem}
         onRenameItem={handleRenameItem}
         onDeleteItem={requestDeleteItem}
-        onArchiveItem={handleArchiveItem}
+        onArchiveItem={requestArchiveItem}
         rootPath={folderPath ?? undefined}
         isFavorite={isFavorite}
         onToggleFavorite={onToggleFavorite}
@@ -1099,6 +1163,37 @@ export function SpaceRoute({
         favoriteFilePaths={favoriteFilePaths}
         onToggleFileFavorite={onToggleFileFavorite}
       />
+
+      {/* Confirmation d'archivage */}
+      {pendingArchivePath && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg p-6 shadow-[0_24px_80px_rgba(0,0,0,.6)]">
+            <div className="mb-1 flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-holo-lg bg-amber-500/10 text-amber-400">
+                <Archive size={16} />
+              </div>
+              <p className="text-sm font-semibold text-holo-text">Archiver ce fichier ?</p>
+            </div>
+            <p className="mb-5 ml-12 text-xs text-holo-text-faint">
+              « {getBaseName(pendingArchivePath)} » sera déplacé dans l'archive et pourra être restauré.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPendingArchivePath(null)}
+                className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => { void handleArchiveItem(pendingArchivePath); setPendingArchivePath(null) }}
+                className="rounded-holo-md bg-amber-500/80 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-500"
+              >
+                Archiver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation de suppression */}
       {pendingDeletePath && (

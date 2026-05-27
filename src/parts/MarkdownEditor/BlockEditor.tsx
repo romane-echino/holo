@@ -16,6 +16,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import { ParagraphBlock } from './blocks/ParagraphBlock'
 import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
@@ -23,15 +24,19 @@ import { ListBlock } from './blocks/ListBlock'
 import { CodeBlock } from './blocks/CodeBlock'
 import { BlockquoteBlock } from './blocks/BlockquoteBlock'
 import { ImageBlock } from './blocks/ImageBlock'
+import { MathBlock } from './blocks/MathBlock'
+import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
 import { cn } from '../../utils/global'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode } from './lib/types'
+import type { MathNode } from './blocks/MathBlock'
+import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
 import type { InlineEditorHandle } from './InlineEditor'
 
 // ─── Singletons remark ──────────────────────────────────────────────────────
 
-const parser = unified().use(remarkParse).use(remarkGfm)
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath)
 
 // Plugin de sérialisation pour les nœuds <underline> → <u>...</u> dans le markdown
 function remarkUnderlinePlugin(this: any) {
@@ -51,6 +56,7 @@ function remarkUnderlinePlugin(this: any) {
 const serializer = unified()
   .use(remarkStringify, { bullet: '-', fence: '`', strong: '*', emphasis: '_' })
   .use(remarkGfm)
+  .use(remarkMath)
   .use(remarkUnderlinePlugin)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -75,6 +81,13 @@ function markdownToBlocks(markdown: string): BlockState[] {
       const listNode = { ...children[i + 1], data: { ...(children[i + 1].data ?? {}), listStyle: 'alpha' } }
       result.push({ id: newId(), node: convertHtmlUnderline(listNode) })
       i++ // sauter la liste (déjà consommée)
+    } else if (
+      // $$formula$$ sur une ligne → parsé en inlineMath dans un paragraphe → convertir en bloc math
+      node.type === 'paragraph' &&
+      node.children?.length === 1 &&
+      node.children[0].type === 'inlineMath'
+    ) {
+      result.push({ id: newId(), node: { type: 'math', value: node.children[0].value, meta: null } as unknown as BlockNode })
     } else {
       result.push({ id: newId(), node: convertHtmlUnderline(node) })
     }
@@ -178,23 +191,28 @@ export interface BlockEditorProps {
 export function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps) {
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
-  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
-  const selectedBlockIdsRef = useRef<Set<string>>(new Set())
-  selectedBlockIdsRef.current = selectedBlockIds
-  const lastSelectedRef = useRef<string | null>(null)
+  const [selectedBlockIds] = useState<Set<string>>(new Set())
+  const selectedBlockIds_unused = selectedBlockIds // kept for type compat
+  void selectedBlockIds_unused
 
   // Refs impératifs vers chaque InlineEditor — pour la navigation inter-blocs
   const blockRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
 
-  // Ref pour le focus différé après commit DOM (évite race condition avec setTimeout)
+  // Ref pour focus différé + slash command différée (bouton +)
   const pendingFocusRef = useRef<string | null>(null)
+  const pendingSlashRef = useRef<string | null>(null)
 
   useLayoutEffect(() => {
     if (!pendingFocusRef.current) return
     const handle = blockRefs.current.get(pendingFocusRef.current)
-    if (!handle) return  // nouveau bloc pas encore monté — prochain render réessaiera
+    if (!handle) return
+    const slashId = pendingSlashRef.current
     pendingFocusRef.current = null
     handle.focus()
+    if (slashId) {
+      pendingSlashRef.current = null
+      setSlashCommand({ blockId: slashId })
+    }
   })
 
   // Lecture synchrone des blocs — évite de fermer sur des états stales dans les handlers
@@ -355,7 +373,17 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
     (id: string, cursorX: number) => {
       const prev = blocksRef.current
       const idx = prev.findIndex((b) => b.id === id)
-      if (idx === -1 || idx === prev.length - 1) return
+      if (idx === -1) return
+      // Si c'est le dernier bloc ET que c'est un tableau, créer un paragraphe vide après
+      if (idx === prev.length - 1) {
+        if (prev[idx].node.type === 'table') {
+          const newBlock = freshParagraph()
+          pendingFocusRef.current = newBlock.id
+          blocksDirtyRef.current = true
+          setBlocks((s) => [...s, newBlock])
+        }
+        return
+      }
       const targetId = prev[idx + 1].id
       setTimeout(() => blockRefs.current.get(targetId)?.focus({ type: 'arrow', x: cursorX, edge: 'top' }), 0)
     },
@@ -407,13 +435,18 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
               children: [{ type: 'paragraph' as const, children: line }],
             })),
           } as ListNode
+        } else if (targetType === 'math') {
+          newNode = { type: 'math', value: '', meta: null } as unknown as BlockNode
+        } else if (targetType.startsWith('math-value:')) {
+          const formula = targetType.slice('math-value:'.length)
+          newNode = { type: 'math', value: formula, meta: null } as unknown as BlockNode
         } else {
           return prev
         }
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
-        // Si le tableau/liste est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist') && idx === prev.length - 1) {
+        // Si tableau/liste/math est inséré en dernière position, ajouter un paragraphe vide
+        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:')) && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
         console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
@@ -462,48 +495,17 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
 
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // ─── Sélection multi-blocs ────────────────────────────────────────────────
-
-  const handleBlockSelect = useCallback((id: string, shift: boolean) => {
-    setSelectedBlockIds((prev) => {
-      const next = new Set(prev)
-      if (shift && lastSelectedRef.current) {
-        const allBlocks = blocksRef.current
-        const fromIdx = allBlocks.findIndex((b) => b.id === lastSelectedRef.current)
-        const toIdx = allBlocks.findIndex((b) => b.id === id)
-        if (fromIdx !== -1 && toIdx !== -1) {
-          const [start, end] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx]
-          for (let i = start; i <= end; i++) next.add(allBlocks[i].id)
-          return next
-        }
-      }
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      lastSelectedRef.current = id
-      return next
-    })
-  }, [])
-
-  const handleDeleteSelected = useCallback(() => {
-    const toDelete = selectedBlockIdsRef.current
-    if (toDelete.size === 0) return
+  // Bouton + dans la marge : insère un paragraphe vide après le bloc et ouvre le slash command
+  const handleInsertAndSlash = useCallback((id: string) => {
+    const newBlock = freshParagraph()
+    pendingFocusRef.current = newBlock.id
+    pendingSlashRef.current = newBlock.id
     blocksDirtyRef.current = true
-    setBlocks((current) => {
-      const remaining = current.filter((b) => !toDelete.has(b.id))
-      return remaining.length > 0 ? remaining : [freshParagraph()]
+    setBlocks((prev) => {
+      const idx = prev.findIndex((b) => b.id === id)
+      if (idx === -1) return [...prev, newBlock]
+      return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
     })
-    setSelectedBlockIds(new Set())
-  }, [])
-
-  // Escape → désélectionner tous les blocs
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && selectedBlockIdsRef.current.size > 0) {
-        setSelectedBlockIds(new Set())
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   // Ctrl+A → sélectionne tout le contenu de tous les blocs
@@ -522,29 +524,6 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
 
   return (
     <div ref={containerRef} data-testid="block-editor" className={cn('holo-markdown', className)} style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined} onKeyDown={handleContainerKeyDown}>
-      {selectedBlockIds.size > 0 && (
-        <div className="mb-3 flex items-center justify-between rounded-holo-lg border border-holo-primary/30 bg-holo-primary-surface/20 px-3 py-2 text-xs">
-          <span className="text-holo-text-muted">
-            {selectedBlockIds.size} bloc{selectedBlockIds.size > 1 ? 's' : ''} sélectionné{selectedBlockIds.size > 1 ? 's' : ''}
-          </span>
-          <div className="flex items-center gap-3">
-            <button
-              onMouseDown={(e) => { e.preventDefault(); setSelectedBlockIds(new Set()) }}
-              className="flex items-center gap-1 text-holo-text-faint transition-colors hover:text-holo-text"
-            >
-              <X size={11} />
-              <span>Annuler</span>
-            </button>
-            <button
-              onMouseDown={(e) => { e.preventDefault(); handleDeleteSelected() }}
-              className="flex items-center gap-1 text-red-400 transition-colors hover:text-red-300"
-            >
-              <Trash2 size={11} />
-              <span>Supprimer</span>
-            </button>
-          </div>
-        </div>
-      )}
       {blocks.map((block, idx) => (
         <div
           key={block.id}
@@ -552,26 +531,20 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
           id={block.node.type === 'heading' ? 'heading-' + (block.node as HeadingNode).children.map((n: InlineNode) => ('value' in n ? (n as any).value : '')).join('').toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') : undefined}
           className={cn(
             'group/block relative',
-            selectedBlockIds.has(block.id) && 'rounded-sm bg-holo-primary-surface/15 outline outline-1 outline-holo-primary/20',
           )}
         >
-          {/* Sélecteur de bloc */}
+          {/* Bouton + dans la marge */}
           <div
-            className={cn(
-              'absolute -left-5 top-1 flex cursor-pointer items-center justify-center transition-opacity',
-              selectedBlockIds.has(block.id) ? 'opacity-100' : 'opacity-0 group-hover/block:opacity-40 hover:!opacity-100',
-            )}
-            onMouseDown={(e) => { e.preventDefault(); handleBlockSelect(block.id, e.shiftKey) }}
-            title="Sélectionner le bloc"
+            className="absolute -left-7 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover/block:opacity-100"
           >
-            <div
-              className={cn(
-                'size-3.5 rounded-sm border transition-colors',
-                selectedBlockIds.has(block.id)
-                  ? 'border-holo-primary-soft bg-holo-primary-soft'
-                  : 'border-holo-border-muted bg-transparent',
-              )}
-            />
+            <button
+              onMouseDown={(e) => { e.preventDefault(); handleInsertAndSlash(block.id) }}
+              className="flex size-5 items-center justify-center rounded-full border border-holo-border-soft bg-holo-bg text-holo-text-faint shadow-sm transition hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft"
+              title="Insérer un bloc"
+              aria-label="Insérer un bloc"
+            >
+              <span className="text-xs leading-none">+</span>
+            </button>
           </div>
           <BlockDispatcher
             block={block}
@@ -590,6 +563,7 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
             onSlashCommand={() => handleSlashCommand(block.id)}
             onSplit={(after) => handleSplit(block.id, after)}
             onSmartPaste={(before, after, md) => handleSmartPaste(block.id, before, after, md)}
+            onTabExit={() => handleArrowDown(block.id, 0)}
           />
         </div>
       ))}
@@ -621,6 +595,7 @@ function BlockDispatcher({
   onSlashCommand,
   onSplit,
   onSmartPaste,
+  onTabExit,
 }: {
   block: BlockState
   blockRef: React.Ref<InlineEditorHandle>
@@ -635,6 +610,7 @@ function BlockDispatcher({
   onSlashCommand: () => void
   onSplit: (after: InlineNode[]) => void
   onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
+  onTabExit: () => void
 }) {
   switch (block.node.type) {
     case 'paragraph': {
@@ -689,6 +665,7 @@ function BlockDispatcher({
           onChange={(node) => onChange(node)}
           onArrowUp={onArrowUp}
           onArrowDown={onArrowDown}
+          onTabExit={onTabExit}
         />
       )
 
@@ -716,6 +693,25 @@ function BlockDispatcher({
 
     case 'thematicBreak':
       return <hr className="my-6 border-holo-border-soft" />
+
+    case 'math':
+      return (
+        <MathBlock
+          ref={blockRef}
+          node={block.node as unknown as MathNode}
+          onChange={(node) => onChange(node as unknown as BlockNode)}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
+        />
+      )
+
+    case 'footnoteDefinition':
+      return (
+        <FootnoteBlock
+          ref={blockRef}
+          node={block.node as unknown as FootnoteDefinitionNode}
+        />
+      )
 
     default:
       return (

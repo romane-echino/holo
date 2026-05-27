@@ -127,10 +127,12 @@ export interface TableBlockProps {
   onChange: (node: TableNode) => void
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
+  /** Appelé quand Tab est pressé depuis la dernière cellule. Si fourni, focus le bloc suivant plutôt que d'ajouter une ligne. */
+  onTabExit?: () => void
 }
 
 export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
-  function TableBlock({ node, onChange, onArrowUp, onArrowDown }, ref) {
+  function TableBlock({ node, onChange, onArrowUp, onArrowDown, onTabExit }, ref) {
     const [table, setTable] = useState<InternalTable>(() => nodeToInternal(node))
     // Ref toujours synchronisé avec table pour éviter les closures périmées
     const tableRef = useRef(table)
@@ -327,6 +329,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           e.preventDefault()
           if (colIdx < columns.length - 1) focusCell(rowIdx, colIdx + 1)
           else if (rowIdx < rows.length - 1) focusCell(rowIdx + 1, 0)
+          else if (onTabExit) onTabExit()
           else addRowAt(rows.length)
           return
         }

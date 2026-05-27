@@ -430,6 +430,18 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       e.preventDefault()
       const el = divRef.current
       const blockIsEmpty = !el?.textContent?.trim()
+      // $$ seul ou $$formule$$ → convertit en bloc LaTeX
+      if (el && onConvert) {
+        const text = el.textContent?.trim() ?? ''
+        const isClosedMath = text.startsWith('$$') && text.endsWith('$$') && text.length > 4
+        const isOpenMath = text === '$$'
+        if (isClosedMath || isOpenMath) {
+          const formula = isClosedMath ? text.slice(2, -2).trim() : ''
+          el.textContent = ''
+          onConvert('math-value:' + formula, [])
+          return
+        }
+      }
       if (!blockIsEmpty && isAtStart() && onEnterAtStart) {
         save()
         onEnterAtStart()

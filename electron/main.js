@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename)
 const isDev = !app.isPackaged
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
+const knownRootPaths = new Set() // tous les espaces jamais ouverts (pour la lecture cross-espace)
 const MAX_RECENT_FOLDERS = 10
 const ARCHIVE_DIR_NAME = '.archive'
 let updateState = { available: false, downloading: false, ready: false }
@@ -164,6 +165,15 @@ function isPathInsideRoot(targetPath) {
 
   const relative = path.relative(currentRootPath, targetPath)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function isPathInsideAnyKnownRoot(targetPath) {
+  if (isPathInsideRoot(targetPath)) return true
+  for (const root of knownRootPaths) {
+    const relative = path.relative(root, targetPath)
+    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return true
+  }
+  return false
 }
 
 function assertPathInsideRoot(targetPath) {
@@ -1130,6 +1140,7 @@ ipcMain.handle('fs:open-folder', async () => {
   }
 
   currentRootPath = result.filePaths[0]
+  knownRootPaths.add(currentRootPath)
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
@@ -1182,6 +1193,7 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
   }
 
   currentRootPath = cloneTargetPath
+  knownRootPaths.add(currentRootPath)
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
@@ -1239,6 +1251,7 @@ ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
   }
 
   currentRootPath = targetPath
+  knownRootPaths.add(currentRootPath)
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
@@ -1448,13 +1461,23 @@ ipcMain.handle('app:open-file-in-new-window', async (_event, payload) => {
 
 ipcMain.handle('fs:refresh-tree', async () => getCurrentTreePayload())
 
+ipcMain.handle('fs:register-known-roots', (_event, paths) => {
+  if (Array.isArray(paths)) { for (const p of paths) if (typeof p === 'string') knownRootPaths.add(p) }
+  return { ok: true }
+})
+
 ipcMain.handle('fs:read-file', async (_event, filePath) => {
-  assertPathInsideRoot(filePath)
+  // Autoriser la lecture dans tous les espaces connus (pour la recherche cross-espace)
+  if (!isPathInsideAnyKnownRoot(filePath)) {
+    throw new Error('Chemin hors du dossier ouvert.')
+  }
   return fs.readFile(filePath, 'utf8')
 })
 
 ipcMain.handle('fs:read-file-optional', async (_event, filePath) => {
-  assertPathInsideRoot(filePath)
+  if (!isPathInsideAnyKnownRoot(filePath)) {
+    throw new Error('Chemin hors du dossier ouvert.')
+  }
   try {
     return await fs.readFile(filePath, 'utf8')
   } catch (error) {
@@ -1497,6 +1520,38 @@ ipcMain.handle('fs:create-directory', async (_event, parentDirectoryPath, name) 
   assertPathInsideRoot(targetPath)
   await fs.mkdir(targetPath)
   return { ok: true }
+})
+
+ipcMain.handle('fs:scan-md-files', async (_event, folderPath) => {
+  try {
+    const stat = await fs.stat(folderPath).catch(() => null)
+    if (!stat?.isDirectory()) return []
+    async function scanDir(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+      const results = []
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue // ignorer les dossiers cachés (.archive, .git, etc.)
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          results.push(...(await scanDir(fullPath)))
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+          results.push(fullPath)
+        }
+      }
+      return results
+    }
+    return await scanDir(folderPath)
+  } catch { return [] }
+})
+
+ipcMain.handle('fs:filter-existing-paths', async (_event, paths) => {
+  if (!Array.isArray(paths)) return []
+  const results = await Promise.all(
+    paths.map(async (p) => {
+      try { await fs.access(p); return p } catch { return null }
+    })
+  )
+  return results.filter(Boolean)
 })
 
 ipcMain.handle('fs:delete-path', async (_event, targetPath) => {
@@ -2231,6 +2286,9 @@ app.whenReady().then(async () => {
 
   // Purge unique au démarrage des dossiers récents invalides
   cleanupRecentFolders().catch(() => {})
+
+  // Pré-charger tous les espaces récents dans knownRootPaths (pour la lecture cross-espace)
+  getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => {})
 
   try {
     if (app.isPackaged) {

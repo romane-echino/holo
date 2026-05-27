@@ -135,7 +135,9 @@ interface HoloApi {
   listArchivedFiles: () => Promise<HoloArchivedFileEntry[]>
   restoreArchivedPath: (archivedPath: string) => Promise<{ ok: true; archivedPath: string; restoredPath: string }>
   deletePath: (targetPath: string) => Promise<{ ok: true }>
-  renamePath: (
+  filterExistingPaths: (paths: string[]) => Promise<string[]>
+  scanMdFiles: (folderPath: string) => Promise<string[]>
+  registerKnownRoots: (paths: string[]) => Promise<{ ok: boolean }>
     targetPath: string,
     newName: string,
   ) => Promise<{ ok: true; newPath: string }>
