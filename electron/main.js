@@ -62,14 +62,22 @@ async function keepOnlyExistingDirectories(folderPaths) {
 }
 
 async function getRecentFolders() {
+  // Retourne la liste brute sans purge — la purge des dossiers manquants
+  // ne s'effectue qu'au démarrage via cleanupRecentFolders() pour éviter
+  // que des dossiers temporairement inaccessibles (réseau, montage…) soient
+  // supprimés définitivement lors d'une simple lecture.
+  const rawFolders = await readRecentFoldersRaw()
+  return rawFolders.slice(0, MAX_RECENT_FOLDERS)
+}
+
+// Appelée une seule fois au démarrage pour supprimer les entrées invalides.
+async function cleanupRecentFolders() {
   const rawFolders = await readRecentFoldersRaw()
   const existingFolders = await keepOnlyExistingDirectories(rawFolders)
   const trimmed = existingFolders.slice(0, MAX_RECENT_FOLDERS)
-
   if (JSON.stringify(trimmed) !== JSON.stringify(rawFolders)) {
     await writeRecentFolders(trimmed)
   }
-
   return trimmed
 }
 
@@ -1715,14 +1723,36 @@ ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail
   const isRepo = await isGitRepository(cwd)
   if (!isRepo) return { ok: true, committed: false, reason: 'not-a-repo' }
 
-  // Stage seulement ce fichier
-  const relPath = path.relative(cwd, filePath)
-  const addResult = await runGit(['add', '--', relPath], cwd)
-  if (!addResult.ok) return { ok: false, committed: false, reason: 'add-failed', error: addResult.stderr }
+  // Si filePath est null/vide → stage tout (utilisé après suppression/déplacement)
+  if (!filePath) {
+    const addResult = await runGit(['add', '-A'], cwd)
+    if (!addResult.ok) return { ok: false, committed: false, reason: 'add-failed', error: addResult.stderr }
+  } else {
+    // Stage seulement ce fichier
+    const relPath = path.relative(cwd, filePath)
+    const addResult = await runGit(['add', '--', relPath], cwd)
+    if (!addResult.ok) return { ok: false, committed: false, reason: 'add-failed', error: addResult.stderr }
+  }
 
   // Vérifie s'il y a des changements à committer
   const diffResult = await runGit(['diff', '--cached', '--quiet'], cwd)
-  if (diffResult.ok) return { ok: true, committed: false, reason: 'nothing-to-commit' }
+  if (diffResult.ok) {
+    // Rien à committer — mais il peut y avoir des commits locaux en attente à pousser
+    const { outgoing } = await getAheadBehind(cwd).catch(() => ({ outgoing: 0 }))
+    if (outgoing === 0) return { ok: true, committed: false, pushed: false, reason: 'nothing-to-commit' }
+    // Pousser les commits en attente
+    const pushResult = await runGit(['push'], cwd)
+    if (!pushResult.ok) {
+      // Essayer de configurer l'upstream si nécessaire
+      const branchName = await getCurrentBranch(cwd)
+      if (branchName && /set-upstream|no upstream/i.test(pushResult.stderr + pushResult.stdout)) {
+        const upstreamResult = await runGit(['push', '--set-upstream', 'origin', branchName], cwd)
+        if (upstreamResult.ok) return { ok: true, committed: false, pushed: true }
+      }
+      return { ok: true, committed: false, pushed: false, pushError: pushResult.stderr || 'Push échoué' }
+    }
+    return { ok: true, committed: false, pushed: true }
+  }
 
   const args = ['commit', '--no-gpg-sign', '-m', 'Enregistrement automatique']
   const name = (authorName ?? '').trim()
@@ -1732,12 +1762,29 @@ ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail
   const commitResult = await runGit(args, cwd)
   if (!commitResult.ok) {
     if (/nothing to commit/i.test(commitResult.stdout + commitResult.stderr)) {
-      return { ok: true, committed: false, reason: 'nothing-to-commit' }
+      return { ok: true, committed: false, pushed: false, reason: 'nothing-to-commit' }
     }
-    return { ok: false, committed: false, reason: 'commit-failed', error: commitResult.stderr }
+    return { ok: false, committed: false, pushed: false, reason: 'commit-failed', error: commitResult.stderr }
   }
 
-  return { ok: true, committed: true }
+  // Tenter le push après commit
+  const hasOrigin = await hasRemoteNamed(cwd, 'origin')
+  if (!hasOrigin) {
+    return { ok: true, committed: true, pushed: false, reason: 'no-remote' }
+  }
+
+  const pushResult = await runGit(['push'], cwd)
+  if (!pushResult.ok) {
+    // Essayer de configurer l'upstream si nécessaire
+    const branchName = await getCurrentBranch(cwd)
+    if (branchName && /set-upstream|no upstream/i.test(pushResult.stderr + pushResult.stdout)) {
+      const upstreamResult = await runGit(['push', '--set-upstream', 'origin', branchName], cwd)
+      if (upstreamResult.ok) return { ok: true, committed: true, pushed: true }
+    }
+    return { ok: true, committed: true, pushed: false, pushError: pushResult.stderr || 'Push échoué' }
+  }
+
+  return { ok: true, committed: true, pushed: true }
 })
 
 ipcMain.handle('holo:read-repo-config', async () => {
@@ -2181,6 +2228,9 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
+
+  // Purge unique au démarrage des dossiers récents invalides
+  cleanupRecentFolders().catch(() => {})
 
   try {
     if (app.isPackaged) {

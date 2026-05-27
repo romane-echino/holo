@@ -20,10 +20,13 @@ import { ParagraphBlock } from './blocks/ParagraphBlock'
 import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
 import { ListBlock } from './blocks/ListBlock'
+import { CodeBlock } from './blocks/CodeBlock'
+import { BlockquoteBlock } from './blocks/BlockquoteBlock'
+import { ImageBlock } from './blocks/ImageBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
 import { cn } from '../../utils/global'
-import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode } from './lib/types'
+import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode } from './lib/types'
 import type { InlineEditorHandle } from './InlineEditor'
 
 // ─── Singletons remark ──────────────────────────────────────────────────────
@@ -546,6 +549,7 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
         <div
           key={block.id}
           data-block-id={block.id}
+          id={block.node.type === 'heading' ? 'heading-' + (block.node as HeadingNode).children.map((n: InlineNode) => ('value' in n ? (n as any).value : '')).join('').toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') : undefined}
           className={cn(
             'group/block relative',
             selectedBlockIds.has(block.id) && 'rounded-sm bg-holo-primary-surface/15 outline outline-1 outline-holo-primary/20',
@@ -633,11 +637,16 @@ function BlockDispatcher({
   onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
 }) {
   switch (block.node.type) {
-    case 'paragraph':
+    case 'paragraph': {
+      // Un paragraphe ne contenant qu'une image → rendu comme ImageBlock (évite perte lors du blur)
+      const para = block.node as ParagraphNode
+      if (para.children.length === 1 && para.children[0].type === 'image') {
+        return <ImageBlock node={para.children[0] as ImageNode} />
+      }
       return (
         <ParagraphBlock
           ref={blockRef}
-          node={block.node as ParagraphNode}
+          node={para}
           onChange={(node) => onChange(node)}
           onEnterAtStart={onEnterAtStart}
           onEnterAtEnd={onEnterAtEnd}
@@ -651,6 +660,7 @@ function BlockDispatcher({
           alwaysShowPlaceholder={isFirst}
         />
       )
+    }
 
     case 'heading':
       return (
@@ -694,6 +704,18 @@ function BlockDispatcher({
           onBackspaceAtStart={onBackspaceAtStart}
         />
       )
+
+    case 'code':
+      return <CodeBlock node={block.node as CodeNode} />
+
+    case 'blockquote':
+      return <BlockquoteBlock node={block.node as BlockquoteNode} />
+
+    case 'image':
+      return <ImageBlock node={block.node as ImageNode} />
+
+    case 'thematicBreak':
+      return <hr className="my-6 border-holo-border-soft" />
 
     default:
       return (

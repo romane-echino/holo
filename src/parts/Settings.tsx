@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Bot,
   Check,
@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '../utils/global'
+import { CHANGELOG_ENTRIES } from '../constants/changelog'
 
 type SettingsTab = 'profile' | 'storage' | 'ai' | 'appearance' | 'about'
 
@@ -44,9 +45,6 @@ export type HoloSettingsDialogProps = {
 }
 
 const defaultValue: HoloSettingsValue = {
-  firstName: 'Maria',
-  lastName: 'Bernasconi',
-  gitEmail: 'maria@example.com',
   imageStorageMode: 'azure',
   azureContainerUrl: '',
   azureSasToken: '',
@@ -211,6 +209,13 @@ export function HoloSettingsDialog({
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
   const [draft, setDraft] = useState<HoloSettingsValue>({ ...defaultValue, ...value })
 
+  // Resynchronise le draft depuis value à chaque ouverture du dialog
+  // (le composant reste monté quand fermé, donc useState n'est pas réinitialisé)
+  useEffect(() => {
+    if (open) setDraft({ ...defaultValue, ...value })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   const activeTabMeta = useMemo(() => tabs.find((tab) => tab.id === activeTab) ?? tabs[0], [activeTab])
 
   if (!open) return null
@@ -322,7 +327,7 @@ export function HoloSettingsDialog({
                     <input
                       value={draft.firstName ?? ''}
                       onChange={(event) => update({ firstName: event.target.value })}
-                      placeholder="Stéphane"
+                      placeholder="Maria"
                       className={inputClassName}
                     />
                   </Field>
@@ -331,7 +336,7 @@ export function HoloSettingsDialog({
                     <input
                       value={draft.lastName ?? ''}
                       onChange={(event) => update({ lastName: event.target.value })}
-                      placeholder="Nom"
+                      placeholder="Bernasconi"
                       className={inputClassName}
                     />
                   </Field>
@@ -341,7 +346,7 @@ export function HoloSettingsDialog({
                   <input
                     value={draft.gitEmail ?? ''}
                     onChange={(event) => update({ gitEmail: event.target.value })}
-                    placeholder="stephane@example.com"
+                    placeholder="maria@example.com"
                     className={inputClassName}
                   />
                 </Field>
@@ -475,15 +480,23 @@ export function HoloSettingsDialog({
 
                 <div className="rounded-holo-xl border border-holo-border-soft bg-holo-glass p-4">
                   <p className="text-sm font-medium text-holo-text">Changelog</p>
-                  <div className="mt-3 space-y-2 text-sm text-holo-text-muted">
-                    <div className="flex items-center justify-between rounded-holo-md bg-white/[0.025] px-3 py-2">
-                      <span>v0.2.8</span>
-                      <span className="text-xs text-holo-text-faint">2026-05-07</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-holo-md bg-white/[0.025] px-3 py-2">
-                      <span>v0.2.7</span>
-                      <span className="text-xs text-holo-text-faint">2026-04-30</span>
-                    </div>
+                  <div className="mt-3 space-y-4 text-sm text-holo-text-muted">
+                    {CHANGELOG_ENTRIES.map((entry) => (
+                      <div key={entry.version}>
+                        <div className="flex items-center justify-between rounded-holo-md bg-white/[0.025] px-3 py-2">
+                          <span className="font-medium">v{entry.version}</span>
+                          <span className="text-xs text-holo-text-faint">{entry.releasedAt}</span>
+                        </div>
+                        <ul className="mt-1.5 space-y-1 pl-3">
+                          {entry.items.map((item, i) => (
+                            <li key={i} className="flex gap-2 text-xs text-holo-text-faint">
+                              <span className="mt-0.5 shrink-0 text-holo-primary-soft">•</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </Section>

@@ -19,6 +19,7 @@ import {
   type ElementType,
   type KeyboardEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
@@ -136,6 +137,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     tableRef.current = table
     const [activeCell, setActiveCell] = useState<{ rowId: string; colId: string } | null>(null)
     const [activeColMenu, setActiveColMenu] = useState<string | null>(null)
+    const [colMenuPos, setColMenuPos] = useState<{ top: number; left: number } | null>(null)
     const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
 
     const cellRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map())
@@ -503,7 +505,21 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
                         <button
                           onMouseDown={(e) => e.stopPropagation()}
-                          onClick={() => setActiveColMenu((v) => (v === col.id ? null : col.id))}
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            if (activeColMenu === col.id) {
+                              setActiveColMenu(null)
+                              setColMenuPos(null)
+                            } else {
+                              const menuW = 208 // w-52
+                              const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8))
+                              const top = rect.bottom + 4 + menuW > window.innerHeight
+                                ? rect.top - menuW - 4
+                                : rect.bottom + 4
+                              setColMenuPos({ top, left })
+                              setActiveColMenu(col.id)
+                            }
+                          }}
                           className={cn(
                             'absolute right-1 flex size-7 shrink-0 items-center justify-center rounded-holo-sm text-holo-text-faint opacity-0 transition hover:bg-holo-glass-hover hover:text-holo-text',
                             'group-hover/table:opacity-100',
@@ -514,10 +530,11 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                           <ChevronDown size={13} />
                         </button>
 
-                        {activeColMenu === col.id && (
+                        {activeColMenu === col.id && colMenuPos && createPortal(
                           <div
                             ref={menuRef}
-                            className="absolute right-1 top-11 z-40 w-52 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 text-left shadow-[0_18px_70px_rgba(0,0,0,.42)] backdrop-blur-2xl"
+                            style={{ position: 'fixed', top: colMenuPos.top, left: colMenuPos.left }}
+                            className="z-[9999] w-52 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 text-left shadow-[0_18px_70px_rgba(0,0,0,.42)] backdrop-blur-2xl"
                             onKeyDown={(e) => e.key === 'Escape' && setActiveColMenu(null)}
                           >
                             <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-holo-text-faint">
@@ -568,7 +585,8 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             >
                               <Trash2 size={13} /> Supprimer
                             </button>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </div>
 

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { ArrowLeft, Archive, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor } from './MarkdownEditor/BlockEditor'
@@ -16,9 +17,13 @@ type EditorFrameProps = {
   onToggleInspector?: () => void
   onShare?: () => void
   onMore?: () => void
-  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
+  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  saveErrorMsg?: string
   onMobileBack?: () => void
   contentFontScale?: number
+  isFavorite?: boolean
+  onToggleFavorite?: () => void
+  onArchive?: () => void
 }
 
 function filenameFromPath(filepath: string) {
@@ -94,6 +99,26 @@ function EditableText({
   )
 }
 
+// ─── Couleurs de tags ──────────────────────────────────────────────────────────
+
+const TAG_PALETTE = [
+  { bg: 'rgba(123, 97, 255, 0.15)', text: 'rgba(180, 160, 255, 0.95)', border: 'rgba(123, 97, 255, 0.3)' }, // violet
+  { bg: 'rgba(59, 130, 246, 0.15)', text: 'rgba(147, 197, 253, 0.95)', border: 'rgba(59, 130, 246, 0.3)' }, // blue
+  { bg: 'rgba(6, 182, 212, 0.15)',  text: 'rgba(103, 232, 249, 0.95)', border: 'rgba(6, 182, 212, 0.3)' },  // cyan
+  { bg: 'rgba(16, 185, 129, 0.15)', text: 'rgba(110, 231, 183, 0.95)', border: 'rgba(16, 185, 129, 0.3)' }, // teal
+  { bg: 'rgba(245, 158, 11, 0.15)', text: 'rgba(253, 211, 77, 0.95)',  border: 'rgba(245, 158, 11, 0.3)' }, // amber
+  { bg: 'rgba(249, 115, 22, 0.15)', text: 'rgba(253, 186, 116, 0.95)', border: 'rgba(249, 115, 22, 0.3)' }, // orange
+  { bg: 'rgba(236, 72, 153, 0.15)', text: 'rgba(249, 168, 212, 0.95)', border: 'rgba(236, 72, 153, 0.3)' }, // pink
+  { bg: 'rgba(239, 68, 68, 0.15)',  text: 'rgba(252, 165, 165, 0.95)', border: 'rgba(239, 68, 68, 0.3)' },  // red
+] as const
+
+function tagColor(tag: string) {
+  const key = tag.slice(0, 2).toLowerCase()
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0xffff
+  return TAG_PALETTE[h % TAG_PALETTE.length]
+}
+
 function TagsMetaField({
   tags,
   onChange,
@@ -135,9 +160,18 @@ function TagsMetaField({
       <span className="text-[10px] uppercase tracking-wide text-holo-text-faint">Tags</span>
       {tags.length > 0
         ? <span className="flex flex-wrap gap-1">
-            {tags.map((t) => (
-              <span key={t} className="rounded-full bg-holo-glass px-1.5 py-px text-[10px] text-holo-text-muted">{t}</span>
-            ))}
+            {tags.map((t) => {
+              const c = tagColor(t)
+              return (
+                <span
+                  key={t}
+                  style={{ background: c.bg, color: c.text, borderColor: c.border }}
+                  className="rounded-full border px-1.5 py-px text-[10px]"
+                >
+                  {t}
+                </span>
+              )
+            })}
           </span>
         : <span className="text-xs italic text-holo-text-faint/40">aucun tag</span>
       }
@@ -151,6 +185,7 @@ function StickyEditorHeader({
   title,
   author,
   saveStatus,
+  saveErrorMsg,
   rawMode,
   onShare,
   onToggleInspector,
@@ -160,7 +195,8 @@ function StickyEditorHeader({
   icon?: React.ReactNode
   title: string
   author?: string
-  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
+  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  saveErrorMsg?: string
   rawMode: boolean
   onShare?: () => void
   onToggleInspector?: () => void
@@ -172,7 +208,7 @@ function StickyEditorHeader({
     <div
       className={cn(
         'sticky top-0 z-30 border-b border-holo-border-soft bg-holo-bg/10 px-5 py-3 backdrop-blur-lg transition-all duration-200',
-        visible ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0',
+        visible ? 'opacity-100' : 'pointer-events-none -translate-y-2 opacity-0',
       )}
     >
       <div className="mx-auto flex max-w-[920px] items-center justify-between gap-4">
@@ -191,7 +227,7 @@ function StickyEditorHeader({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <SaveStatusBadge status={saveStatus} />
+          <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
 
           <button
             onClick={onToggleInspector}
@@ -221,7 +257,7 @@ function StickyEditorHeader({
               <Ellipsis size={14} />
             </button>
 
-            {menuAnchorEl && (
+            {menuAnchorEl && createPortal(
               <ContextMenu
                 anchorEl={menuAnchorEl}
                 anchorAlign="right"
@@ -234,7 +270,8 @@ function StickyEditorHeader({
                     onClick: () => { onToggleRaw(); setMenuAnchorEl(null) },
                   },
                 ] satisfies ContextMenuAction[]}
-              />
+              />,
+              document.body
             )}
           </div>
         </div>
@@ -320,7 +357,10 @@ function ReadOnlyMetaField({ label, value, title }: { label: string; value?: str
   )
 }
 
-function SaveStatusBadge({ status }: { status?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error' }) {
+function SaveStatusBadge({ status, errorMsg }: {
+  status?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  errorMsg?: string
+}) {
   if (!status || status === 'idle') return null
   if (status === 'unsaved') return (
     <span className="flex items-center gap-1.5 text-xs text-holo-text-faint/60">
@@ -335,13 +375,25 @@ function SaveStatusBadge({ status }: { status?: 'idle' | 'unsaved' | 'saving' | 
     </span>
   )
   if (status === 'saved') return (
+    <span className="flex items-center gap-1.5 text-xs text-amber-400/80">
+      <Save size={10} className="shrink-0" />
+      Enregistré localement
+    </span>
+  )
+  if (status === 'synced') return (
     <span className="flex items-center gap-1.5 text-xs text-holo-success">
       <Check size={10} className="shrink-0" />
-      Enregistré
+      Synchronisé
+    </span>
+  )
+  if (status === 'push-error') return (
+    <span className="flex items-center gap-1.5 text-xs text-amber-400" title={errorMsg ?? 'Erreur lors du push'}>
+      <Save size={10} className="shrink-0" />
+      <span>Commit local · push échoué</span>
     </span>
   )
   if (status === 'error') return (
-    <span className="text-xs text-holo-danger">Erreur d’enregistrement</span>
+    <span className="text-xs text-holo-danger" title={errorMsg}>{errorMsg ? 'Erreur : ' + errorMsg.slice(0, 60) : "Erreur d'enregistrement"}</span>
   )
   return null
 }
@@ -353,8 +405,12 @@ export function EditorFrame({
   onToggleInspector,
   onShare,
   saveStatus,
+  saveErrorMsg,
   onMobileBack,
   contentFontScale,
+  isFavorite,
+  onToggleFavorite,
+  onArchive,
 }: EditorFrameProps) {
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
@@ -368,6 +424,10 @@ export function EditorFrame({
   const { appAuthor } = useConfig()
   const filename = filenameFromPath(filepath)
   const breadcrumb = buildBreadcrumb(filepath, rootPath ?? undefined)
+
+  const toggleFavorite = useCallback(() => {
+    onToggleFavorite?.()
+  }, [onToggleFavorite])
 
   // ── État dérivé du frontmatter (remonte à chaque changement de fichier via key=path) ─
   const [fm, setFm] = useState<FrontmatterData>(() => {
@@ -418,7 +478,9 @@ export function EditorFrame({
     setBody(newBody)
     setRawMode(false)
     setMenuAnchorEl(null)
-  }, [rawValue])
+    // Notifie le parent pour rester en sync (évite désynchronisation si BlockEditor émet une version dégradée)
+    onMarkdownChange?.(rawValue)
+  }, [rawValue, onMarkdownChange])
 
   const handleRawChange = useCallback((value: string) => {
     setRawValue(value)
@@ -473,6 +535,7 @@ export function EditorFrame({
         title={displayTitle}
         author={fm.author as string | undefined}
         saveStatus={saveStatus}
+        saveErrorMsg={saveErrorMsg}
         rawMode={rawMode}
         onShare={onShare}
         onToggleInspector={onToggleInspector}
@@ -546,7 +609,23 @@ export function EditorFrame({
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <SaveStatusBadge status={saveStatus} />
+              <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
+
+              {onToggleFavorite && (
+                <button
+                  onClick={onToggleFavorite}
+                  className={cn(
+                    'flex size-10 items-center justify-center rounded-holo-md border transition active:scale-[0.98]',
+                    isFavorite
+                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                      : 'border-holo-border-soft bg-holo-glass text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
+                  )}
+                  title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                  aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                >
+                  <Star size={14} className={isFavorite ? 'fill-amber-400' : ''} />
+                </button>
+              )}
               <button
                 onClick={onToggleInspector}
                 className="3xl:hidden flex size-10 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
@@ -586,8 +665,19 @@ export function EditorFrame({
                         label: rawMode ? "Retour à l'éditeur" : 'Affichage brut',
                         icon: Code2,
                         onClick: rawMode ? exitRawMode : enterRawMode,
-                        ...(rawMode ? {} : {}),
                       },
+                      {
+                        type: 'item',
+                        label: isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris',
+                        icon: Star,
+                        onClick: () => { toggleFavorite(); setMenuAnchorEl(null) },
+                      },
+                      ...(onArchive ? [{
+                        type: 'item' as const,
+                        label: 'Archiver',
+                        icon: Archive,
+                        onClick: () => { onArchive(); setMenuAnchorEl(null) },
+                      }] : []),
                     ] satisfies ContextMenuAction[]}
                   />
                 )}

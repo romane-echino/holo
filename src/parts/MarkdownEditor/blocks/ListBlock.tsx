@@ -214,21 +214,42 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
     // ── Tab : indentation (sous-liste) ─────────────────────────────────────────
 
     const handleItemTab = useCallback(
-      (id: string, shift: boolean) => {
+      (id: string, shift: boolean, currentInlines: InlineNode[]) => {
         const prev = itemsRef.current
         const idx = prev.findIndex((item) => item.id === id)
         if (idx === -1) return
         const item = prev[idx]
+        // Toujours utiliser currentInlines (les inlines frais du DOM) pour éviter
+        // d'écraser les modifications non sauvegardées avec l'ancien state
+        const updatedItem = { ...item, inlines: currentInlines }
         if (shift) {
-          if (item.depth === 0) return
-          const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth - 1 } : it)
+          if (item.depth === 0) {
+            // Pas de dé-indentation possible, mais sauvegarder les inlines quand même
+            const next = prev.map((it, i) => i === idx ? updatedItem : it)
+            setItems(next)
+            emit(next)
+            return
+          }
+          const next = prev.map((it, i) => i === idx ? { ...updatedItem, depth: it.depth - 1 } : it)
           setItems(next)
           emit(next)
         } else {
-          if (idx === 0) return // impossible d'indenter le 1er élément
+          if (idx === 0) {
+            // Pas d'indentation possible, mais sauvegarder les inlines quand même
+            const next = prev.map((it, i) => i === idx ? updatedItem : it)
+            setItems(next)
+            emit(next)
+            return
+          }
           const maxDepth = prev[idx - 1].depth + 1
-          if (item.depth >= maxDepth) return
-          const next = prev.map((it, i) => i === idx ? { ...it, depth: it.depth + 1 } : it)
+          if (item.depth >= maxDepth) {
+            // Pas d'indentation possible, mais sauvegarder les inlines quand même
+            const next = prev.map((it, i) => i === idx ? updatedItem : it)
+            setItems(next)
+            emit(next)
+            return
+          }
+          const next = prev.map((it, i) => i === idx ? { ...updatedItem, depth: it.depth + 1 } : it)
           setItems(next)
           emit(next)
         }
@@ -275,7 +296,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
             onSave={(inlines) => saveItem(item.id, inlines)}
             onToggle={() => handleItemToggle(item.id)}
             onEnter={(before, after, empty) => handleItemEnter(item.id, before, after, empty)}
-            onTab={(shift) => handleItemTab(item.id, shift)}
+            onTab={(shift, inlines) => handleItemTab(item.id, shift, inlines)}
             onBackspaceAtStart={() => handleItemBackspace(item.id)}
             onArrowUp={(x) => {
               if (idx === 0) onArrowUp?.(x)
@@ -316,7 +337,7 @@ function ListItemRow({
   onSave: (inlines: InlineNode[]) => void
   onToggle: () => void
   onEnter: (beforeInlines: InlineNode[], afterInlines: InlineNode[], isEmpty: boolean) => void
-  onTab: (shift: boolean) => void
+  onTab: (shift: boolean, currentInlines: InlineNode[]) => void
   onBackspaceAtStart: () => void
   onArrowUp: (x: number) => void
   onArrowDown: (x: number) => void
@@ -389,7 +410,11 @@ function ListItemRow({
     }
     if (e.key === 'Tab') {
       e.preventDefault()
-      onTab(e.shiftKey)
+      // Lire les inlines actuels du DOM et les passer avec onTab pour éviter
+      // que le setItems de tab écrase les modifications non sauvegardées
+      savedRef.current = true
+      const currentInlines = domToInlines(el)
+      onTab(e.shiftKey, currentInlines)
       return
     }
     if (e.key === 'Enter' && !e.shiftKey) {

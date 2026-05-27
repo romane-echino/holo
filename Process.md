@@ -684,14 +684,14 @@ src/main.tsx
 - ✅ Rendre le titre dans EditorFrame multi-ligne
 - ✅ Dans SpacePanel bouton droite sur un fichier ajouter mettre/retirer des favoris
 - ✅ Dans Settings les paramêtres d'apparence ne fonctionne pas
-- Dans Recent Panel si je clique sur un fichier alors que je n'ai pas le bon espace ouvert n'ouvre pas le fichier lors du clic
-- Implémenter la recherche (focaliser sur les nom de fichier -> les titre -> les tags -> la description -> les titre dans le contenu -> le contenu (ordre de pertinance))
-- Dans les tableau le menu contextuel des colonnes est tronqué par un overflow-hidden et on voit pas toutes les options
-- Voir dans l'arboresence et dans editor frame si le document est un favori.
-- Dans EditorFrame "..." Ajouter dans le menu contextuelle ajouter/enlever des favoris
-- Dans inspector pouvoir cliquer dans la table des matières pour scrollTo dans EditorFrame
+- ✅ Dans Recent Panel si je clique sur un fichier alors que je n'ai pas le bon espace ouvert n'ouvre pas le fichier lors du clic
+- ✅ Implémenter la recherche (focaliser sur les nom de fichier -> les titre -> les tags -> la description -> les titre dans le contenu -> le contenu (ordre de pertinance))
+- ✅ Dans les tableau le menu contextuel des colonnes est tronqué par un overflow-hidden et on voit pas toutes les options
+- ✅ Voir dans l'arboresence et dans editor frame si le document est un favori.
+- ✅ Dans EditorFrame "..." Ajouter dans le menu contextuelle ajouter/enlever des favoris
+- ✅ Dans inspector pouvoir cliquer dans la table des matières pour scrollTo dans EditorFrame
 - Dans EditorFrame Quand le headerSticky apparait et qu'on clique "..." le menu contextuell aparait hors de la zone
-- Donner une couleur aux tags (selon la première ou les deux premier caractère) ex : pe -> jaune (trouver un algo pour pick une couleur selon une palette)
+- ✅ Donner une couleur aux tags (selon la première ou les deux premier caractère) ex : pe -> jaune (trouver un algo pour pick une couleur selon une palette)
 - Mieux gérer les nested list numérique et alphabetiques
   1. Element 1
     1.1 Sous element 1
@@ -705,3 +705,16 @@ src/main.tsx
   - Enregistré localement (disquette jaune)
   - Synchronisé (il est commit et tout est bon) (sync vert)
 - La table des matière ne se rafraichie pas au fur a mesure de la saisie du document
+- Intégration des changelogs dans les settings
+- Rebrancher / optimiser le design de electron updater
+- Designer le panel AI comme copilot
+- En haut de Editorframe dans le breadcrumb pouvoir cliquer sur un dossier pour l'afficher/visualiser dans l'arboresence
+- Voir d'une manière ou d'une autre que le document est un favori dans editorframe 
+- ✅Supprimer un fichier / dossier nécessite une confirmation "Etes-vous sur..."
+- Possibilité de pouvoir sélectionner plusieurs bloc avec la souris (drag select?) et les supprimer (BACKSPACE / DELETE)
+- pouvoir drop une image dans editor frame. Si le block séléctionné a du contenu crée un block image après celui sélectionné. Si il n'en a pas le transforme en block image. Si y'a pas de block séléctionné, crée un block tout a la fin (a la suite du contenue).
+- Réimplémenter la gestion des images : pour info comment ça se passait avant : un dossier (non visible dans l'arboresence) "images" qui stock tout les images importée. Si dans la configuration du dépot (Settings > Paramêtre de l'espace (avec un dropdown pour séléctionner l'espace -> par défaut a l'espace selectionné si c'est le cas)) si y'a une configration stockage des images externe les images sont uploader. Tout le code est deja qqpart 
+- la recherche ne semble pas correctement fonctionner. il faut qu'elle cherche dans tout les espaces, tout les fichiers, ...
+- Enlever le petit carré de sélection a gauche des bloc et son système, c'est vraiment pas joli et pratique
+- Quand on est dans un bloc ajouter un bouton "+" a gauche dans la marge pour appelé le palette de commandes
+- les block LaTeX et footnote n'ont pas l'aire implémenté

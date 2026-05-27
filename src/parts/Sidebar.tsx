@@ -113,6 +113,7 @@ type HoloSidebarProps = {
     onSpaceFavorite?: (path: string) => void;
     onSpaceRemove?: (path: string) => void;
     onSpaceOpenInExplorer?: (path: string) => void;
+    onSearch?: () => void;
 };
 
 function getInitials(name: string): string {
@@ -131,6 +132,7 @@ export function Sidebar({
     onSpaceFavorite,
     onSpaceRemove,
     onSpaceOpenInExplorer,
+    onSearch,
 }: HoloSidebarProps) {
     const [spaceMenu, setSpaceMenu] = useState<SpaceMenuState | null>(null)
 
@@ -142,9 +144,14 @@ export function Sidebar({
     return (
         <aside className="h-full flex flex-col">
             <nav className="grow flex h-full flex-col p-4 overflow-y-auto holo-scrollbar">
-                <button className="mb-5 flex w-full items-center gap-2 rounded-holo-md bg-holo-glass px-3 py-2 text-left text-sm text-holo-text-faint">
-                    <Command size={13} />
-                    Rechercher...
+                <button
+                    onClick={onSearch}
+                    className="mb-5 flex w-full items-center gap-2 rounded-holo-md bg-holo-glass px-3 py-2 text-left text-sm text-holo-text-faint hover:text-holo-text hover:bg-holo-glass-hover transition-colors"
+                    title="Rechercher (Ctrl+K)"
+                >
+                    <Command size={13} className="shrink-0" />
+                    <span className="flex-1">Rechercher...</span>
+                    <span className="ml-auto shrink-0 rounded border border-holo-border-soft px-1 py-0.5 font-mono text-[10px] text-holo-text-faint">⌘K</span>
                 </button>
 
                 <div className="space-y-1">

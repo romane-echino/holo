@@ -15,6 +15,21 @@ function extractHeadings(markdown: string): { level: number; text: string }[] {
     .filter(Boolean) as { level: number; text: string }[];
 }
 
+function slugifyHeading(text: string): string {
+  return 'heading-' + text.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '')
+}
+
+function extractFootnotes(markdown: string): { label: string; content: string }[] {
+  const footnotes: { label: string; content: string }[] = []
+  // Matches: [^label]: content (single-line)
+  const regex = /^\[\^([^\]]+)\]:\s*(.+)$/gm
+  let m: RegExpExecArray | null
+  while ((m = regex.exec(markdown)) !== null) {
+    footnotes.push({ label: m[1], content: m[2].trim() })
+  }
+  return footnotes
+}
+
 function extractLinks(markdown: string): { text: string; url: string }[] {
   const links: { text: string; url: string }[] = [];
   const regex = /\[([^\]]+)\]\(([^)]+)\)/g;
@@ -85,7 +100,7 @@ function CommitCard({ commit }: { commit: HoloGitFileCommit }) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-type Tab = "toc" | "links";
+type Tab = "toc" | "links" | "notes";
 
 interface InspectorProps {
   markdown?: string;
@@ -110,6 +125,7 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
     })
   }, [headings]);
   const links = useMemo(() => (markdown ? extractLinks(markdown) : []), [markdown]);
+  const footnotes = useMemo(() => (markdown ? extractFootnotes(markdown) : []), [markdown]);
 
   useEffect(() => {
     if (!filePath || !gitState.isRepo) {
@@ -144,6 +160,17 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
         >
           Liens
         </button>
+        <button
+          onClick={() => setTab("notes")}
+          className={cn(
+            "rounded-holo-md px-3 py-2 text-sm transition",
+            tab === "notes"
+              ? "bg-holo-primary-surface text-holo-primary-soft"
+              : "text-holo-text-muted hover:bg-holo-glass-hover",
+          )}
+        >
+          Notes
+        </button>
       </div>
 
       {/* Table des matières */}
@@ -162,8 +189,17 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
                   h.level >= 3 ? "pl-4 text-holo-text-faint" : h.level === 2 ? "pl-2" : "text-holo-text",
                 )}
               >
-                <span className="shrink-0 font-mono text-[10px] text-holo-text-faint/60">{tocNumbers[i]}</span>
-                <span className="truncate">{h.text}</span>
+                <button
+                  className="flex items-baseline gap-2 w-full text-left"
+                  onClick={() => {
+                    const el = document.getElementById(slugifyHeading(h.text))
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }}
+                  title={h.text}
+                >
+                  <span className="shrink-0 font-mono text-[10px] text-holo-text-faint/60">{tocNumbers[i]}</span>
+                  <span className="truncate">{h.text}</span>
+                </button>
               </li>
             ))}
           </ol>
@@ -195,6 +231,26 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
                 </li>
               );
             })}
+          </ol>
+        )
+      )}
+
+      {/* Notes (footnotes) */}
+      {tab === "notes" && (
+        footnotes.length === 0 ? (
+          <p className="text-sm text-holo-text-faint">
+            {markdown ? "Aucune note dans ce fichier." : "Ouvrez un fichier pour afficher les notes."}
+          </p>
+        ) : (
+          <ol className="space-y-2 text-sm text-holo-text-muted">
+            {footnotes.map((fn, i) => (
+              <li key={i} className="rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2.5">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span className="rounded bg-holo-primary-surface px-1.5 py-px font-mono text-[10px] text-holo-primary-soft">{fn.label}</span>
+                </div>
+                <p className="text-xs leading-relaxed text-holo-text-faint">{fn.content}</p>
+              </li>
+            ))}
           </ol>
         )
       )}

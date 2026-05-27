@@ -7,7 +7,7 @@ import { useConfig } from '../contexts/ConfigContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
 import type { TreeNode } from '../types/app'
-import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch } from 'lucide-react'
+import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch, Archive } from 'lucide-react'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import type { LucideIcon } from 'lucide-react'
@@ -46,6 +46,7 @@ type SpacePanelProps = {
   onMoveItem?: (sourcePath: string, targetFolderPath: string) => void
   onRenameItem?: (path: string, newName: string) => void
   onDeleteItem?: (path: string) => void
+  onArchiveItem?: (path: string) => void
   onSearch?: (query: string) => void
   // "…" menu
   isFavorite?: boolean
@@ -133,6 +134,7 @@ function TreeNode({
   fileMeta,
   metaOverride,
   onContextMenu,
+  favoriteFilePaths,
 }: {
   node: SpaceFileNode
   level: number
@@ -145,6 +147,7 @@ function TreeNode({
   fileMeta?: Record<string, TreeFileMeta>
   metaOverride?: TreeFileMeta & { path: string }
   onContextMenu?: (node: SpaceFileNode, e: React.MouseEvent) => void
+  favoriteFilePaths?: string[]
 }) {
   const isFolder = node.type === 'folder'
   const isExpanded = expanded.has(node.path)
@@ -152,6 +155,7 @@ function TreeNode({
   const hasChildren = Boolean(node.children?.length)
   const FileIcon = getFileIcon(node)
   const isDragOver = drag?.dragOverPath === node.path && isFolder
+  const isFav = !isFolder && (favoriteFilePaths?.includes(node.path) ?? false)
   // Utiliser l'override si disponible (mise à jour immédiate sans attendre le cache)
   const metaRaw = metaOverride?.path === node.path ? metaOverride : (!isFolder ? fileMeta?.[node.path] : undefined)
   const displayTitle = metaRaw?.title || node.name
@@ -211,6 +215,10 @@ function TreeNode({
             <div className="mt-0.5 truncate text-[11px] leading-4 text-holo-text-faint/70">{displayDesc}</div>
           )}
         </div>
+
+        {isFav && (
+          <Star size={10} className="shrink-0 fill-amber-400 text-amber-400 opacity-70" />
+        )}
       </button>
 
       {isFolder && isExpanded && hasChildren && (
@@ -229,6 +237,7 @@ function TreeNode({
               fileMeta={fileMeta}
               metaOverride={metaOverride}
               onContextMenu={onContextMenu}
+              favoriteFilePaths={favoriteFilePaths}
             />
           ))}
         </div>
@@ -304,6 +313,7 @@ export function SpacePanel({
   onMoveItem,
   onRenameItem,
   onDeleteItem,
+  onArchiveItem,
   onSearch,
   isFavorite,
   onToggleFavorite,
@@ -619,6 +629,7 @@ export function SpacePanel({
                   fileMeta={fileMeta}
                   metaOverride={metaOverride}
                   onContextMenu={handleContextMenu}
+                  favoriteFilePaths={favoriteFilePaths}
                 />
               ))}
             </div>
@@ -763,6 +774,12 @@ export function SpacePanel({
             label: favoriteFilePaths.includes(ctxMenu.node.path) ? 'Retirer des favoris' : 'Mettre en favori',
             icon: Star,
             onClick: () => onToggleFileFavorite(ctxMenu.node.path),
+          }] : []),
+          ...(ctxMenu.node.type === 'file' && onArchiveItem ? [{
+            type: 'item' as const,
+            label: 'Archiver',
+            icon: Archive,
+            onClick: () => { onArchiveItem(ctxMenu.node.path); setCtxMenu(null) },
           }] : []),
           ...(ctxMenu.node.type === 'folder' ? [
             { type: 'item' as const, label: 'Nouveau fichier ici', icon: FilePlus, onClick: () => openAddDialog('file', ctxMenu.node.path) },
@@ -975,12 +992,41 @@ export function SpaceRoute({
 
   const handleDeleteItem = useCallback(async (path: string) => {
     try {
-      await window.holo?.archivePath(path)
+      await window.holo?.deletePath(path)
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      // Git : stage la suppression et synchronise
+      void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de supprimer :', err)
     }
+  }, [setTree])
+
+  const handleArchiveItem = useCallback(async (path: string) => {
+    try {
+      await window.holo?.archivePath(path)
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+      // Git : stage le déplacement vers l'archive et synchronise
+      void window.holo?.gitAutoSave(null as unknown as string)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible d\'archiver :', err)
+    }
+  }, [setTree])
+
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null)
+  const requestDeleteItem = useCallback((path: string) => {
+    setPendingDeletePath(path)
+  }, [])
+
+  // Écoute l'événement de rafraîchissement déclenché depuis l'extérieur (ex: archive depuis EditorFrame)
+  useEffect(() => {
+    const handler = async () => {
+      const result = await window.holo?.refreshTree().catch(() => null)
+      if (result) setTree(result.tree)
+    }
+    window.addEventListener('holo:refresh-tree', handler)
+    return () => window.removeEventListener('holo:refresh-tree', handler)
   }, [setTree])
 
   useEffect(() => {
@@ -1011,29 +1057,79 @@ export function SpaceRoute({
     [recentFilePaths, folderPath, fileMetaByPath],
   )
 
+  const favoriteItems = useMemo(
+    () =>
+      (favoriteFilePaths ?? [])
+        .filter((p) => folderPath === null || p.startsWith(folderPath + '/'))
+        .map((p) => {
+          const meta = fileMetaByPath[p]
+          return {
+            id: p,
+            title: meta?.title || getBaseName(p),
+            path: p,
+            subtitle: folderPath ? p.slice(folderPath.length + 1) : p,
+          } satisfies SpacePanelItem
+        }),
+    [favoriteFilePaths, folderPath, fileMetaByPath],
+  )
+
   return (
-    <SpacePanel
-      spaceName={spaceName}
-      files={files}
-      recentItems={recentItems}
-      favoriteItems={[]}
-      selectedPath={selectedFilePath}
-      metaOverride={metaOverride}
-      onSelectFile={onSelectFile}
-      onAddItem={handleAddItem}
-      onMoveItem={handleMoveItem}
-      onRenameItem={handleRenameItem}
-      onDeleteItem={handleDeleteItem}
-      rootPath={folderPath ?? undefined}
-      isFavorite={isFavorite}
-      onToggleFavorite={onToggleFavorite}
-      onDetach={onDetach}
-      isGitRepo={isGitRepo}
-      gitAhead={gitState.outgoing}
-      gitBehind={gitState.incoming}
-      onGitSync={isGitRepo ? handleGitSync : undefined}
-      favoriteFilePaths={favoriteFilePaths}
-      onToggleFileFavorite={onToggleFileFavorite}
-    />
+    <>
+      <SpacePanel
+        spaceName={spaceName}
+        files={files}
+        recentItems={recentItems}
+        favoriteItems={favoriteItems}
+        selectedPath={selectedFilePath}
+        metaOverride={metaOverride}
+        onSelectFile={onSelectFile}
+        onAddItem={handleAddItem}
+        onMoveItem={handleMoveItem}
+        onRenameItem={handleRenameItem}
+        onDeleteItem={requestDeleteItem}
+        onArchiveItem={handleArchiveItem}
+        rootPath={folderPath ?? undefined}
+        isFavorite={isFavorite}
+        onToggleFavorite={onToggleFavorite}
+        onDetach={onDetach}
+        isGitRepo={isGitRepo}
+        gitAhead={gitState.outgoing}
+        gitBehind={gitState.incoming}
+        onGitSync={isGitRepo ? handleGitSync : undefined}
+        favoriteFilePaths={favoriteFilePaths}
+        onToggleFileFavorite={onToggleFileFavorite}
+      />
+
+      {/* Confirmation de suppression */}
+      {pendingDeletePath && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg p-6 shadow-[0_24px_80px_rgba(0,0,0,.6)]">
+            <div className="mb-1 flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-holo-lg bg-red-500/10 text-red-400">
+                <Trash2 size={16} />
+              </div>
+              <p className="text-sm font-semibold text-holo-text">Supprimer cet élément ?</p>
+            </div>
+            <p className="mb-5 ml-12 text-xs text-holo-text-faint">
+              « {getBaseName(pendingDeletePath)} » sera supprimé définitivement.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPendingDeletePath(null)}
+                className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => { void handleDeleteItem(pendingDeletePath); setPendingDeletePath(null) }}
+                className="rounded-holo-md bg-red-500/80 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

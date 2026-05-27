@@ -52,6 +52,9 @@ function nodeToInlines(node: Node): InlineNode[] {
     case 'br':
       return [{ type: 'break' }]
 
+    case 'img':
+      return [{ type: 'image', url: el.getAttribute('src') ?? '', alt: el.getAttribute('alt') ?? '', title: el.getAttribute('title') ?? null }]
+
     default:
       // Éléments inconnus : flatten (récupère les enfants)
       return children

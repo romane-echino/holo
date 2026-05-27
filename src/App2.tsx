@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from './utils/global'
-import { FavoritePanel, AIPanel, Header, RecentPanel, Inspector, Sidebar, Onboarding, HoloSettingsDialog } from "./parts/"
+import { FavoritePanel, AIPanel, Header, RecentPanel, Inspector, SearchModal, Sidebar, Onboarding, HoloSettingsDialog } from "./parts/"
 import type { OnboardingWelcomeValue, HoloSettingsValue } from "./parts/"
 import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
@@ -51,6 +51,9 @@ export default function App2() {
   // ─── Favoris de fichiers ──────────────────────────────────────────────────
   const [favoriteFilePaths, setFavoriteFilePaths] = useState<string[]>([])
 
+  // ─── Recherche modale ─────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false)
+
   // ─── Onboarding ───────────────────────────────────────────────────────────
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [settingsValue, setSettingsValue] = useState<HoloSettingsValue | undefined>(undefined)
@@ -82,10 +85,17 @@ export default function App2() {
         applyTheme(theme)
         applyAccent(accent)
         // Valeurs settings
+        const firstName = cfg['app-author-first-name'] as string || ''
+        const lastName = cfg['app-author-last-name'] as string || ''
+        const gitEmailValue = cfg['git-email'] as string || ''
+        const fullName = `${firstName} ${lastName}`.trim() || cfg['app-author'] as string || ''
+        // Restaure l'auteur et l'email dans le ConfigContext (affiché dans la Sidebar)
+        if (fullName) setAppAuthor(fullName)
+        if (gitEmailValue) setGitEmail(gitEmailValue)
         setSettingsValue({
-          firstName: cfg['app-author-first-name'] as string || '',
-          lastName: cfg['app-author-last-name'] as string || '',
-          gitEmail: cfg['git-email'] as string || '',
+          firstName,
+          lastName,
+          gitEmail: gitEmailValue,
           imageStorageMode: (cfg['image-storage-mode'] as HoloSettingsValue['imageStorageMode']) ?? 'local',
           azureContainerUrl: cfg['azure-container-url'] as string || '',
           azureSasToken: cfg['azure-sas-token'] as string || '',
@@ -122,21 +132,25 @@ export default function App2() {
   // ─── Sauvegarde des paramètres ────────────────────────────────────────────
   const handleSettingsSave = useCallback(async (value: HoloSettingsValue) => {
     const fullName = `${value.firstName?.trim() ?? ''} ${value.lastName?.trim() ?? ''}`.trim()
-    await Promise.all([
-      window.holo?.setHoloConfigValue('app-author', fullName),
-      window.holo?.setHoloConfigValue('app-author-first-name', value.firstName?.trim() ?? ''),
-      window.holo?.setHoloConfigValue('app-author-last-name', value.lastName?.trim() ?? ''),
-      window.holo?.setHoloConfigValue('git-email', value.gitEmail?.trim() ?? ''),
-      window.holo?.setHoloConfigValue('image-storage-mode', value.imageStorageMode ?? 'local'),
-      window.holo?.setHoloConfigValue('azure-container-url', value.azureContainerUrl ?? ''),
-      window.holo?.setHoloConfigValue('azure-sas-token', value.azureSasToken ?? ''),
-      window.holo?.setHoloConfigValue('ai-provider', value.aiProvider ?? 'local'),
-      window.holo?.setHoloConfigValue('gemini-api-key', value.geminiApiKey ?? ''),
-      window.holo?.setHoloConfigValue('openai-api-key', value.openAiApiKey ?? ''),
-      window.holo?.setHoloConfigValue('ai-system-prompt', value.systemPrompt ?? ''),
-      window.holo?.setHoloConfigValue('theme', value.theme ?? 'dark'),
-      window.holo?.setHoloConfigValue('accent', value.accent ?? 'violet'),
-    ])
+    // Lire le config existant et merger en une seule écriture atomique
+    // (évite la race-condition de Promise.all : 14 lectures simultanées → chaque write écrasait les autres)
+    const existing = await window.holo?.getHoloConfig() ?? {}
+    await window.holo?.setHoloConfig({
+      ...existing,
+      'app-author': fullName,
+      'app-author-first-name': value.firstName?.trim() ?? '',
+      'app-author-last-name': value.lastName?.trim() ?? '',
+      'git-email': value.gitEmail?.trim() ?? '',
+      'image-storage-mode': value.imageStorageMode ?? 'local',
+      'azure-container-url': value.azureContainerUrl ?? '',
+      'azure-sas-token': value.azureSasToken ?? '',
+      'ai-provider': value.aiProvider ?? 'local',
+      'gemini-api-key': value.geminiApiKey ?? '',
+      'openai-api-key': value.openAiApiKey ?? '',
+      'ai-system-prompt': value.systemPrompt ?? '',
+      'theme': value.theme ?? 'dark',
+      'accent': value.accent ?? 'violet',
+    })
     if (fullName) setAppAuthor(fullName)
     if (value.gitEmail) setGitEmail(value.gitEmail.trim())
     applyTheme(value.theme ?? 'dark')
@@ -156,6 +170,14 @@ export default function App2() {
   }, [settingsValue?.theme])
 
   const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
+
+  // Chargement initial des espaces (dossiers récents) depuis l'IPC Electron
+  useEffect(() => {
+    if (!window.holo) return
+    window.holo.getRecentFolders()
+      .then(folders => { if (Array.isArray(folders)) setRecentFolders(folders) })
+      .catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persistance des fichiers récents
   useEffect(() => {
@@ -188,6 +210,18 @@ export default function App2() {
     prevRootPathRef.current = rootPath
     navigate(`/space/${encodeURIComponent(rootPath)}`)
   }, [rootPath, navigate])
+
+  // Raccourci clavier Ctrl+K → ouvrir/fermer la recherche
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
   const spaces = useMemo(
     () =>
       [...recentFolders]
@@ -263,12 +297,24 @@ export default function App2() {
   // Ref pour éviter les closures stales dans le callback de sauvegarde
   const openedFileRef = useRef<OpenedFile | null>(null)
   openedFileRef.current = openedFile
+  // Ref stable pour appeler performGitSave sans forward reference
+  const performGitSaveRef = useRef<() => Promise<void>>(async () => {})
+  // Markdown live (mis à jour à chaque keystroke) — pour l'Inspector en temps réel
+  const [liveMarkdown, setLiveMarkdown] = useState<string | null>(null)
 
   const handleSelectFile = useCallback(async (node: SpaceFileNode) => {
     if (node.type !== 'file') return
+    // Annuler le timer de sauvegarde différée et déclencher immédiatement le git save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    // Git save immédiat du fichier précédent avant de switcher
+    void performGitSaveRef.current()
     try {
       const content = await window.holo?.readFile(node.path) ?? ''
       setOpenedFile({ path: node.path, name: node.name, content })
+      setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
       setRecentFilePaths(prev => [node.path, ...prev.filter(p => p !== node.path)].slice(0, 50))
       setMobileEditorOpen(true)
     } catch (err) {
@@ -292,10 +338,14 @@ export default function App2() {
     [recentFilePaths, fileMetaByPath, recentFolders, openedFile?.path],
   )
 
-  const handleRecentDocumentSelect = useCallback((doc: HoloDocument) => {
+  const handleRecentDocumentSelect = useCallback(async (doc: HoloDocument) => {
     const filePath = doc.to
     const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
-    if (spacePath) navigate(`/space/${encodeURIComponent(spacePath)}`)
+    if (spacePath) {
+      navigate(`/space/${encodeURIComponent(spacePath)}`)
+      // Electron vérifie que le fichier est dans currentRootPath → on s'assure d'abord que le bon espace est ouvert
+      await window.holo?.openRecentFolder(spacePath).catch(() => null)
+    }
     void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
   }, [recentFolders, navigate, handleSelectFile])
 
@@ -319,16 +369,20 @@ export default function App2() {
     [favoriteFilePaths, fileMetaByPath, recentFolders, openedFile?.path],
   )
 
-  const handleFavoriteDocumentSelect = useCallback((doc: HoloDocument) => {
+  const handleFavoriteDocumentSelect = useCallback(async (doc: HoloDocument) => {
     const filePath = doc.to
     const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
-    if (spacePath) navigate(`/space/${encodeURIComponent(spacePath)}`)
+    if (spacePath) {
+      navigate(`/space/${encodeURIComponent(spacePath)}`)
+      await window.holo?.openRecentFolder(spacePath).catch(() => null)
+    }
     void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
   }, [recentFolders, navigate, handleSelectFile])
 
   // ─── Sauvegarde git auto ────────────────────────────────────────────────────
-  type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
+  type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+  const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const appAuthorRef = useRef(appAuthor)
   appAuthorRef.current = appAuthor
@@ -339,15 +393,39 @@ export default function App2() {
     const file = openedFileRef.current
     if (!file) return
     setSaveStatus('saving')
+    setSaveErrorMsg(null)
     try {
-      await window.holo?.gitAutoSave(file.path, appAuthorRef.current || undefined, gitEmailRef.current || undefined)
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 3000)
-    } catch {
+      const result = await window.holo?.gitAutoSave(file.path, appAuthorRef.current || undefined, gitEmailRef.current || undefined)
+      if (!result?.ok) {
+        const msg = result?.error ?? 'Erreur de commit'
+        setSaveErrorMsg(msg)
+        setSaveStatus('error')
+        setTimeout(() => setSaveStatus(prev => prev === 'error' ? 'idle' : prev), 8000)
+        return
+      }
+      if (result.pushError) {
+        setSaveErrorMsg(result.pushError)
+        setSaveStatus('push-error')
+        setTimeout(() => setSaveStatus(prev => prev === 'push-error' ? 'idle' : prev), 8000)
+        return
+      }
+      // not-a-repo ou no-remote : le fichier est enregistré localement uniquement
+      if (result.reason === 'not-a-repo' || result.reason === 'no-remote') {
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 3000)
+        return
+      }
+      setSaveStatus('synced')
+      setTimeout(() => setSaveStatus(prev => prev === 'synced' ? 'idle' : prev), 4000)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue'
+      setSaveErrorMsg(msg)
       setSaveStatus('error')
-      setTimeout(() => setSaveStatus(prev => prev === 'error' ? 'idle' : prev), 5000)
+      setTimeout(() => setSaveStatus(prev => prev === 'error' ? 'idle' : prev), 8000)
     }
   }, [])
+  // Mise à jour du ref stable pour que handleSelectFile/beforeunload puissent l'appeler
+  performGitSaveRef.current = performGitSave
 
   const scheduleGitSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -357,11 +435,25 @@ export default function App2() {
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
+    
+    // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
+    const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
+    if (emptyListItems > 3 && markdown.length < 100) {
+      console.warn(
+        `[App2] Possible contenu dégradé détecté - ${emptyListItems} items vides. Sauvegarde skippée.\n` +
+        `File: ${file.path}\nMarkdown: ${JSON.stringify(markdown.slice(0, 200))}`
+      )
+      // Ne pas sauvegarder un markdown manifestement dégradé
+      return
+    }
+    
+    // Mettre à jour le markdown live pour l'Inspector (TOC en temps réel)
+    setLiveMarkdown(markdown)
     // Mettre à jour immédiatement les métadonnées live pour l'arborescence
     setCurrentFileMeta({ path: file.path, ...extractFmMeta(markdown) })
     try {
       await window.holo?.writeFile(file.path, markdown)
-      setSaveStatus('unsaved')
+      setSaveStatus('saved')
       scheduleGitSave()
     } catch (err) {
       console.error('[App2] Impossible de sauvegarder le fichier :', err)
@@ -384,6 +476,16 @@ export default function App2() {
 
   // Nettoyage du timer au démontage
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
+
+  // Git save à la fermeture de l'app
+  useEffect(() => {
+    const handler = () => {
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      performGitSaveRef.current()
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [])
 
   return (
     <div className="holo-window">
@@ -426,6 +528,7 @@ export default function App2() {
             onSpaceFavorite={handleSpaceFavorite}
             onSpaceRemove={handleSpaceRemove}
             onSpaceOpenInExplorer={handleSpaceOpenInExplorer}
+            onSearch={() => setSearchOpen(true)}
           />
         </div>
 
@@ -446,6 +549,7 @@ export default function App2() {
                   onSelectDocument={handleFavoriteDocumentSelect}
                 />
               } />
+              <Route path="/search" element={null} />
               <Route path="/space/:encodedPath" element={
                 <SpaceRoute
                   onSelectFile={handleSelectFile}
@@ -475,8 +579,22 @@ export default function App2() {
               onMarkdownChange={handleMarkdownChange}
               onToggleInspector={() => setInspectorOpen((o) => !o)}
               saveStatus={saveStatus}
+              saveErrorMsg={saveErrorMsg ?? undefined}
               onMobileBack={() => setMobileEditorOpen(false)}
               contentFontScale={editorFontSize / 100}
+              isFavorite={favoriteFilePaths.includes(openedFile.path)}
+              onToggleFavorite={() => handleFileFavorite(openedFile.path)}
+              onArchive={async () => {
+                const path = openedFile.path
+                try {
+                  await window.holo?.archivePath(path)
+                  setOpenedFile(null)
+                  window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
+                  void window.holo?.gitAutoSave(null as unknown as string)
+                } catch (err) {
+                  console.error('[App2] Impossible d\'archiver :', err)
+                }
+              }}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-holo-text-faint">
@@ -488,7 +606,7 @@ export default function App2() {
 
         {/* Inspecteur — colonne droite, grands écrans */}
         <div className="hidden 3xl:block border-l border-holo-border-soft">
-          <Inspector markdown={openedFile?.content} filePath={openedFile?.path} />
+          <Inspector markdown={liveMarkdown ?? openedFile?.content} filePath={openedFile?.path} />
         </div>
 
       </main>
@@ -519,7 +637,7 @@ export default function App2() {
               <X size={14} />
             </button>
           </div>
-          <Inspector markdown={openedFile?.content} filePath={openedFile?.path} />
+          <Inspector markdown={liveMarkdown ?? openedFile?.content} filePath={openedFile?.path} />
         </div>
       </div>
         </>
@@ -541,6 +659,17 @@ export default function App2() {
           applyAccent(settingsValue?.accent ?? 'violet')
           setSettingsOpen(false)
           setSettingsSaved(false)
+        }}
+      />
+
+      {/* Recherche modale (Ctrl+K) */}
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelectFile={(filePath) => {
+          const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
+          if (spacePath) navigate(`/space/${encodeURIComponent(spacePath)}`)
+          void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
         }}
       />
     </div>

@@ -44,6 +44,13 @@ function inlineToHtml(node: InlineNode): string {
     case 'break':
       return '<br>'
 
+    case 'image': {
+      const src = escapeHtml(node.url)
+      const alt = escapeHtml(node.alt ?? '')
+      const title = node.title ? ` title="${escapeHtml(node.title)}"` : ''
+      return `<img src="${src}" alt="${alt}"${title} data-md-image>`
+    }
+
     default:
       return ''
   }

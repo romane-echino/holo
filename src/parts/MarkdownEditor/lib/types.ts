@@ -18,7 +18,7 @@ export type UnderlineNode = { type: 'underline';  children: InlineNode[] }
 
 export type InlineNode =
   | TextNode | StrongNode | EmphasisNode | InlineCodeNode
-  | LinkNode | DeleteNode | BreakNode | UnderlineNode
+  | LinkNode | DeleteNode | BreakNode | UnderlineNode | ImageNode
 
 // ─── Block nodes ────────────────────────────────────────────────────────────
 
