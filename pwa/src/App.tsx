@@ -51,7 +51,7 @@ export default function App() {
   // Load files when entering files screen
   useEffect(() => {
     if (screen.id !== 'files' || !screen.loading || screen.files !== null) return
-    getRepoTree(screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch)
+    getRepoTree(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch)
       .then((files) =>
         setScreen((s) => (s.id === 'files' ? { ...s, files, loading: false } : s)),
       )
@@ -65,7 +65,7 @@ export default function App() {
   // Load file content when entering viewer
   useEffect(() => {
     if (screen.id !== 'viewer' || !screen.loading || screen.content !== null) return
-    getFileContent(screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.path)
+    getFileContent(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.path)
       .then((content) =>
         setScreen((s) => (s.id === 'viewer' ? { ...s, content, loading: false } : s)),
       )
@@ -85,8 +85,8 @@ export default function App() {
           const saved = saveRepo(repo)
           setScreen({ id: 'files', repo: saved, files: null, loading: true, search: '' })
         }}
-        onRemove={(owner, repo) => {
-          removeRepo(owner, repo)
+        onRemove={(host, owner, repo) => {
+          removeRepo(host, owner, repo)
           setScreen({ id: 'home', repos: getSavedRepos() })
         }}
       />
@@ -135,7 +135,7 @@ function HomeScreen({
   repos: SavedRepo[]
   onSelect: (repo: SavedRepo) => void
   onAdd: (repo: import('./lib/github').RepoMeta) => void
-  onRemove: (owner: string, repo: string) => void
+  onRemove: (host: string, owner: string, repo: string) => void
 }) {
   const [adding, setAdding] = useState(false)
 
@@ -170,7 +170,7 @@ function HomeScreen({
             <div>
               <p className="font-medium text-holo-text">Aucun repo ajouté</p>
               <p className="mt-1 text-sm text-holo-text-faint">
-                Appuyez sur + pour ajouter un repo GitHub public.
+                Appuyez sur + pour ajouter un repo Git public.
               </p>
             </div>
             <button
@@ -185,7 +185,7 @@ function HomeScreen({
         {repos.length > 0 && (
           <ul className="divide-y divide-holo-border-soft">
             {repos.map((repo) => (
-              <li key={`${repo.owner}/${repo.repo}`} className="group/row relative">
+              <li key={`${repo.host}/${repo.owner}/${repo.repo}`} className="group/row relative">
                 <button
                   onClick={() => onSelect(repo)}
                   className="flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-holo-glass active:bg-holo-glass-hover"
@@ -196,7 +196,7 @@ function HomeScreen({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-holo-text">{repo.name}</div>
                     <div className="mt-0.5 truncate text-xs text-holo-text-faint">
-                      {repo.owner}/{repo.repo}
+                      {repo.host}/{repo.owner}/{repo.repo}
                     </div>
                     {repo.description && (
                       <div className="mt-0.5 truncate text-xs text-holo-text-muted">
@@ -207,7 +207,7 @@ function HomeScreen({
                   <ChevronRight size={16} className="shrink-0 text-holo-text-faint" />
                 </button>
                 <button
-                  onClick={() => onRemove(repo.owner, repo.repo)}
+                  onClick={() => onRemove(repo.host, repo.owner, repo.repo)}
                   className="absolute right-12 top-1/2 -translate-y-1/2 flex size-8 items-center justify-center rounded-holo-md text-holo-text-faint opacity-0 transition hover:bg-holo-danger/10 hover:text-holo-danger group-hover/row:opacity-100"
                   title="Supprimer"
                 >
@@ -248,7 +248,7 @@ function AddRepoSheet({
     setStatus('loading')
     setErrorMsg('')
     try {
-      const meta = await fetchRepoMeta(coords.owner, coords.repo)
+      const meta = await fetchRepoMeta(coords.host, coords.owner, coords.repo)
       onAdd(meta)
     } catch (err: unknown) {
       setStatus('error')
@@ -269,7 +269,7 @@ function AddRepoSheet({
           ref={inputRef}
           value={url}
           onChange={(e) => { setUrl(e.target.value); setStatus('idle') }}
-          placeholder="https://github.com/owner/repo"
+          placeholder="https://github.com/owner/repo  ou  https://git.example.com/owner/repo"
           className="w-full rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2.5 text-sm text-holo-text placeholder:text-holo-text-faint outline-none focus:border-holo-primary/50"
         />
         {status === 'error' && (

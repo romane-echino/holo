@@ -1,22 +1,29 @@
-const GH_API = 'https://api.github.com'
-
 // ─── URL parsing ──────────────────────────────────────────────────────────────
 
 export interface RepoCoords {
+  host: string
   owner: string
   repo: string
 }
 
 export function parseRepoUrl(url: string): RepoCoords | null {
   const clean = url.trim().replace(/\.git$/, '').replace(/\/$/, '')
-  const m = clean.match(/(?:https?:\/\/)?github\.com\/([^/?#]+)\/([^/?#]+)/)
-  if (m) return { owner: m[1], repo: m[2] }
+  // Accept any https?://host/owner/repo pattern
+  const m = clean.match(/^(?:https?:\/\/)?([^/?#]+)\/([^/?#]+)\/([^/?#]+)/)
+  if (m) return { host: m[1], owner: m[2], repo: m[3] }
   return null
+}
+
+function apiBase(host: string): string {
+  return host === 'github.com'
+    ? 'https://api.github.com'
+    : `https://${host}/api/v1`
 }
 
 // ─── Repo metadata ────────────────────────────────────────────────────────────
 
 export interface RepoMeta {
+  host: string
   owner: string
   repo: string
   name: string
@@ -24,12 +31,13 @@ export interface RepoMeta {
   defaultBranch: string
 }
 
-export async function fetchRepoMeta(owner: string, repo: string): Promise<RepoMeta> {
-  const res = await fetch(`${GH_API}/repos/${owner}/${repo}`)
+export async function fetchRepoMeta(host: string, owner: string, repo: string): Promise<RepoMeta> {
+  const res = await fetch(`${apiBase(host)}/repos/${owner}/${repo}`)
   if (res.status === 404) throw new Error('Repo introuvable ou privé')
-  if (!res.ok) throw new Error(`Erreur GitHub ${res.status}`)
+  if (!res.ok) throw new Error(`Erreur ${res.status}`)
   const data = await res.json()
   return {
+    host,
     owner,
     repo,
     name: data.name as string,
@@ -45,9 +53,9 @@ export interface TreeFile {
   type: 'blob' | 'tree'
 }
 
-export async function getRepoTree(owner: string, repo: string, branch: string): Promise<TreeFile[]> {
+export async function getRepoTree(host: string, owner: string, repo: string, branch: string): Promise<TreeFile[]> {
   const res = await fetch(
-    `${GH_API}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+    `${apiBase(host)}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
   )
   if (!res.ok) throw new Error(`Impossible de lire l'arborescence`)
   const data = await res.json()
@@ -57,14 +65,16 @@ export async function getRepoTree(owner: string, repo: string, branch: string): 
 // ─── File content ─────────────────────────────────────────────────────────────
 
 export async function getFileContent(
+  host: string,
   owner: string,
   repo: string,
   branch: string,
   path: string,
 ): Promise<string> {
-  const res = await fetch(
-    `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`,
-  )
+  const rawUrl = host === 'github.com'
+    ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`
+    : `https://${host}/${owner}/${repo}/raw/branch/${branch}/${path}`
+  const res = await fetch(rawUrl)
   if (!res.ok) throw new Error(`Fichier introuvable`)
   return res.text()
 }
@@ -92,7 +102,9 @@ export function saveRepo(meta: RepoMeta): SavedRepo {
   return saved
 }
 
-export function removeRepo(owner: string, repo: string) {
-  const repos = getSavedRepos().filter((r) => r.repo !== repo || r.owner !== owner)
+export function removeRepo(host: string, owner: string, repo: string) {
+  const repos = getSavedRepos().filter(
+    (r) => r.repo !== repo || r.owner !== owner || r.host !== host,
+  )
   localStorage.setItem(STORAGE_KEY, JSON.stringify(repos))
 }
