@@ -1,32 +1,28 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, BookOpen, ChevronRight, FileText, FolderOpen,
-  LogOut, RefreshCw, Search, X,
+  Plus, RefreshCw, Search, Trash2, X,
 } from 'lucide-react'
 import {
-  AuthError,
-  clearToken,
-  detectHoloSpaces,
+  fetchRepoMeta,
   getFileContent,
-  getCurrentUser,
   getRepoTree,
-  getToken,
-  listAllRepos,
-  saveToken,
-  type GithubUser,
-  type HoloSpace,
+  getSavedRepos,
+  parseRepoUrl,
+  removeRepo,
+  saveRepo,
+  type SavedRepo,
   type TreeFile,
 } from './lib/github'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Screen types ─────────────────────────────────────────────────────────────
 
 type Screen =
-  | { id: 'auth' }
-  | { id: 'spaces'; user: GithubUser; spaces: HoloSpace[] | null; loading: boolean; error?: string }
-  | { id: 'files'; user: GithubUser; space: HoloSpace; files: TreeFile[] | null; loading: boolean; search: string }
-  | { id: 'viewer'; user: GithubUser; space: HoloSpace; path: string; content: string | null; loading: boolean }
+  | { id: 'home'; repos: SavedRepo[] }
+  | { id: 'files'; repo: SavedRepo; files: TreeFile[] | null; loading: boolean; error?: string; search: string }
+  | { id: 'viewer'; repo: SavedRepo; path: string; content: string | null; loading: boolean }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,65 +43,21 @@ function getFileTitle(path: string, content?: string | null): string {
   return path.split('/').pop()?.replace(/\.md$/i, '') ?? path
 }
 
-function relativeTime(isoStr: string): string {
-  const diff = Date.now() - new Date(isoStr).getTime()
-  const d = Math.floor(diff / 86400000)
-  if (d === 0) return "aujourd'hui"
-  if (d === 1) return 'hier'
-  if (d < 30) return `il y a ${d}j`
-  const m = Math.floor(d / 30)
-  if (m < 12) return `il y a ${m} mois`
-  return `il y a ${Math.floor(d / 365)} ans`
-}
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>({ id: 'auth' })
-
-  // Auto-login if token exists
-  useEffect(() => {
-    if (getToken()) {
-      getCurrentUser()
-        .then((user) =>
-          setScreen({ id: 'spaces', user, spaces: null, loading: true }),
-        )
-        .catch(() => setScreen({ id: 'auth' }))
-    }
-  }, [])
-
-  // Load spaces when entering spaces screen
-  useEffect(() => {
-    if (screen.id !== 'spaces' || !screen.loading || screen.spaces !== null) return
-    listAllRepos()
-      .then((repos) => detectHoloSpaces(repos))
-      .then((spaces) =>
-        setScreen((s) =>
-          s.id === 'spaces' ? { ...s, spaces, loading: false } : s,
-        ),
-      )
-      .catch((err) => {
-        if (err instanceof AuthError) {
-          clearToken()
-          setScreen({ id: 'auth' })
-        } else {
-          setScreen((s) =>
-            s.id === 'spaces' ? { ...s, loading: false, error: err.message } : s,
-          )
-        }
-      })
-  }, [screen])
+  const [screen, setScreen] = useState<Screen>({ id: 'home', repos: getSavedRepos() })
 
   // Load files when entering files screen
   useEffect(() => {
     if (screen.id !== 'files' || !screen.loading || screen.files !== null) return
-    getRepoTree(screen.space.owner, screen.space.repo)
+    getRepoTree(screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch)
       .then((files) =>
         setScreen((s) => (s.id === 'files' ? { ...s, files, loading: false } : s)),
       )
       .catch((err) =>
         setScreen((s) =>
-          s.id === 'files' ? { ...s, loading: false, error: err?.message } : s,
+          s.id === 'files' ? { ...s, loading: false, error: String(err?.message ?? err) } : s,
         ),
       )
   }, [screen])
@@ -113,7 +65,7 @@ export default function App() {
   // Load file content when entering viewer
   useEffect(() => {
     if (screen.id !== 'viewer' || !screen.loading || screen.content !== null) return
-    getFileContent(screen.space.owner, screen.space.repo, screen.path)
+    getFileContent(screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.path)
       .then((content) =>
         setScreen((s) => (s.id === 'viewer' ? { ...s, content, loading: false } : s)),
       )
@@ -122,38 +74,21 @@ export default function App() {
       )
   }, [screen])
 
-  const handleAuth = useCallback((token: string) => {
-    saveToken(token)
-    getCurrentUser()
-      .then((user) => setScreen({ id: 'spaces', user, spaces: null, loading: true }))
-      .catch(() => {
-        clearToken()
-        setScreen({ id: 'auth' })
-        alert('Token invalide. Vérifiez vos droits (scope: repo ou read:user).')
-      })
-  }, [])
-
-  const handleLogout = useCallback(() => {
-    clearToken()
-    setScreen({ id: 'auth' })
-  }, [])
-
-  if (screen.id === 'auth') return <AuthScreen onAuth={handleAuth} />
-
-  if (screen.id === 'spaces') {
+  if (screen.id === 'home') {
     return (
-      <SpacesScreen
-        user={screen.user}
-        spaces={screen.spaces}
-        loading={screen.loading}
-        error={screen.error}
-        onSelect={(space) =>
-          setScreen({ id: 'files', user: screen.user, space, files: null, loading: true, search: '' })
+      <HomeScreen
+        repos={screen.repos}
+        onSelect={(repo) =>
+          setScreen({ id: 'files', repo, files: null, loading: true, search: '' })
         }
-        onRefresh={() =>
-          setScreen({ ...screen, spaces: null, loading: true, error: undefined })
-        }
-        onLogout={handleLogout}
+        onAdd={(repo) => {
+          const saved = saveRepo(repo)
+          setScreen({ id: 'files', repo: saved, files: null, loading: true, search: '' })
+        }}
+        onRemove={(owner, repo) => {
+          removeRepo(owner, repo)
+          setScreen({ id: 'home', repos: getSavedRepos() })
+        }}
       />
     )
   }
@@ -161,19 +96,16 @@ export default function App() {
   if (screen.id === 'files') {
     return (
       <FilesScreen
-        user={screen.user}
-        space={screen.space}
+        repo={screen.repo}
         files={screen.files}
         loading={screen.loading}
+        error={screen.error}
         search={screen.search}
         onSearchChange={(s) => setScreen({ ...screen, search: s })}
         onSelect={(path) =>
-          setScreen({ id: 'viewer', user: screen.user, space: screen.space, path, content: null, loading: true })
+          setScreen({ id: 'viewer', repo: screen.repo, path, content: null, loading: true })
         }
-        onBack={() =>
-          setScreen({ id: 'spaces', user: screen.user, spaces: null, loading: true })
-        }
-        onLogout={handleLogout}
+        onBack={() => setScreen({ id: 'home', repos: getSavedRepos() })}
       />
     )
   }
@@ -181,15 +113,13 @@ export default function App() {
   if (screen.id === 'viewer') {
     return (
       <ViewerScreen
-        user={screen.user}
-        space={screen.space}
+        repo={screen.repo}
         path={screen.path}
         content={screen.content}
         loading={screen.loading}
         onBack={() =>
-          setScreen({ id: 'files', user: screen.user, space: screen.space, files: null, loading: true, search: '' })
+          setScreen({ id: 'files', repo: screen.repo, files: null, loading: true, search: '' })
         }
-        onLogout={handleLogout}
       />
     )
   }
@@ -197,168 +127,91 @@ export default function App() {
   return null
 }
 
-// ─── Auth screen ─────────────────────────────────────────────────────────────
+// ─── Home screen ─────────────────────────────────────────────────────────────
 
-function AuthScreen({ onAuth }: { onAuth: (token: string) => void }) {
-  const [token, setToken] = useState('')
-  const [pending, setPending] = useState(false)
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!token.trim()) return
-    setPending(true)
-    onAuth(token.trim())
-    setTimeout(() => setPending(false), 3000)
-  }
-
-  return (
-    <div className="flex min-h-full flex-col items-center justify-center px-6 py-12">
-      <div className="mb-8 flex flex-col items-center gap-3">
-        <div className="flex size-16 items-center justify-center rounded-2xl bg-holo-primary/20 text-holo-primary">
-          <BookOpen size={28} />
-        </div>
-        <h1 className="text-2xl font-semibold text-holo-text">Holo Reader</h1>
-        <p className="text-center text-sm text-holo-text-muted">
-          Lisez vos notes Holo depuis n'importe quel appareil
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-holo-text-muted" htmlFor="token">
-            GitHub Personal Access Token
-          </label>
-          <input
-            id="token"
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="ghp_xxxxxxxxxxxx"
-            autoComplete="off"
-            className="w-full rounded-holo-lg border border-holo-border-soft bg-holo-glass px-4 py-3 text-sm text-holo-text placeholder:text-holo-text-faint outline-none focus:border-holo-primary/50 focus:ring-1 focus:ring-holo-primary/30"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={!token.trim() || pending}
-          className="w-full rounded-holo-lg bg-holo-primary py-3 text-sm font-medium text-white transition hover:bg-holo-primary/90 active:scale-[0.98] disabled:opacity-50"
-        >
-          {pending ? 'Connexion…' : 'Se connecter'}
-        </button>
-
-        <p className="text-center text-xs text-holo-text-faint">
-          Créez un token sur{' '}
-          <a
-            href="https://github.com/settings/tokens/new?scopes=repo&description=Holo+Reader"
-            className="text-holo-primary underline-offset-2 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            github.com/settings/tokens
-          </a>{' '}
-          avec le scope <code className="rounded bg-holo-glass px-1 text-[11px]">repo</code>.
-        </p>
-      </form>
-    </div>
-  )
-}
-
-// ─── Spaces screen ────────────────────────────────────────────────────────────
-
-function SpacesScreen({
-  user, spaces, loading, error, onSelect, onRefresh, onLogout,
+function HomeScreen({
+  repos, onSelect, onAdd, onRemove,
 }: {
-  user: GithubUser
-  spaces: HoloSpace[] | null
-  loading: boolean
-  error?: string
-  onSelect: (space: HoloSpace) => void
-  onRefresh: () => void
-  onLogout: () => void
+  repos: SavedRepo[]
+  onSelect: (repo: SavedRepo) => void
+  onAdd: (repo: import('./lib/github').RepoMeta) => void
+  onRemove: (owner: string, repo: string) => void
 }) {
+  const [adding, setAdding] = useState(false)
+
   return (
     <div className="flex min-h-full flex-col">
       <NavBar
-        title="Mes espaces"
+        title="Holo Reader"
         right={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onRefresh}
-              className="flex size-9 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass hover:text-holo-text"
-              title="Actualiser"
-            >
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-            </button>
-            <button
-              onClick={onLogout}
-              className="flex size-9 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass hover:text-holo-text"
-              title="Déconnexion"
-            >
-              <LogOut size={16} />
-            </button>
-          </div>
+          <button
+            onClick={() => setAdding(true)}
+            className="flex size-9 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass hover:text-holo-text"
+            title="Ajouter un repo"
+          >
+            <Plus size={18} />
+          </button>
         }
       />
 
-      <div className="flex items-center gap-3 border-b border-holo-border-soft px-4 py-3">
-        <img
-          src={user.avatar_url}
-          alt={user.login}
-          className="size-8 rounded-full"
+      {adding && (
+        <AddRepoSheet
+          onAdd={(meta) => { setAdding(false); onAdd(meta) }}
+          onCancel={() => setAdding(false)}
         />
-        <div>
-          <div className="text-sm font-medium text-holo-text">{user.name ?? user.login}</div>
-          <div className="text-xs text-holo-text-faint">@{user.login}</div>
-        </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
-        {loading && (
-          <div className="flex flex-col items-center gap-3 py-16 text-holo-text-faint">
-            <RefreshCw size={20} className="animate-spin" />
-            <span className="text-sm">Recherche des espaces Holo…</span>
+        {repos.length === 0 && !adding && (
+          <div className="flex flex-col items-center gap-4 px-6 py-20 text-center">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-holo-primary/10 text-holo-primary">
+              <BookOpen size={26} />
+            </div>
+            <div>
+              <p className="font-medium text-holo-text">Aucun repo ajouté</p>
+              <p className="mt-1 text-sm text-holo-text-faint">
+                Appuyez sur + pour ajouter un repo GitHub public.
+              </p>
+            </div>
+            <button
+              onClick={() => setAdding(true)}
+              className="rounded-holo-lg bg-holo-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-holo-primary/90"
+            >
+              Ajouter un repo
+            </button>
           </div>
         )}
 
-        {error && !loading && (
-          <div className="m-4 rounded-holo-lg border border-holo-danger/30 bg-holo-danger/10 px-4 py-3 text-sm text-holo-danger">
-            {error}
-          </div>
-        )}
-
-        {!loading && spaces?.length === 0 && (
-          <div className="flex flex-col items-center gap-2 py-16 text-holo-text-faint">
-            <FolderOpen size={28} />
-            <span className="text-sm">Aucun espace Holo trouvé</span>
-            <span className="max-w-[220px] text-center text-xs">
-              Vos repos contenant un fichier <code>.holo.json</code> apparaîtront ici.
-            </span>
-          </div>
-        )}
-
-        {spaces && spaces.length > 0 && (
+        {repos.length > 0 && (
           <ul className="divide-y divide-holo-border-soft">
-            {spaces.map((space) => (
-              <li key={`${space.owner}/${space.repo}`}>
+            {repos.map((repo) => (
+              <li key={`${repo.owner}/${repo.repo}`} className="group/row relative">
                 <button
-                  onClick={() => onSelect(space)}
+                  onClick={() => onSelect(repo)}
                   className="flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-holo-glass active:bg-holo-glass-hover"
                 >
                   <div className="flex size-10 shrink-0 items-center justify-center rounded-holo-lg border border-holo-border-soft bg-holo-glass text-holo-text-muted">
                     <FolderOpen size={18} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-holo-text">{space.name}</div>
+                    <div className="truncate text-sm font-medium text-holo-text">{repo.name}</div>
                     <div className="mt-0.5 truncate text-xs text-holo-text-faint">
-                      {space.owner}/{space.repo} · {relativeTime(space.updatedAt)}
+                      {repo.owner}/{repo.repo}
                     </div>
-                    {space.description && (
+                    {repo.description && (
                       <div className="mt-0.5 truncate text-xs text-holo-text-muted">
-                        {space.description}
+                        {repo.description}
                       </div>
                     )}
                   </div>
                   <ChevronRight size={16} className="shrink-0 text-holo-text-faint" />
+                </button>
+                <button
+                  onClick={() => onRemove(repo.owner, repo.repo)}
+                  className="absolute right-12 top-1/2 -translate-y-1/2 flex size-8 items-center justify-center rounded-holo-md text-holo-text-faint opacity-0 transition hover:bg-holo-danger/10 hover:text-holo-danger group-hover/row:opacity-100"
+                  title="Supprimer"
+                >
+                  <Trash2 size={14} />
                 </button>
               </li>
             ))}
@@ -369,30 +222,95 @@ function SpacesScreen({
   )
 }
 
+// ─── Add repo sheet ───────────────────────────────────────────────────────────
+
+function AddRepoSheet({
+  onAdd, onCancel,
+}: {
+  onAdd: (meta: import('./lib/github').RepoMeta) => void
+  onCancel: () => void
+}) {
+  const [url, setUrl] = useState('')
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const coords = parseRepoUrl(url)
+    if (!coords) {
+      setErrorMsg('URL invalide. Exemple : https://github.com/owner/repo')
+      setStatus('error')
+      return
+    }
+    setStatus('loading')
+    setErrorMsg('')
+    try {
+      const meta = await fetchRepoMeta(coords.owner, coords.repo)
+      onAdd(meta)
+    } catch (err: unknown) {
+      setStatus('error')
+      setErrorMsg(err instanceof Error ? err.message : 'Erreur inconnue')
+    }
+  }
+
+  return (
+    <div className="border-b border-holo-border-soft bg-holo-bg/95 px-4 py-4 backdrop-blur">
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-holo-text">Ajouter un repo GitHub public</span>
+          <button type="button" onClick={onCancel} className="text-holo-text-faint hover:text-holo-text">
+            <X size={16} />
+          </button>
+        </div>
+        <input
+          ref={inputRef}
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setStatus('idle') }}
+          placeholder="https://github.com/owner/repo"
+          className="w-full rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2.5 text-sm text-holo-text placeholder:text-holo-text-faint outline-none focus:border-holo-primary/50"
+        />
+        {status === 'error' && (
+          <p className="text-xs text-holo-danger">{errorMsg}</p>
+        )}
+        <button
+          type="submit"
+          disabled={!url.trim() || status === 'loading'}
+          className="w-full rounded-holo-lg bg-holo-primary py-2.5 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-50"
+        >
+          {status === 'loading' ? (
+            <span className="flex items-center justify-center gap-2">
+              <RefreshCw size={13} className="animate-spin" /> Vérification…
+            </span>
+          ) : 'Ajouter'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 // ─── Files screen ─────────────────────────────────────────────────────────────
 
 function FilesScreen({
-  space, files, loading, search, onSearchChange, onSelect, onBack, onLogout,
+  repo, files, loading, error, search, onSearchChange, onSelect, onBack,
 }: {
-  user: GithubUser
-  space: HoloSpace
+  repo: SavedRepo
   files: TreeFile[] | null
   loading: boolean
+  error?: string
   search: string
   onSearchChange: (s: string) => void
   onSelect: (path: string) => void
   onBack: () => void
-  onLogout: () => void
 }) {
   const mdFiles = files?.filter((f) => f.path.endsWith('.md')) ?? []
 
   const filtered = search.trim()
-    ? mdFiles.filter((f) =>
-        f.path.toLowerCase().includes(search.toLowerCase()),
-      )
+    ? mdFiles.filter((f) => f.path.toLowerCase().includes(search.toLowerCase()))
     : mdFiles
 
-  // Group by folder
   const grouped = filtered.reduce<Record<string, typeof filtered>>((acc, f) => {
     const parts = f.path.split('/')
     const folder = parts.length > 1 ? parts.slice(0, -1).join('/') : ''
@@ -403,7 +321,7 @@ function FilesScreen({
   return (
     <div className="flex min-h-full flex-col">
       <NavBar
-        title={space.name}
+        title={repo.name}
         left={
           <button
             onClick={onBack}
@@ -412,17 +330,8 @@ function FilesScreen({
             <ArrowLeft size={18} />
           </button>
         }
-        right={
-          <button
-            onClick={onLogout}
-            className="flex size-9 items-center justify-center rounded-holo-md text-holo-text-muted transition hover:bg-holo-glass hover:text-holo-text"
-          >
-            <LogOut size={16} />
-          </button>
-        }
       />
 
-      {/* Search bar */}
       <div className="border-b border-holo-border-soft px-3 py-2">
         <div className="flex items-center gap-2 rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2">
           <Search size={14} className="shrink-0 text-holo-text-faint" />
@@ -448,7 +357,13 @@ function FilesScreen({
           </div>
         )}
 
-        {!loading && filtered.length === 0 && (
+        {error && !loading && (
+          <div className="m-4 rounded-holo-lg border border-holo-danger/30 bg-holo-danger/10 px-4 py-3 text-sm text-holo-danger">
+            {error}
+          </div>
+        )}
+
+        {!loading && !error && filtered.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-16 text-holo-text-faint">
             <FileText size={24} />
             <span className="text-sm">Aucun fichier .md trouvé</span>
@@ -472,9 +387,7 @@ function FilesScreen({
                       className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-holo-glass active:bg-holo-glass-hover"
                     >
                       <FileText size={15} className="shrink-0 text-holo-text-faint" />
-                      <span className="min-w-0 flex-1 truncate text-sm text-holo-text">
-                        {name}
-                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-holo-text">{name}</span>
                       <ChevronRight size={14} className="shrink-0 text-holo-text-faint" />
                     </button>
                   </li>
@@ -491,15 +404,13 @@ function FilesScreen({
 // ─── Viewer screen ────────────────────────────────────────────────────────────
 
 function ViewerScreen({
-  space, path, content, loading, onBack,
+  repo, path, content, loading, onBack,
 }: {
-  user: GithubUser
-  space: HoloSpace
+  repo: SavedRepo
   path: string
   content: string | null
   loading: boolean
   onBack: () => void
-  onLogout: () => void
 }) {
   const title = getFileTitle(path, content)
   const body = content ? stripFrontmatter(content) : ''
@@ -525,9 +436,8 @@ function ViewerScreen({
             <span className="text-sm">Chargement…</span>
           </div>
         )}
-
         {!loading && (
-          <article className="holo-markdown mx-auto max-w-[720px] px-5 py-8 pb-safe-bottom">
+          <article className="holo-markdown mx-auto max-w-[720px] px-5 py-8">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
           </article>
         )}
@@ -538,11 +448,7 @@ function ViewerScreen({
 
 // ─── NavBar ──────────────────────────────────────────────────────────────────
 
-function NavBar({
-  title,
-  left,
-  right,
-}: {
+function NavBar({ title, left, right }: {
   title: string
   left?: React.ReactNode
   right?: React.ReactNode
@@ -557,3 +463,4 @@ function NavBar({
     </header>
   )
 }
+
