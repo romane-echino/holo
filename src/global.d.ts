@@ -151,6 +151,8 @@ interface HoloApi {
   ) => Promise<{ ok: true; newPath: string }>
   readRepoConfig: () => Promise<Record<string, unknown> | null>
   writeRepoConfig: (config: Record<string, unknown>) => Promise<{ ok: true }>
+  readSpaceConfig: (spacePath: string) => Promise<Record<string, unknown> | null>
+  writeSpaceConfig: (spacePath: string, config: Record<string, unknown>) => Promise<{ ok: true }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
   gitGetFolderStatuses: (folderPaths: string[]) => Promise<Record<string, 'local' | 'git-sync' | 'git-readonly'>>
   gitGetFileLog: (filePath: string, maxCount?: number) => Promise<HoloGitFileCommit[]>

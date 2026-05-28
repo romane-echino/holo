@@ -1862,6 +1862,31 @@ ipcMain.handle('holo:read-repo-config', async () => {
   }
 })
 
+ipcMain.handle('holo:read-space-config', async (_event, spacePath) => {
+  const normalizedSpacePath = path.normalize(String(spacePath ?? ''))
+  if (!isPathInsideAnyKnownRoot(normalizedSpacePath) && normalizedSpacePath !== path.normalize(normalizedSpacePath)) {
+    throw new Error('Chemin non autorisé.')
+  }
+  if (!normalizedSpacePath) return null
+  const configPath = path.join(normalizedSpacePath, '.holo.json')
+  try {
+    const content = await fs.readFile(configPath, 'utf8')
+    return JSON.parse(content)
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('holo:write-space-config', async (_event, spacePath, config) => {
+  const normalizedSpacePath = path.normalize(String(spacePath ?? ''))
+  if (!isPathInsideAnyKnownRoot(normalizedSpacePath)) {
+    throw new Error('Chemin non autorisé.')
+  }
+  const configPath = path.join(normalizedSpacePath, '.holo.json')
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
+  return { ok: true }
+})
+
 ipcMain.handle('holo:write-repo-config', async (_event, config) => {
   if (!currentRootPath) {
     throw new Error('Aucun dépôt ouvert.')

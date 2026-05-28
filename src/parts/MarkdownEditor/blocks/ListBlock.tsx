@@ -81,6 +81,29 @@ function itemsToNode(items: Item[], base: ListNode): ListNode {
   return { ...base, spread: false, children: listItems }
 }
 
+// ─── Calcul des marqueurs imbriqués (1.1, a.1, a.1.1…) ──────────────────────
+
+function computeLabels(items: Item[], listStyle: string): string[] {
+  // counters[depth] = compteur courant pour ce niveau
+  const counters: number[] = []
+  return items.map(item => {
+    const d = item.depth
+    // Reset des niveaux plus profonds
+    counters.splice(d + 1)
+    // Incrémenter le compteur courant
+    counters[d] = (counters[d] ?? 0) + 1
+    // Construire le label selon la profondeur
+    if (listStyle === 'alpha') {
+      // Niveau 0 → lettre, niveaux suivants → numéros
+      const parts = counters.map((c, i) => i === 0 ? String.fromCharCode(96 + c) : String(c))
+      return parts.join('.') + '.'
+    } else if (listStyle === 'ordered' || listStyle === 'numeric') {
+      return counters.join('.') + '.'
+    }
+    return '' // bullet/checklist → pas de label calculé
+  })
+}
+
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 export interface ListBlockProps {
@@ -98,6 +121,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
   function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart }, ref) {
     const [items, setItems] = useState<Item[]>(() => nodeToItems(node))
     const listStyle = (node.data?.listStyle as string | undefined) ?? (node.ordered ? 'ordered' : 'bullet')
+    const labels = computeLabels(items, listStyle)
     // Ref toujours synchronisé avec items pour éviter les closures périmées dans les handlers
     const itemsRef = useRef(items)
     itemsRef.current = items
@@ -287,6 +311,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
             key={item.id}
             item={item}
             idx={idx}
+            label={labels[idx]}
             ordered={node.ordered}
             listStyle={listStyle}
             elRef={(el) => {
@@ -318,6 +343,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 function ListItemRow({
   item,
   idx,
+  label,
   ordered,
   listStyle,
   elRef,
@@ -331,6 +357,7 @@ function ListItemRow({
 }: {
   item: Item
   idx: number
+  label: string
   ordered: boolean
   listStyle: string
   elRef: (el: HTMLDivElement | null) => void
@@ -469,14 +496,14 @@ function ListItemRow({
     )
     : listStyle === 'alpha'
     ? (
-      <span className="min-w-[1.5rem] mt-[0.35em] shrink-0 select-none text-right text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
-        {String.fromCharCode(97 + (idx % 26))}.
+      <span className="min-w-[2rem] mt-[0.35em] shrink-0 select-none text-right text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
+        {label}
       </span>
     )
     : ordered
     ? (
-      <span className="min-w-[1.5rem] mt-[0.5em] shrink-0 select-none text-right tabular-nums text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
-        {idx + 1}.
+      <span className="min-w-[2rem] mt-[0.5em] shrink-0 select-none text-right tabular-nums text-holo-text-faint" style={{ fontSize: 'calc(0.875rem * var(--editor-fs-scale, 1))' }}>
+        {label}
       </span>
     )
     : (

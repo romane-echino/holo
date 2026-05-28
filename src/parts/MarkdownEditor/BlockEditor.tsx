@@ -10,7 +10,7 @@
  * Les autres types sont rendus en fallback non-éditable.
  */
 
-import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef } from 'react'
 import { Trash2, X } from 'lucide-react'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -29,7 +29,7 @@ import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
 import { cn } from '../../utils/global'
-import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode } from './lib/types'
+import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -181,6 +181,10 @@ function isEmptyBlock(node: BlockNode): boolean {
 
 // ─── BlockEditor ─────────────────────────────────────────────────────────────
 
+export interface BlockEditorHandle {
+  insertImage: (url: string, alt: string) => void
+}
+
 export interface BlockEditorProps {
   markdown: string
   onChange: (markdown: string) => void
@@ -188,7 +192,7 @@ export interface BlockEditorProps {
   fontScale?: number
 }
 
-export function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps) {
+export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps, ref) {
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
   const [selectedBlockIds] = useState<Set<string>>(new Set())
@@ -494,6 +498,36 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
   )
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const lastFocusedBlockIdRef = useRef<string | null>(null)
+
+  // Expose insertImage via ref
+  useImperativeHandle(ref, () => ({
+    insertImage(url: string, alt: string) {
+      const imageNode = {
+        type: 'paragraph' as const,
+        children: [{ type: 'image' as const, url, alt, title: null }],
+      }
+      const newBlock: BlockState = { id: crypto.randomUUID(), node: imageNode }
+      blocksDirtyRef.current = true
+      setBlocks((prev) => {
+        const focusedId = lastFocusedBlockIdRef.current
+        if (!focusedId) return [...prev, newBlock]
+        const idx = prev.findIndex((b) => b.id === focusedId)
+        if (idx === -1) return [...prev, newBlock]
+        const focused = prev[idx]
+        // Si le bloc focalisé est un paragraphe vide → le remplacer par l'image
+        const isParagraph = focused.node.type === 'paragraph'
+        const isEmpty = isParagraph && (focused.node as ParagraphNode).children.every(
+          (c) => c.type === 'text' && (c as TextNode).value === ''
+        )
+        if (isEmpty) {
+          return [...prev.slice(0, idx), newBlock, ...prev.slice(idx + 1)]
+        }
+        // Sinon insérer après
+        return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
+      })
+    },
+  }))
 
   // Bouton + dans la marge : insère un paragraphe vide après le bloc et ouvre le slash command
   const handleInsertAndSlash = useCallback((id: string) => {
@@ -532,6 +566,7 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
           className={cn(
             'group/block relative',
           )}
+          onFocusCapture={() => { lastFocusedBlockIdRef.current = block.id }}
         >
           {/* Bouton + dans la marge */}
           <div
@@ -575,7 +610,7 @@ export function BlockEditor({ markdown, onChange, className, fontScale }: BlockE
       )}
     </div>
   )
-}
+})
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 // Route chaque bloc vers son composant. Les types non encore implémentés

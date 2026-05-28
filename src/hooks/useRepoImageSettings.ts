@@ -30,6 +30,10 @@ export function useRepoImageSettings({
     s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey,
     dropboxAccessToken, gdriveAccessToken,
     setRepoImageStorageMode, setRepoImageModeReady,
+    setAzureBlobContainerUrl, setAzureBlobSasToken,
+    setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl,
+    setDropboxAccessToken, setDropboxFolderPath,
+    setGdriveAccessToken, setGdriveFolderId,
   } = useConfig()
   const { rootPath, setFolderIconByPath } = useWorkspace()
   const { globalConfigReady, setShowSettings } = useUI()
@@ -80,18 +84,35 @@ export function useRepoImageSettings({
           setRepoImageStorageMode('local')
         }
 
+        // Charge les identifiants per-space depuis l'app config local
+        const appCfg = await holo.getHoloConfig().catch(() => ({})) as Record<string, unknown>
+        const allCreds = (appCfg['space-credentials'] ?? {}) as Record<string, Record<string, string>>
+        const creds = allCreds[rootPath] ?? {}
+        setAzureBlobContainerUrl(creds['azureContainerUrl'] ?? (appCfg['azure-container-url'] as string || ''))
+        setAzureBlobSasToken(creds['azureSasToken'] ?? (appCfg['azure-sas-token'] as string || ''))
+        setS3Region(creds['s3Region'] ?? (appCfg['s3-region'] as string || ''))
+        setS3Bucket(creds['s3Bucket'] ?? (appCfg['s3-bucket'] as string || ''))
+        setS3AccessKeyId(creds['s3AccessKeyId'] ?? (appCfg['s3-access-key-id'] as string || ''))
+        setS3SecretAccessKey(creds['s3SecretAccessKey'] ?? (appCfg['s3-secret-access-key'] as string || ''))
+        setS3Endpoint(creds['s3Endpoint'] ?? (appCfg['s3-endpoint'] as string || ''))
+        setS3PublicBaseUrl(creds['s3PublicBaseUrl'] ?? (appCfg['s3-public-base-url'] as string || ''))
+        setDropboxAccessToken(creds['dropboxAccessToken'] ?? (appCfg['dropbox-access-token'] as string || ''))
+        setDropboxFolderPath(creds['dropboxFolderPath'] ?? (appCfg['dropbox-folder-path'] as string || ''))
+        setGdriveAccessToken(creds['gdriveAccessToken'] ?? (appCfg['gdrive-access-token'] as string || ''))
+        setGdriveFolderId(creds['gdriveFolderId'] ?? (appCfg['gdrive-folder-id'] as string || ''))
+
         if (globalConfigReady && mode && mode !== 'local') {
-          const hasAzure = !!(azureBlobContainerUrl.trim() && azureBlobSasToken.trim())
-          const hasS3 = !!(s3Region.trim() && s3Bucket.trim() && s3AccessKeyId.trim() && s3SecretAccessKey.trim())
-          const hasDropbox = !!dropboxAccessToken.trim()
-          const hasGdrive = !!gdriveAccessToken.trim()
+          const hasAzure = !!((creds['azureContainerUrl'] || appCfg['azure-container-url'] as string || '').trim() && (creds['azureSasToken'] || appCfg['azure-sas-token'] as string || '').trim())
+          const hasS3 = !!((creds['s3Region'] || appCfg['s3-region'] as string || '').trim() && (creds['s3Bucket'] || appCfg['s3-bucket'] as string || '').trim() && (creds['s3AccessKeyId'] || appCfg['s3-access-key-id'] as string || '').trim() && (creds['s3SecretAccessKey'] || appCfg['s3-secret-access-key'] as string || '').trim())
+          const hasDropbox = !!((creds['dropboxAccessToken'] || appCfg['dropbox-access-token'] as string || '').trim())
+          const hasGdrive = !!((creds['gdriveAccessToken'] || appCfg['gdrive-access-token'] as string || '').trim())
           const credOk = (mode === 'azure' && hasAzure)
             || (mode === 's3' && hasS3)
             || (mode === 'dropbox' && hasDropbox)
             || (mode === 'gdrive' && hasGdrive)
 
           if (!credOk) {
-            window.alert(`Ce dépôt utilise le stockage d'images « ${mode} » mais les clés d'authentification ne sont pas configurées sur cette machine.\n\nVa dans Paramètres › Stockage d'images pour les saisir.`)
+            window.alert(`Ce dépôt utilise le stockage d'images « ${mode} » mais les identifiants ne sont pas configurés sur cette machine.\n\nVa dans Paramètres › Espace pour les saisir.`)
             setShowSettings(true)
           }
         }
@@ -116,20 +137,16 @@ export function useRepoImageSettings({
       }
     },
     [
-      azureBlobContainerUrl,
-      azureBlobSasToken,
-      dropboxAccessToken,
-      gdriveAccessToken,
       getHoloApi,
       globalConfigReady,
       rootPath,
-      s3AccessKeyId,
-      s3Bucket,
-      s3Region,
-      s3SecretAccessKey,
       setFolderIconByPath,
       setRepoImageModeReady,
       setRepoImageStorageMode,
+      setAzureBlobContainerUrl, setAzureBlobSasToken,
+      setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl,
+      setDropboxAccessToken, setDropboxFolderPath,
+      setGdriveAccessToken, setGdriveFolderId,
       setShowSettings,
     ],
   )

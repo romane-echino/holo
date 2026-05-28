@@ -194,6 +194,7 @@ function TreeNode({
         )}
         style={{ paddingLeft: `${10 + level * 14}px` }}
         title={node.path}
+        data-tree-path={node.path}
       >
         <span className="flex size-4 shrink-0 items-center justify-center text-holo-text-faint">
           {isFolder && hasChildren ? (
@@ -336,6 +337,37 @@ export function SpacePanel({
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
   const [selectedFolderPath, setSelectedFolderPath] = useState('')
+
+  // Réagit au clic sur un dossier dans le breadcrumb de l'éditeur
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { path } = (e as CustomEvent<{ path: string }>).detail
+      if (!rootPath || !path.startsWith(rootPath)) return
+      // Basculer sur l'onglet "browse"
+      setTab('browse')
+      // Sélectionner le dossier
+      setSelectedFolderPath(path)
+      // Ouvrir tous les ancêtres
+      setExpanded(prev => {
+        const next = new Set(prev)
+        let current = path
+        while (current.length > rootPath.length) {
+          const parent = current.slice(0, current.lastIndexOf('/'))
+          if (parent.length >= rootPath.length) next.add(parent)
+          current = parent
+        }
+        next.add(path) // ouvrir le dossier lui-même
+        return next
+      })
+      // Scroll vers l'élément après le rendu
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(path)}"]`)
+        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      })
+    }
+    window.addEventListener('holo:reveal-in-tree', handler)
+    return () => window.removeEventListener('holo:reveal-in-tree', handler)
+  }, [rootPath])
 
   // ─── Métadonnées frontmatter des fichiers .md ─────────────────────────────
   const [fileMeta, setFileMeta] = useState<Record<string, TreeFileMeta>>({})

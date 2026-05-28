@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('holo', {
     ipcRenderer.invoke('fs:move-path', sourcePath, targetDirectoryPath),
   readRepoConfig: () => ipcRenderer.invoke('holo:read-repo-config'),
   writeRepoConfig: (config) => ipcRenderer.invoke('holo:write-repo-config', config),
+  readSpaceConfig: (spacePath) => ipcRenderer.invoke('holo:read-space-config', spacePath),
+  writeSpaceConfig: (spacePath, config) => ipcRenderer.invoke('holo:write-space-config', spacePath, config),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
   gitGetFolderStatuses: (folderPaths) => ipcRenderer.invoke('git:get-folder-statuses', folderPaths),
   gitGetFileLog: (filePath, maxCount = 10) => ipcRenderer.invoke('git:get-file-log', filePath, maxCount),

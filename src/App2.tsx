@@ -43,7 +43,14 @@ export default function App2() {
   const navigate = useNavigate()
   const hasPanel = pathname !== '/'
 
-  const { appAuthor, gitEmail, gitState, setAppAuthor, setGitEmail } = useConfig()
+  const {
+    appAuthor, gitEmail, gitState, setAppAuthor, setGitEmail,
+    setAzureBlobContainerUrl, setAzureBlobSasToken,
+    setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl,
+    setDropboxAccessToken, setDropboxFolderPath,
+    setGdriveAccessToken, setGdriveFolderId,
+    setRepoImageStorageMode,
+  } = useConfig()
 
   // ─── Favoris d'espaces ────────────────────────────────────────────────────
   const [favoriteFolders, setFavoriteFolders] = useState<string[]>([])
@@ -99,13 +106,35 @@ export default function App2() {
         // Restaure l'auteur et l'email dans le ConfigContext (affiché dans la Sidebar)
         if (fullName) setAppAuthor(fullName)
         if (gitEmailValue) setGitEmail(gitEmailValue)
+        // Restaure les identifiants de stockage dans le ConfigContext
+        setAzureBlobContainerUrl(cfg['azure-container-url'] as string || '')
+        setAzureBlobSasToken(cfg['azure-sas-token'] as string || '')
+        setS3Region(cfg['s3-region'] as string || '')
+        setS3Bucket(cfg['s3-bucket'] as string || '')
+        setS3AccessKeyId(cfg['s3-access-key-id'] as string || '')
+        setS3SecretAccessKey(cfg['s3-secret-access-key'] as string || '')
+        setS3Endpoint(cfg['s3-endpoint'] as string || '')
+        setS3PublicBaseUrl(cfg['s3-public-base-url'] as string || '')
+        setDropboxAccessToken(cfg['dropbox-access-token'] as string || '')
+        setDropboxFolderPath(cfg['dropbox-folder-path'] as string || '')
+        setGdriveAccessToken(cfg['gdrive-access-token'] as string || '')
+        setGdriveFolderId(cfg['gdrive-folder-id'] as string || '')
         setSettingsValue({
           firstName,
           lastName,
           gitEmail: gitEmailValue,
-          imageStorageMode: (cfg['image-storage-mode'] as HoloSettingsValue['imageStorageMode']) ?? 'local',
           azureContainerUrl: cfg['azure-container-url'] as string || '',
           azureSasToken: cfg['azure-sas-token'] as string || '',
+          s3Region: cfg['s3-region'] as string || '',
+          s3Bucket: cfg['s3-bucket'] as string || '',
+          s3AccessKeyId: cfg['s3-access-key-id'] as string || '',
+          s3SecretAccessKey: cfg['s3-secret-access-key'] as string || '',
+          s3Endpoint: cfg['s3-endpoint'] as string || '',
+          s3PublicBaseUrl: cfg['s3-public-base-url'] as string || '',
+          dropboxAccessToken: cfg['dropbox-access-token'] as string || '',
+          dropboxFolderPath: cfg['dropbox-folder-path'] as string || '',
+          gdriveAccessToken: cfg['gdrive-access-token'] as string || '',
+          gdriveFolderId: cfg['gdrive-folder-id'] as string || '',
           aiProvider: (cfg['ai-provider'] as HoloSettingsValue['aiProvider']) ?? 'local',
           geminiApiKey: cfg['gemini-api-key'] as string || '',
           openAiApiKey: cfg['openai-api-key'] as string || '',
@@ -140,7 +169,6 @@ export default function App2() {
   const handleSettingsSave = useCallback(async (value: HoloSettingsValue) => {
     const fullName = `${value.firstName?.trim() ?? ''} ${value.lastName?.trim() ?? ''}`.trim()
     // Lire le config existant et merger en une seule écriture atomique
-    // (évite la race-condition de Promise.all : 14 lectures simultanées → chaque write écrasait les autres)
     const existing = await window.holo?.getHoloConfig() ?? {}
     await window.holo?.setHoloConfig({
       ...existing,
@@ -148,9 +176,18 @@ export default function App2() {
       'app-author-first-name': value.firstName?.trim() ?? '',
       'app-author-last-name': value.lastName?.trim() ?? '',
       'git-email': value.gitEmail?.trim() ?? '',
-      'image-storage-mode': value.imageStorageMode ?? 'local',
       'azure-container-url': value.azureContainerUrl ?? '',
       'azure-sas-token': value.azureSasToken ?? '',
+      's3-region': value.s3Region ?? '',
+      's3-bucket': value.s3Bucket ?? '',
+      's3-access-key-id': value.s3AccessKeyId ?? '',
+      's3-secret-access-key': value.s3SecretAccessKey ?? '',
+      's3-endpoint': value.s3Endpoint ?? '',
+      's3-public-base-url': value.s3PublicBaseUrl ?? '',
+      'dropbox-access-token': value.dropboxAccessToken ?? '',
+      'dropbox-folder-path': value.dropboxFolderPath ?? '',
+      'gdrive-access-token': value.gdriveAccessToken ?? '',
+      'gdrive-folder-id': value.gdriveFolderId ?? '',
       'ai-provider': value.aiProvider ?? 'local',
       'gemini-api-key': value.geminiApiKey ?? '',
       'openai-api-key': value.openAiApiKey ?? '',
@@ -158,6 +195,19 @@ export default function App2() {
       'theme': value.theme ?? 'dark',
       'accent': value.accent ?? 'violet',
     })
+    // Update ConfigContext credentials
+    setAzureBlobContainerUrl(value.azureContainerUrl ?? '')
+    setAzureBlobSasToken(value.azureSasToken ?? '')
+    setS3Region(value.s3Region ?? '')
+    setS3Bucket(value.s3Bucket ?? '')
+    setS3AccessKeyId(value.s3AccessKeyId ?? '')
+    setS3SecretAccessKey(value.s3SecretAccessKey ?? '')
+    setS3Endpoint(value.s3Endpoint ?? '')
+    setS3PublicBaseUrl(value.s3PublicBaseUrl ?? '')
+    setDropboxAccessToken(value.dropboxAccessToken ?? '')
+    setDropboxFolderPath(value.dropboxFolderPath ?? '')
+    setGdriveAccessToken(value.gdriveAccessToken ?? '')
+    setGdriveFolderId(value.gdriveFolderId ?? '')
     if (fullName) setAppAuthor(fullName)
     if (value.gitEmail) setGitEmail(value.gitEmail.trim())
     applyTheme(value.theme ?? 'dark')
@@ -165,7 +215,40 @@ export default function App2() {
     setSettingsValue(value)
     setSettingsSaved(true)
     setTimeout(() => setSettingsSaved(false), 3000)
-  }, [setAppAuthor, setGitEmail])
+  }, [setAppAuthor, setGitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId])
+
+  const handleSaveSpaceConfig = useCallback(async (spacePath: string, mode: string, credentials: import('./parts/Settings').SpaceCredentials) => {
+    try {
+      // Mode → .holo.json (commité)
+      const existingSpace = (await window.holo?.readSpaceConfig(spacePath).catch(() => null)) ?? {}
+      await window.holo?.writeSpaceConfig(spacePath, { ...existingSpace, imageStorageMode: mode })
+      // Identifiants → app config local (non commité), indexés par spacePath
+      const appCfg = await window.holo?.getHoloConfig().catch(() => ({})) ?? {}
+      const allCreds = (appCfg as any)['space-credentials'] ?? {}
+      await window.holo?.setHoloConfig({
+        ...(appCfg as any),
+        'space-credentials': { ...allCreds, [spacePath]: credentials },
+      })
+      // Si c'est l'espace actif, mettre à jour le ConfigContext
+      if (spacePath === rootPath) {
+        setAzureBlobContainerUrl(credentials.azureContainerUrl ?? '')
+        setAzureBlobSasToken(credentials.azureSasToken ?? '')
+        setS3Region(credentials.s3Region ?? '')
+        setS3Bucket(credentials.s3Bucket ?? '')
+        setS3AccessKeyId(credentials.s3AccessKeyId ?? '')
+        setS3SecretAccessKey(credentials.s3SecretAccessKey ?? '')
+        setS3Endpoint(credentials.s3Endpoint ?? '')
+        setS3PublicBaseUrl(credentials.s3PublicBaseUrl ?? '')
+        setDropboxAccessToken(credentials.dropboxAccessToken ?? '')
+        setDropboxFolderPath(credentials.dropboxFolderPath ?? '')
+        setGdriveAccessToken(credentials.gdriveAccessToken ?? '')
+        setGdriveFolderId(credentials.gdriveFolderId ?? '')
+        setRepoImageStorageMode(mode as any)
+      }
+    } catch (err) {
+      console.error('[App2] handleSaveSpaceConfig', err)
+    }
+  }, [rootPath, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setRepoImageStorageMode])
 
   // Listener pour le thème "system" (préférence OS)
   useEffect(() => {
@@ -678,7 +761,10 @@ export default function App2() {
         open={settingsOpen}
         value={settingsValue}
         saved={settingsSaved}
+        spaces={recentFolders}
+        currentSpace={rootPath ?? undefined}
         onSave={handleSettingsSave}
+        onSaveSpaceConfig={handleSaveSpaceConfig}
         onChange={(value) => {
           // Prévisualisation en temps réel (sans persister)
           applyTheme(value.theme ?? 'dark')

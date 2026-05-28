@@ -690,16 +690,16 @@ src/main.tsx
 - ✅ Voir dans l'arboresence et dans editor frame si le document est un favori.
 - ✅ Dans EditorFrame "..." Ajouter dans le menu contextuelle ajouter/enlever des favoris
 - ✅ Dans inspector pouvoir cliquer dans la table des matières pour scrollTo dans EditorFrame
-- Dans EditorFrame Quand le headerSticky apparait et qu'on clique "..." le menu contextuell aparait hors de la zone
+- ✅ Dans EditorFrame Quand le headerSticky apparait et qu'on clique "..." le menu contextuell aparait hors de la zone
 - ✅ Donner une couleur aux tags (selon la première ou les deux premier caractère) ex : pe -> jaune (trouver un algo pour pick une couleur selon une palette)
-- Mieux gérer les nested list numérique et alphabetiques
+- ✅Mieux gérer les nested list numérique et alphabetiques
   1. Element 1
     1.1 Sous element 1
   
   a. Element 1
     a.1 Sous element 1
       a.1.1 sous sous element 1
-- Dans inspector ajouter a coté de Tables de matière et liens l'onglet "Notes" qui ressence tout les "footnote" du document
+- ✅ Dans inspector ajouter a coté de Tables de matière et liens l'onglet "Notes" qui ressence tout les "footnote" du document
 - ✅Ajouter le support des composant manquant (block quote, latex, image, code, footnote)
 - ✅ Dans EditorFrame voir un status d'enregistrement (j'ai besoin de savoir si ce fichier est bien synchronizé avec git)
   - Enregistré localement (disquette jaune)
@@ -708,7 +708,7 @@ src/main.tsx
 - ✅ Intégration des changelogs dans les settings
 - Rebrancher / optimiser le design de electron updater
 - Designer le panel AI comme copilot
-- En haut de Editorframe dans le breadcrumb pouvoir cliquer sur un dossier pour l'afficher/visualiser dans l'arboresence
+- ✅ En haut de Editorframe dans le breadcrumb pouvoir cliquer sur un dossier pour l'afficher/visualiser dans l'arboresence
 - ✅Voir d'une manière ou d'une autre que le document est un favori dans editorframe 
 - ✅Supprimer un fichier / dossier nécessite une confirmation "Etes-vous sur..."
 - Possibilité de pouvoir sélectionner plusieurs bloc avec la souris (drag select?) et les supprimer (BACKSPACE / DELETE)
@@ -719,3 +719,11 @@ src/main.tsx
 - ✅Quand on est dans un bloc ajouter un bouton "+" a gauche dans la marge pour appelé le palette de commandes
 - ✅les block LaTeX et footnote n'ont pas l'aire implémenté
 - ✅Dans inspector ne montré que les 5 dernière activité (avec un petit text XX autres activité)
+- Dans le command palette il manque les composants suivants :
+  - Note (footnote)
+  - Citation (block quote)
+  - Séparateur (pas encore développé coté block editor)
+
+
+## A la fin des tâches
+- Ajouter des tests sur les nouveau composant, faire un gros tsc + lint + test

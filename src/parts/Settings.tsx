@@ -22,9 +22,19 @@ export type HoloSettingsValue = {
   lastName?: string
   gitEmail?: string
 
-  imageStorageMode?: 'local' | 'azure'
+  imageStorageMode?: 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive'
   azureContainerUrl?: string
   azureSasToken?: string
+  s3Region?: string
+  s3Bucket?: string
+  s3AccessKeyId?: string
+  s3SecretAccessKey?: string
+  s3Endpoint?: string
+  s3PublicBaseUrl?: string
+  dropboxAccessToken?: string
+  dropboxFolderPath?: string
+  gdriveAccessToken?: string
+  gdriveFolderId?: string
 
   aiProvider?: 'gemini' | 'openai' | 'local'
   geminiApiKey?: string
@@ -35,19 +45,47 @@ export type HoloSettingsValue = {
   accent?: 'violet' | 'blue' | 'cyan'
 }
 
+export type SpaceCredentials = {
+  azureContainerUrl?: string
+  azureSasToken?: string
+  s3Region?: string
+  s3Bucket?: string
+  s3AccessKeyId?: string
+  s3SecretAccessKey?: string
+  s3Endpoint?: string
+  s3PublicBaseUrl?: string
+  dropboxAccessToken?: string
+  dropboxFolderPath?: string
+  gdriveAccessToken?: string
+  gdriveFolderId?: string
+}
+
 export type HoloSettingsDialogProps = {
   open: boolean
   value?: HoloSettingsValue
   saved?: boolean
+  spaces?: string[]
+  currentSpace?: string
   onChange?: (value: HoloSettingsValue) => void
   onSave?: (value: HoloSettingsValue) => void
+  onSaveSpaceConfig?: (spacePath: string, mode: string, credentials: SpaceCredentials) => Promise<void>
   onClose?: () => void
 }
 
 const defaultValue: HoloSettingsValue = {
-  imageStorageMode: 'azure',
+  imageStorageMode: 'local',
   azureContainerUrl: '',
   azureSasToken: '',
+  s3Region: '',
+  s3Bucket: '',
+  s3AccessKeyId: '',
+  s3SecretAccessKey: '',
+  s3Endpoint: '',
+  s3PublicBaseUrl: '',
+  dropboxAccessToken: '',
+  dropboxFolderPath: '',
+  gdriveAccessToken: '',
+  gdriveFolderId: '',
   aiProvider: 'gemini',
   geminiApiKey: '',
   openAiApiKey: '',
@@ -64,7 +102,7 @@ const tabs: Array<{
   icon: React.ReactNode
 }> = [
   { id: 'profile', label: 'Profil', description: 'Identité et Git', icon: <UserRound size={16} /> },
-  { id: 'storage', label: 'Stockage', description: 'Images et dépôts', icon: <Database size={16} /> },
+  { id: 'storage', label: 'Espace', description: 'Stockage & images', icon: <Database size={16} /> },
   { id: 'ai', label: 'IA', description: 'Providers et prompt', icon: <Bot size={16} /> },
   { id: 'appearance', label: 'Apparence', description: 'Thème et accent', icon: <Palette size={16} /> },
   { id: 'about', label: 'Application', description: 'Version et changelog', icon: <Settings size={16} /> },
@@ -122,6 +160,9 @@ function Section({
   )
 }
 
+const selectClassName =
+  'w-full rounded-holo-lg border border-holo-border-soft bg-holo-bg px-3 py-2.5 text-sm text-holo-text transition focus:border-holo-primary/40 focus:shadow-[0_0_0_4px_rgba(123,97,255,.10)] focus:outline-none'
+
 function Select({
   value,
   onChange,
@@ -135,10 +176,11 @@ function Select({
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className={cn(inputClassName, 'appearance-auto')}
+      className={selectClassName}
+      style={{ colorScheme: 'dark' }}
     >
       {options.map((option) => (
-        <option key={option.value} value={option.value}>
+        <option key={option.value} value={option.value} className="bg-holo-bg text-holo-text">
           {option.label}
         </option>
       ))}
@@ -202,19 +244,48 @@ export function HoloSettingsDialog({
   open,
   value,
   saved,
+  spaces,
+  currentSpace,
   onChange,
   onSave,
+  onSaveSpaceConfig,
   onClose,
 }: HoloSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
   const [draft, setDraft] = useState<HoloSettingsValue>({ ...defaultValue, ...value })
+  const [selectedSpace, setSelectedSpace] = useState<string>(currentSpace ?? '')
+  const [spaceImageMode, setSpaceImageMode] = useState<string>('local')
+  const [spaceCredentials, setSpaceCredentials] = useState<SpaceCredentials>({})
+  const [spaceConfigLoading, setSpaceConfigLoading] = useState(false)
+  const [spaceConfigSaving, setSpaceConfigSaving] = useState(false)
 
   // Resynchronise le draft depuis value à chaque ouverture du dialog
   // (le composant reste monté quand fermé, donc useState n'est pas réinitialisé)
   useEffect(() => {
-    if (open) setDraft({ ...defaultValue, ...value })
+    if (open) {
+      setDraft({ ...defaultValue, ...value })
+      setSelectedSpace(currentSpace ?? spaces?.[0] ?? '')
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  // Charge la config image du space sélectionné (mode depuis .holo.json, identifiants depuis app config)
+  useEffect(() => {
+    if (!selectedSpace || !open) return
+    setSpaceConfigLoading(true)
+    Promise.all([
+      window.holo?.readSpaceConfig(selectedSpace).catch(() => null),
+      window.holo?.getHoloConfig().catch(() => ({})),
+    ]).then(([spaceCfg, appCfg]) => {
+      const mode = (spaceCfg as any)?.imageStorageMode ?? 'local'
+      setSpaceImageMode(['local', 'azure', 's3', 'dropbox', 'gdrive'].includes(mode) ? mode : 'local')
+      const allCreds = (appCfg as any)?.['space-credentials'] ?? {}
+      const creds: SpaceCredentials = allCreds[selectedSpace] ?? {}
+      setSpaceCredentials(creds)
+    })
+    .catch(() => { setSpaceImageMode('local'); setSpaceCredentials({}) })
+    .finally(() => setSpaceConfigLoading(false))
+  }, [selectedSpace, open])
 
   const activeTabMeta = useMemo(() => tabs.find((tab) => tab.id === activeTab) ?? tabs[0], [activeTab])
 
@@ -354,39 +425,167 @@ export function HoloSettingsDialog({
             )}
 
             {activeTab === 'storage' && (
-              <Section
-                title="Stockage d’images"
-                description="Choisis où Holo stocke les images attachées aux documents."
-                icon={<Database size={16} />}
-              >
-                <Field label="Mode de stockage">
-                  <Select
-                    value={draft.imageStorageMode}
-                    onChange={(next) => update({ imageStorageMode: next as HoloSettingsValue['imageStorageMode'] })}
-                    options={[
-                      { value: 'local', label: 'Local, dans le dépôt' },
-                      { value: 'azure', label: 'Azure Blob Storage (SAS)' },
-                    ]}
-                  />
-                </Field>
+              <div className="space-y-5">
+                <Section
+                  title="Paramètres de l’espace"
+                  description="Le mode de stockage est commité dans .holo.json. Les identifiants restent locaux sur cette machine."
+                  icon={<Database size={16} />}
+                >
+                  {spaces && spaces.length > 0 ? (
+                    <>
+                      <Field label="Espace">
+                        <Select
+                          value={selectedSpace}
+                          onChange={setSelectedSpace}
+                          options={spaces.map((s) => ({ value: s, label: s.split('/').at(-1) || s }))}
+                        />
+                      </Field>
 
-                {draft.imageStorageMode === 'azure' && (
-                  <>
-                    <Field label="Azure container URL">
-                      <input
-                        value={draft.azureContainerUrl ?? ''}
-                        onChange={(event) => update({ azureContainerUrl: event.target.value })}
-                        placeholder="https://account.blob.core.windows.net/container"
-                        className={inputClassName}
-                      />
-                    </Field>
+                      <Field label="Mode de stockage des images">
+                        {spaceConfigLoading ? (
+                          <p className="text-xs text-holo-text-faint">Chargement…</p>
+                        ) : (
+                          <Select
+                            value={spaceImageMode}
+                            onChange={setSpaceImageMode}
+                            options={[
+                              { value: 'local', label: 'Local — dans le dépôt (images/)' },
+                              { value: 'azure', label: 'Azure Blob Storage (SAS)' },
+                              { value: 's3', label: 'Amazon S3 / compatible' },
+                              { value: 'dropbox', label: 'Dropbox' },
+                              { value: 'gdrive', label: 'Google Drive' },
+                            ]}
+                          />
+                        )}
+                      </Field>
 
-                    <Field label="Azure SAS token">
-                      <PasswordInput value={draft.azureSasToken} onChange={(next) => update({ azureSasToken: next })} />
-                    </Field>
-                  </>
-                )}
-              </Section>
+                      {spaceImageMode !== 'local' && !spaceConfigLoading && (
+                        <div className="rounded-holo-xl border border-holo-border-soft bg-white/[0.018] p-4 space-y-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            <KeyRound size={14} className="text-holo-primary-soft" />
+                            <span className="text-xs font-semibold uppercase tracking-wider text-holo-text-muted">
+                              Identifiants — stockés localement
+                            </span>
+                          </div>
+
+                          {spaceImageMode === 'azure' && (
+                            <>
+                              <Field label="Azure container URL">
+                                <input
+                                  value={spaceCredentials.azureContainerUrl ?? ''}
+                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, azureContainerUrl: e.target.value }))}
+                                  placeholder="https://account.blob.core.windows.net/container"
+                                  className={inputClassName}
+                                />
+                              </Field>
+                              <Field label="SAS Token">
+                                <PasswordInput
+                                  value={spaceCredentials.azureSasToken}
+                                  onChange={(v) => setSpaceCredentials((p) => ({ ...p, azureSasToken: v }))}
+                                  placeholder="SAS Token Azure"
+                                />
+                              </Field>
+                            </>
+                          )}
+
+                          {spaceImageMode === 's3' && (
+                            <>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <Field label="Région">
+                                  <input
+                                    value={spaceCredentials.s3Region ?? ''}
+                                    onChange={(e) => setSpaceCredentials((p) => ({ ...p, s3Region: e.target.value }))}
+                                    placeholder="eu-west-1"
+                                    className={inputClassName}
+                                  />
+                                </Field>
+                                <Field label="Bucket">
+                                  <input
+                                    value={spaceCredentials.s3Bucket ?? ''}
+                                    onChange={(e) => setSpaceCredentials((p) => ({ ...p, s3Bucket: e.target.value }))}
+                                    placeholder="mon-bucket"
+                                    className={inputClassName}
+                                  />
+                                </Field>
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <Field label="Access Key ID">
+                                  <PasswordInput value={spaceCredentials.s3AccessKeyId} onChange={(v) => setSpaceCredentials((p) => ({ ...p, s3AccessKeyId: v }))} placeholder="AKIA…" />
+                                </Field>
+                                <Field label="Secret Access Key">
+                                  <PasswordInput value={spaceCredentials.s3SecretAccessKey} onChange={(v) => setSpaceCredentials((p) => ({ ...p, s3SecretAccessKey: v }))} placeholder="••••••••" />
+                                </Field>
+                              </div>
+                              <Field label="Endpoint custom (optionnel)">
+                                <input
+                                  value={spaceCredentials.s3Endpoint ?? ''}
+                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, s3Endpoint: e.target.value }))}
+                                  placeholder="https://s3.fr-par.scw.cloud"
+                                  className={inputClassName}
+                                />
+                              </Field>
+                              <Field label="URL publique de base (optionnel)">
+                                <input
+                                  value={spaceCredentials.s3PublicBaseUrl ?? ''}
+                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, s3PublicBaseUrl: e.target.value }))}
+                                  placeholder="https://cdn.example.com"
+                                  className={inputClassName}
+                                />
+                              </Field>
+                            </>
+                          )}
+
+                          {spaceImageMode === 'dropbox' && (
+                            <>
+                              <Field label="Access Token">
+                                <PasswordInput value={spaceCredentials.dropboxAccessToken} onChange={(v) => setSpaceCredentials((p) => ({ ...p, dropboxAccessToken: v }))} placeholder="Access Token Dropbox" />
+                              </Field>
+                              <Field label="Dossier (optionnel)">
+                                <input
+                                  value={spaceCredentials.dropboxFolderPath ?? ''}
+                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, dropboxFolderPath: e.target.value }))}
+                                  placeholder="/images"
+                                  className={inputClassName}
+                                />
+                              </Field>
+                            </>
+                          )}
+
+                          {spaceImageMode === 'gdrive' && (
+                            <>
+                              <Field label="Access Token">
+                                <PasswordInput value={spaceCredentials.gdriveAccessToken} onChange={(v) => setSpaceCredentials((p) => ({ ...p, gdriveAccessToken: v }))} placeholder="Access Token Google Drive" />
+                              </Field>
+                              <Field label="ID du dossier (optionnel)">
+                                <input
+                                  value={spaceCredentials.gdriveFolderId ?? ''}
+                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, gdriveFolderId: e.target.value }))}
+                                  placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+                                  className={inputClassName}
+                                />
+                              </Field>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        disabled={spaceConfigSaving || spaceConfigLoading || !selectedSpace}
+                        onClick={async () => {
+                          if (!onSaveSpaceConfig || !selectedSpace) return
+                          setSpaceConfigSaving(true)
+                          try { await onSaveSpaceConfig(selectedSpace, spaceImageMode, spaceCredentials) } finally { setSpaceConfigSaving(false) }
+                        }}
+                        className="flex items-center gap-2 rounded-holo-lg bg-holo-primary px-4 py-2 text-sm font-medium text-white shadow-holo-glow transition hover:bg-holo-primary/90 disabled:opacity-50"
+                      >
+                        {spaceConfigSaving ? 'Enregistrement…' : 'Enregistrer pour cet espace'}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-holo-text-faint">Aucun espace connu. Ouvrez d’abord un dossier.</p>
+                  )}
+                </Section>
+              </div>
             )}
 
             {activeTab === 'ai' && (

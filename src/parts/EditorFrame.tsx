@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
-import { BlockEditor } from './MarkdownEditor/BlockEditor'
+import { BlockEditor, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
 import { useConfig } from '../contexts/ConfigContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { ContextMenu } from '../components/ContextMenu'
@@ -32,15 +32,22 @@ function filenameFromPath(filepath: string) {
   return normalized.split('/').filter(Boolean).at(-1) ?? filepath
 }
 
-function buildBreadcrumb(filepath: string, rootPath?: string): string[] {
+function buildBreadcrumb(filepath: string, rootPath?: string): { label: string; path: string; isDir: boolean }[] {
   const normalized = filepath.replace(/\\/g, '/')
-  if (!rootPath) return [normalized.split('/').filter(Boolean).at(-1) ?? filepath]
+  if (!rootPath) return [{ label: normalized.split('/').filter(Boolean).at(-1) ?? filepath, path: filepath, isDir: false }]
   const root = rootPath.replace(/\\/g, '/').replace(/\/$/, '')
   const spaceName = root.split('/').filter(Boolean).at(-1) ?? 'Espace'
-  if (!normalized.startsWith(root)) return [normalized.split('/').filter(Boolean).at(-1) ?? filepath]
+  if (!normalized.startsWith(root)) return [{ label: normalized.split('/').filter(Boolean).at(-1) ?? filepath, path: filepath, isDir: false }]
   const relative = normalized.slice(root.length).replace(/^\//, '')
   const parts = relative.split('/').filter(Boolean)
-  return [spaceName, ...parts]
+  const segments: { label: string; path: string; isDir: boolean }[] = [{ label: spaceName, path: root, isDir: true }]
+  let accumulated = root
+  for (let i = 0; i < parts.length; i++) {
+    accumulated += '/' + parts[i]
+    const isLast = i === parts.length - 1
+    segments.push({ label: isLast ? parts[i].replace(/\.md$/, '') : parts[i], path: accumulated, isDir: !isLast })
+  }
+  return segments
 }
 
 function EditableText({
@@ -419,11 +426,20 @@ export function EditorFrame({
   const [rawValue, setRawValue] = useState('')
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
   const iconPickerRef = useRef<HTMLDivElement>(null)
+  const blockEditorRef = useRef<BlockEditorHandle>(null)
 
   const { rootPath } = useWorkspace()
-  const { appAuthor } = useConfig()
+  const {
+    appAuthor,
+    repoImageStorageMode,
+    azureBlobContainerUrl, azureBlobSasToken,
+    s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey, s3Endpoint, s3PublicBaseUrl,
+    dropboxAccessToken, dropboxFolderPath,
+    gdriveAccessToken, gdriveFolderId,
+  } = useConfig()
   const filename = filenameFromPath(filepath)
   const breadcrumb = buildBreadcrumb(filepath, rootPath ?? undefined)
 
@@ -529,8 +545,78 @@ export function EditorFrame({
     return () => target.removeEventListener('scroll', handleScroll)
   }, [])
 
+  // ── Drag & drop d'images ──────────────────────────────────────────────────
+  const buildImageStorageOptions = useCallback(() => {
+    const opts: Parameters<typeof window.holo.saveImage>[2] = {
+      mode: repoImageStorageMode as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive',
+    }
+    if (repoImageStorageMode === 'azure') {
+      opts.azure = { containerUrl: azureBlobContainerUrl, sasToken: azureBlobSasToken }
+    } else if (repoImageStorageMode === 's3') {
+      opts.s3 = { region: s3Region, bucket: s3Bucket, accessKeyId: s3AccessKeyId, secretAccessKey: s3SecretAccessKey, endpoint: s3Endpoint || undefined, publicBaseUrl: s3PublicBaseUrl || undefined }
+    } else if (repoImageStorageMode === 'dropbox') {
+      opts.dropbox = { accessToken: dropboxAccessToken, folderPath: dropboxFolderPath || undefined }
+    } else if (repoImageStorageMode === 'gdrive') {
+      opts.gdrive = { accessToken: gdriveAccessToken, folderId: gdriveFolderId || undefined }
+    }
+    return opts
+  }, [repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken, s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey, s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath, gdriveAccessToken, gdriveFolderId])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    const hasImage = Array.from(e.dataTransfer.items).some((item) => item.type.startsWith('image/'))
+    if (!hasImage) return
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!sectionRef.current?.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+    if (!files.length) return
+    const opts = buildImageStorageOptions()
+    for (const file of files) {
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+        const base64 = dataUrl.split(',')[1]
+        const result = await window.holo.saveImage(file.name, base64, opts)
+        const alt = file.name.replace(/\.[^.]+$/, '')
+        blockEditorRef.current?.insertImage(result.relativePath, alt)
+      } catch (err) {
+        console.error('[EditorFrame] drop image error', err)
+      }
+    }
+  }, [buildImageStorageOptions])
+
   return (
-    <section ref={sectionRef} className="relative min-h-full" data-editor>
+    <section
+      ref={sectionRef}
+      className="relative min-h-full"
+      data-editor
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-holo-lg border-2 border-dashed border-holo-primary/60 bg-holo-primary-surface/30 backdrop-blur-sm">
+          <span className="rounded-holo-lg bg-holo-bg/80 px-4 py-2 text-sm font-medium text-holo-primary-soft shadow">
+            Déposer pour insérer l'image
+          </span>
+        </div>
+      )}
       <StickyEditorHeader
         visible={showStickyHeader}
         icon={fm.icon ? <span className="text-base leading-none">{fm.icon as string}</span> : undefined}
@@ -600,12 +686,15 @@ export function EditorFrame({
               {breadcrumb.map((seg, i) => (
                 <Fragment key={i}>
                   {i > 0 && <span className="shrink-0 select-none text-[11px] text-holo-text-faint/40">›</span>}
-                  <span className={cn(
-                    'truncate text-[11px]',
-                    i === breadcrumb.length - 1
-                      ? 'font-medium text-holo-text-muted'
-                      : 'text-holo-text-faint',
-                  )}>{seg}</span>
+                  {seg.isDir ? (
+                    <button
+                      className="truncate text-[11px] text-holo-text-faint transition hover:text-holo-text-muted"
+                      title={`Voir dans l'arborescence`}
+                      onClick={() => window.dispatchEvent(new CustomEvent('holo:reveal-in-tree', { detail: { path: seg.path } }))}
+                    >{seg.label}</button>
+                  ) : (
+                    <span className="truncate text-[11px] font-medium text-holo-text-muted">{seg.label}</span>
+                  )}
                 </Fragment>
               ))}
             </div>
@@ -744,7 +833,7 @@ export function EditorFrame({
           />
         ) : (
           <article>
-            <BlockEditor markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
+            <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
           </article>
         )}
       </div>
