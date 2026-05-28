@@ -175,6 +175,23 @@ function isEmptyBlock(node: BlockNode): boolean {
     const text = (para?.children ?? []).map((n: any) => n.value ?? '').join('')
     return !text.trim()
   }
+  // Blockquote avec premier paragraphe vide
+  if (node.type === 'blockquote') {
+    const bq = node as BlockquoteNode
+    const firstPara = bq.children[0] as ParagraphNode | undefined
+    if (!firstPara || firstPara.type !== 'paragraph') return true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !(firstPara.children as any[]).map((n: any) => n.value ?? '').join('').trim()
+  }
+  // Note de bas de page avec contenu vide
+  if (node.type === 'footnoteDefinition') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = node as any
+    const firstPara = fn.children?.[0]
+    if (!firstPara || firstPara.type !== 'paragraph') return true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !(firstPara.children ?? []).map((n: any) => n.value ?? '').join('').trim()
+  }
   return false
 }
 
@@ -587,8 +604,10 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     dragAnchorRef.current = blockId
     dragModeActiveRef.current = false
     // Shift+click sans drag → sélection de plage immédiate
-    if (e.shiftKey && selectedBlockIds.size > 0 && dragAnchorRef.current) {
-      // anchor = premier bloc de la sélection existante
+    // e.preventDefault() empêche le contenteditable de recevoir le focus (ce qui
+    // effacerait la sélection via onFocusCapture)
+    if (e.shiftKey && selectedBlockIds.size > 0) {
+      e.preventDefault()
       const anchor = [...selectedBlockIds][0]
       setSelectedBlockIds(new Set(getRangeOfBlocks(anchor, blockId)))
       containerRef.current?.focus({ preventScroll: true })
