@@ -1,0 +1,12 @@
+/* Réutilise les variables de design du projet principal */
+@import '../../src/index.css';
+
+/* Overrides mobile spécifiques */
+html, body, #root {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+/* Safe area pour les notches iOS */
+.safe-top    { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }

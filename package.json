@@ -30,6 +30,8 @@
     "release:minor": "bash ./scripts/release.sh minor",
     "release:major": "bash ./scripts/release.sh major",
     "release:version": "bash ./scripts/release.sh",
+    "pwa:dev": "vite --config pwa/vite.config.ts",
+    "pwa:build": "vite build --config pwa/vite.config.ts",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
