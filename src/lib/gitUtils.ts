@@ -2,6 +2,7 @@ import type { GitState, RemoteEditBlock } from '../types/git'
 
 export const DEFAULT_GIT_STATE: GitState = {
   isRepo: false,
+  hasRemote: false,
   branch: null,
   localChanges: 0,
   incoming: 0,

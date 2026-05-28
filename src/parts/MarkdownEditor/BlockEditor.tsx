@@ -184,7 +184,8 @@ function isEmptyBlock(node: BlockNode): boolean {
     return !(firstPara.children as any[]).map((n: any) => n.value ?? '').join('').trim()
   }
   // Note de bas de page avec contenu vide
-  if (node.type === 'footnoteDefinition') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((node as any).type === 'footnoteDefinition') {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fn = node as any
     const firstPara = fn.children?.[0]
@@ -644,7 +645,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const handleContainerMouseUp = useCallback(() => {
     dragStartPosRef.current = null
     dragModeActiveRef.current = false
-    isDraggingRef.current = false
   }, [])
 
   // Ctrl+A → sélectionne tout le contenu de tous les blocs

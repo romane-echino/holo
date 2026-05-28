@@ -342,7 +342,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
 
 function ListItemRow({
   item,
-  idx,
+  idx: _idx,
   label,
   ordered,
   listStyle,

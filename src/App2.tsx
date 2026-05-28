@@ -544,8 +544,10 @@ export default function App2() {
         setTimeout(() => setSaveStatus(prev => prev === 'error' ? 'idle' : prev), 8000)
         return
       }
-      if (result.pushError) {
-        setSaveErrorMsg(result.pushError)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((result as any).pushError) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setSaveErrorMsg((result as any).pushError)
         setSaveStatus('push-error')
         setTimeout(() => setSaveStatus(prev => prev === 'push-error' ? 'idle' : prev), 8000)
         return

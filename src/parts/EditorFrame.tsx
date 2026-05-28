@@ -552,6 +552,7 @@ export function EditorFrame({
 
   // ── Drag & drop d'images ──────────────────────────────────────────────────
   const buildImageStorageOptions = useCallback(() => {
+    if (!window.holo) return null
     const opts: Parameters<typeof window.holo.saveImage>[2] = {
       mode: repoImageStorageMode as 'local' | 'azure' | 's3' | 'dropbox' | 'gdrive',
     }
@@ -588,6 +589,7 @@ export function EditorFrame({
     const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
     if (!files.length) return
     const opts = buildImageStorageOptions()
+    if (!opts) return
     for (const file of files) {
       try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -597,7 +599,7 @@ export function EditorFrame({
           reader.readAsDataURL(file)
         })
         const base64 = dataUrl.split(',')[1]
-        const result = await window.holo.saveImage(file.name, base64, opts)
+        const result = await window.holo!.saveImage(file.name, base64, opts)
         const alt = file.name.replace(/\.[^.]+$/, '')
         blockEditorRef.current?.insertImage(result.relativePath, alt)
       } catch (err) {

@@ -83,8 +83,8 @@ export function FormatToolbar({
     setLinkMode(false)
   }
 
-  const cancelLink = (e: React.MouseEvent) => {
-    e.preventDefault()
+  const cancelLink = (e?: React.SyntheticEvent) => {
+    e?.preventDefault()
     // Restaurer la sélection pour que la toolbar reste visible
     if (savedRangeRef.current) {
       const sel = window.getSelection()
