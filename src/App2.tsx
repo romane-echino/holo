@@ -83,7 +83,8 @@ export default function App2() {
           setOnboardingDone(true)
         } else {
           const hasAuthor = typeof cfg['app-author'] === 'string' && (cfg['app-author'] as string).trim().length > 0
-          setOnboardingDone(hasAuthor)
+          const alreadyDone = cfg['app-onboarding-done'] === true
+          setOnboardingDone(hasAuthor || alreadyDone)
         }
         // Favoris
         const savedFavs = cfg['space-favorites']
@@ -237,6 +238,9 @@ export default function App2() {
       // Mode → .holo.json (commité)
       const existingSpace = (await window.holo?.readSpaceConfig(spacePath).catch(() => null)) ?? {}
       await window.holo?.writeSpaceConfig(spacePath, { ...existingSpace, imageStorageMode: mode })
+      // Commit .holo.json via git auto-save
+      const holoJsonPath = `${spacePath}/.holo.json`
+      window.holo?.gitAutoSave(holoJsonPath, appAuthor || undefined, gitEmail || undefined).catch(() => {})
       // Identifiants → app config local (non commité), indexés par spacePath
       const appCfg = await window.holo?.getHoloConfig().catch(() => ({})) ?? {}
       const allCreds = (appCfg as any)['space-credentials'] ?? {}
@@ -263,7 +267,7 @@ export default function App2() {
     } catch (err) {
       console.error('[App2] handleSaveSpaceConfig', err)
     }
-  }, [rootPath, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setRepoImageStorageMode])
+  }, [rootPath, appAuthor, gitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setRepoImageStorageMode])
 
   // ─── Identifiants manquants pour l'espace actif ────────────────────────────
   const [pendingCredentials, setPendingCredentials] = useState<{ spacePath: string; mode: string } | null>(null)

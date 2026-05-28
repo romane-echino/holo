@@ -17,13 +17,13 @@ import {
   useRef,
   useState,
   type ElementType,
-  type KeyboardEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
+import { InlineEditor } from '../InlineEditor'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
-import type { TableNode } from '../lib/types'
+import type { InlineNode, TableNode } from '../lib/types'
 
 type ColAlign = 'left' | 'center' | 'right'
 
@@ -36,7 +36,7 @@ type InternalColumn = {
 
 type InternalRow = {
   id: string
-  cells: Record<string, string>
+  cells: Record<string, InlineNode[]>
 }
 
 type InternalTable = {
@@ -74,10 +74,10 @@ function nodeToInternal(node: TableNode): InternalTable {
   }
 
   const rows: InternalRow[] = node.children.slice(1).map((row) => {
-    const cells: Record<string, string> = {}
+    const cells: Record<string, InlineNode[]> = {}
 
     columns.forEach((column, ci) => {
-      cells[column.id] = cellText(row.children[ci])
+      cells[column.id] = (row.children[ci]?.children ?? []) as InlineNode[]
     })
 
     return {
@@ -87,7 +87,7 @@ function nodeToInternal(node: TableNode): InternalTable {
   })
 
   if (rows.length === 0) {
-    rows.push({ id: newRowId(), cells: Object.fromEntries(columns.map((c) => [c.id, ''])) })
+    rows.push({ id: newRowId(), cells: Object.fromEntries(columns.map((c) => [c.id, [] as InlineNode[]])) })
   }
 
   return { columns, rows }
@@ -109,7 +109,7 @@ function internalToNode(t: InternalTable): TableNode {
         type: 'tableRow' as const,
         children: t.columns.map((c) => ({
           type: 'tableCell' as const,
-          children: row.cells[c.id] ? [{ type: 'text' as const, value: row.cells[c.id] }] : [],
+          children: (row.cells[c.id] ?? []) as InlineNode[],
         })),
       })),
     ],
@@ -142,7 +142,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     const [colMenuPos, setColMenuPos] = useState<{ top: number; left: number } | null>(null)
     const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
 
-    const cellRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map())
+    const cellRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
     const headerRefs = useRef<Map<string, HTMLInputElement>>(new Map())
     const menuRef = useRef<HTMLDivElement | null>(null)
     const resizingRef = useRef<{ colId: string; startX: number; startWidth: number } | null>(null)
@@ -174,21 +174,13 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       [onChange],
     )
 
-    const updateCell = useCallback((rowId: string, colId: string, value: string) => {
-      setTable((prev) => ({
-        ...prev,
-        rows: prev.rows.map((r) =>
-          r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r,
-        ),
-      }))
-    }, [])
 
     const saveCell = useCallback(
-      (rowId: string, colId: string, value: string) => {
+      (rowId: string, colId: string, nodes: InlineNode[]) => {
         const next = {
           ...tableRef.current,
           rows: tableRef.current.rows.map((r) =>
-            r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r,
+            r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: nodes } } : r,
           ),
         }
         setTable(next)
@@ -227,7 +219,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         const prev = tableRef.current
         const newRow: InternalRow = {
           id: newRowId(),
-          cells: Object.fromEntries(prev.columns.map((c) => [c.id, ''])),
+          cells: Object.fromEntries(prev.columns.map((c) => [c.id, [] as InlineNode[]])),
         }
         const next = {
           ...prev,
@@ -275,7 +267,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         }
         const next = {
           columns: [...prev.columns.slice(0, index), newCol, ...prev.columns.slice(index)],
-          rows: prev.rows.map((r) => ({ ...r, cells: { ...r.cells, [newCol.id]: '' } })),
+          rows: prev.rows.map((r) => ({ ...r, cells: { ...r.cells, [newCol.id]: [] as InlineNode[] } })),
         }
         setTable(next)
         emit(next)
@@ -313,92 +305,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         cellRefs.current.get(`${rows[rowIdx].id}-${columns[colIdx].id}`)?.focus()
       },
       [table],
-    )
-
-    const handleCellKeyDown = useCallback(
-      (
-        e: KeyboardEvent<HTMLTextAreaElement>,
-        rowIdx: number,
-        colIdx: number,
-        rowId: string,
-        colId: string,
-      ) => {
-        const { rows, columns } = table
-
-        if (e.key === 'Tab' && !e.shiftKey) {
-          e.preventDefault()
-          if (colIdx < columns.length - 1) focusCell(rowIdx, colIdx + 1)
-          else if (rowIdx < rows.length - 1) focusCell(rowIdx + 1, 0)
-          else if (onTabExit) onTabExit()
-          else addRowAt(rows.length)
-          return
-        }
-
-        if (e.key === 'Tab' && e.shiftKey) {
-          e.preventDefault()
-          if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
-          else if (rowIdx > 0) focusCell(rowIdx - 1, columns.length - 1)
-          return
-        }
-
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault()
-          if (rowIdx < rows.length - 1) focusCell(rowIdx + 1, colIdx)
-          else addRowAt(rows.length, colId)
-          return
-        }
-
-        if (e.key === 'Enter' && e.shiftKey) {
-          // Shift+Enter: ajouter une ligne sans naviguer
-          return
-        }
-
-        // Escape: sortir du tableau et créer/cibler le bloc suivant
-        if (e.key === 'Escape' && onTabExit) {
-          e.preventDefault()
-          onTabExit()
-          return
-        }
-
-        if (e.key === 'Backspace' && rows.length > 1) {
-          const el = e.currentTarget
-          const cursorAtStart = el.selectionStart === 0 && el.selectionEnd === 0
-
-          if (!el.value && cursorAtStart) {
-            const rowAllEmpty = columns.every((c) => !(rows[rowIdx]?.cells[c.id] ?? ''))
-            if (rowAllEmpty) {
-              e.preventDefault()
-              removeRow(rowId)
-              return
-            }
-          }
-        }
-
-        if (e.key === 'ArrowUp' && rowIdx === 0 && onArrowUp) {
-          const el = e.currentTarget
-          const cursorPos = el.selectionStart ?? 0
-          const firstLineLen = (el.value.split('\n')[0] ?? '').length
-
-          if (cursorPos <= firstLineLen) {
-            e.preventDefault()
-            onArrowUp(el.getBoundingClientRect().left)
-          }
-          return
-        }
-
-        if (e.key === 'ArrowDown' && rowIdx === rows.length - 1 && onArrowDown) {
-          const el = e.currentTarget
-          const lines = el.value.split('\n')
-          const lastLineStart = el.value.length - (lines[lines.length - 1]?.length ?? 0)
-          const cursorPos = el.selectionStart ?? el.value.length
-
-          if (cursorPos >= lastLineStart) {
-            e.preventDefault()
-            onArrowDown(el.getBoundingClientRect().left)
-          }
-        }
-      },
-      [table, focusCell, addRowAt, removeRow, onArrowUp, onArrowDown],
     )
 
     useEffect(() => {
@@ -442,17 +348,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       document.addEventListener('mousedown', handle)
       return () => document.removeEventListener('mousedown', handle)
     }, [activeColMenu])
-
-    const autoHeight = (el: HTMLTextAreaElement) => {
-      el.style.height = 'auto'
-      el.style.height = `${Math.max(44, el.scrollHeight)}px`
-    }
-
-    useEffect(() => {
-      cellRefs.current.forEach((el) => {
-        if (el) autoHeight(el)
-      })
-    }, [table.rows, table.columns])
 
     const alignClass = (align: ColAlign) =>
       align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'
@@ -693,30 +588,52 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                           )}
                           style={{ width: col.width }}
                         >
-                          <textarea
-                            ref={(el) => {
-                              if (el) cellRefs.current.set(cellKey, el)
-                              else cellRefs.current.delete(cellKey)
-                            }}
-                            value={row.cells[col.id] ?? ''}
-                            rows={1}
+                          <div
                             onFocus={() => setActiveCell({ rowId: row.id, colId: col.id })}
-                            onBlur={(e) => {
-                              setActiveCell(null)
-                              saveCell(row.id, col.id, e.currentTarget.value)
+                            onBlur={() => setActiveCell(null)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Tab' && !e.shiftKey) {
+                                e.preventDefault()
+                                if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
+                                else if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, 0)
+                                else if (onTabExit) onTabExit()
+                                else addRowAt(table.rows.length)
+                              } else if (e.key === 'Tab' && e.shiftKey) {
+                                e.preventDefault()
+                                if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
+                                else if (rowIdx > 0) focusCell(rowIdx - 1, table.columns.length - 1)
+                              } else if (e.key === 'Escape' && onTabExit) {
+                                e.preventDefault()
+                                onTabExit()
+                              }
                             }}
-                            onChange={(e) => {
-                              updateCell(row.id, col.id, e.target.value)
-                              autoHeight(e.currentTarget)
-                            }}
-                            onKeyDown={(e) => handleCellKeyDown(e, rowIdx, colIdx, row.id, col.id)}
-                            className={cn(
-                              'block w-full resize-none overflow-hidden bg-transparent px-3 py-3 text-sm leading-6 text-holo-text-soft outline-none placeholder:text-holo-text-faint transition',
-                              'hover:bg-white/[0.012] focus:bg-white/[0.02]',
-                              alignClass(col.align),
-                            )}
-                            style={{ minHeight: '2.75rem', height: 'auto' }}
-                          />
+                          >
+                            <InlineEditor
+                              ref={(handle) => {
+                                if (handle) cellRefs.current.set(cellKey, handle)
+                                else cellRefs.current.delete(cellKey)
+                              }}
+                              initialContent={row.cells[col.id] ?? []}
+                              onSave={(nodes) => saveCell(row.id, col.id, nodes)}
+                              onEnterAtEnd={() => {
+                                if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, colIdx)
+                                else addRowAt(table.rows.length, col.id)
+                              }}
+                              onBackspaceAtStart={() => {
+                                const rowEmpty = table.columns.every(c => (table.rows[rowIdx]?.cells[c.id] ?? []).length === 0)
+                                if (rowEmpty && table.rows.length > 1) removeRow(row.id)
+                              }}
+                              onArrowUp={(x) => rowIdx > 0 ? focusCell(rowIdx - 1, colIdx) : onArrowUp?.(x)}
+                              onArrowDown={(x) => rowIdx < table.rows.length - 1 ? focusCell(rowIdx + 1, colIdx) : onArrowDown?.(x)}
+                              blockType="table-cell"
+                              className={cn(
+                                'min-h-11 w-full px-3 py-3 text-sm leading-6 text-holo-text-soft outline-none',
+                                'hover:bg-white/[0.012] focus-within:bg-white/[0.02]',
+                                alignClass(col.align),
+                              )}
+                              placeholder="Saisir…"
+                            />
+                          </div>
                         </td>
                       )
                     })}

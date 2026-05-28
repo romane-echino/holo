@@ -196,7 +196,9 @@ function StickyEditorHeader({
   saveStatus,
   saveErrorMsg,
   rawMode,
+  isFavorite,
   onShare,
+  onToggleFavorite,
   onToggleInspector,
   onToggleRaw,
 }: {
@@ -207,11 +209,19 @@ function StickyEditorHeader({
   saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
   saveErrorMsg?: string
   rawMode: boolean
+  isFavorite?: boolean
   onShare?: () => void
+  onToggleFavorite?: () => void
   onToggleInspector?: () => void
   onToggleRaw: () => void
 }) {
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
+  const [shareCopied, setShareCopied] = useState(false)
+  const handleShareClick = useCallback(() => {
+    onShare?.()
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2000)
+  }, [onShare])
 
   return (
     <div
@@ -238,6 +248,22 @@ function StickyEditorHeader({
         <div className="flex shrink-0 items-center gap-2">
           <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
 
+          {onToggleFavorite && (
+            <button
+              onClick={onToggleFavorite}
+              className={cn(
+                'flex size-9 items-center justify-center rounded-holo-md border transition active:scale-[0.98]',
+                isFavorite
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                  : 'border-holo-border-soft bg-holo-glass text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
+              )}
+              title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+              aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+            >
+              <Star size={14} className={isFavorite ? 'fill-amber-400' : ''} />
+            </button>
+          )}
+
           <button
             onClick={onToggleInspector}
             className="3xl:hidden flex size-9 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
@@ -248,12 +274,16 @@ function StickyEditorHeader({
           </button>
 
           <button
-            onClick={onShare}
-            className="flex size-9 items-center justify-center rounded-holo-md bg-holo-primary text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.18)] transition hover:bg-holo-primary/90 active:scale-[0.98]"
-            title="Share"
-            aria-label="Share"
+            onClick={handleShareClick}
+            className={cn(
+              'flex h-9 items-center justify-center gap-1.5 rounded-holo-md px-3 text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.18)] transition active:scale-[0.98]',
+              shareCopied ? 'bg-holo-success' : 'bg-holo-primary hover:bg-holo-primary/90',
+            )}
+            title={shareCopied ? 'Lien copié !' : 'Copier le lien de partage'}
+            aria-label="Lien de partage"
           >
-            <ExternalLink size={14} />
+            {shareCopied ? <Check size={14} /> : <ExternalLink size={14} />}
+            <span className="text-xs">{shareCopied ? 'Copié !' : 'Partager'}</span>
           </button>
 
           <div className="relative">
@@ -426,6 +456,13 @@ export function EditorFrame({
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState('')
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const [shareCopied, setShareCopied] = useState(false)
+
+  const handleShareClick = useCallback(() => {
+    onShare?.()
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2000)
+  }, [onShare])
 
   // Auto-resize the raw textarea so it never shows its own scrollbar
   useEffect(() => {
@@ -641,12 +678,14 @@ export function EditorFrame({
         saveStatus={saveStatus}
         saveErrorMsg={saveErrorMsg}
         rawMode={rawMode}
+        isFavorite={isFavorite}
         onShare={onShare}
+        onToggleFavorite={onToggleFavorite}
         onToggleInspector={onToggleInspector}
         onToggleRaw={rawMode ? exitRawMode : enterRawMode}
       />
 
-      <div className="mx-auto max-w-[920px] px-5 py-6 sm:px-8 md:px-10 md:py-9">
+      <div className="mx-auto max-w-[920px] pl-8 pr-5 py-6 sm:px-8 md:px-10 md:py-9">
         <header className="mb-4">
           {onMobileBack && (
             <button
@@ -743,12 +782,15 @@ export function EditorFrame({
               </button>
 
               <button
-                onClick={onShare}
-                className="flex size-10 items-center justify-center rounded-holo-md bg-holo-primary py-2 text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.22)] transition hover:bg-holo-primary/90 active:scale-[0.98]"
-                title="Share"
-                aria-label="Share"
+                onClick={handleShareClick}
+                className={cn(
+                  'flex size-10 items-center justify-center rounded-holo-md py-2 text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.22)] transition active:scale-[0.98]',
+                  shareCopied ? 'bg-holo-success' : 'bg-holo-primary hover:bg-holo-primary/90',
+                )}
+                title={shareCopied ? 'Lien copié !' : 'Copier le lien de partage'}
+                aria-label="Lien de partage"
               >
-                <ExternalLink size={14} />
+                {shareCopied ? <Check size={14} /> : <ExternalLink size={14} />}
               </button>
 
               <div className="relative">

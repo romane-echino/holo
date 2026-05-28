@@ -17,7 +17,7 @@ type SearchMatch = {
   title: string
   subtitle: string
   spaceName?: string
-  matchKind: 'filename' | 'title' | 'tag' | 'description'
+  matchKind: 'filename' | 'title' | 'tag' | 'description' | 'heading' | 'content'
   matchText?: string
   icon?: string
 }
@@ -28,12 +28,16 @@ function MatchBadge({ kind }: { kind: SearchMatch['matchKind'] }) {
     title: 'titre',
     tag: 'tag',
     description: 'description',
+    heading: 'titre',
+    content: 'contenu',
   }
   const colors: Record<SearchMatch['matchKind'], string> = {
     filename: 'bg-blue-500/15 text-blue-300',
     title: 'bg-holo-primary/15 text-holo-primary-soft',
     tag: 'bg-emerald-500/15 text-emerald-300',
     description: 'bg-amber-500/15 text-amber-300',
+    heading: 'bg-holo-primary/15 text-holo-primary-soft',
+    content: 'bg-zinc-500/15 text-zinc-400',
   }
   return (
     <span className={cn('shrink-0 rounded-full px-1.5 py-px text-[9px] font-medium leading-none', colors[kind])}>
@@ -54,6 +58,9 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [archivedPaths, setArchivedPaths] = useState<string[]>([])
   const [allSpacePaths, setAllSpacePaths] = useState<string[]>([])
+  // Cache de contenu brut pour la recherche heading/contenu
+  const [fileContents, setFileContents] = useState<Record<string, string>>({})
+  const loadingContentRef = useRef<Set<string>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -76,6 +83,8 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     if (open) {
       setQuery('')
       setActiveIndex(0)
+      setFileContents({})
+      loadingContentRef.current.clear()
       setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [open])
@@ -96,6 +105,24 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     walk(tree)
     return [...paths].filter((p) => p.endsWith('.md'))
   }, [fileMetaByPath, recentFilePaths, archivedPaths, allSpacePaths, tree])
+
+  // Chargement asynchrone du contenu des fichiers pour la recherche heading/contenu
+  useEffect(() => {
+    const q = query.trim().toLowerCase()
+    if (!q || q.length < 2 || q.startsWith('#') || !window.holo) return
+    const toLoad = knownPaths.filter(p => !fileContents[p] && !loadingContentRef.current.has(p))
+    if (!toLoad.length) return
+    // Charger par lots de 30 pour ne pas surcharger
+    for (const path of toLoad.slice(0, 30)) {
+      loadingContentRef.current.add(path)
+      window.holo.readFile(path)
+        .then(content => {
+          loadingContentRef.current.delete(path)
+          setFileContents(prev => ({ ...prev, [path]: content }))
+        })
+        .catch(() => { loadingContentRef.current.delete(path) })
+    }
+  }, [query, knownPaths])
 
   const results = useMemo((): SearchMatch[] => {
     const q = query.trim().toLowerCase()
@@ -146,12 +173,36 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
         const idx = description.toLowerCase().indexOf(q)
         const excerpt = description.slice(Math.max(0, idx - 20), idx + 60)
         matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon })
+        continue
+      }
+
+      // Recherche dans le contenu (headings puis texte brut)
+      const rawContent = fileContents[path]
+      if (rawContent) {
+        // Cherche dans les titres Markdown (# ## ###…)
+        const headingMatches = [...rawContent.matchAll(/^#{1,6}\s+(.+)$/gm)]
+        const headingHit = headingMatches.find(m => m[1].toLowerCase().includes(q))
+        if (headingHit) {
+          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'heading', matchText: headingHit[1].trim(), icon: (meta as any)?.icon })
+          continue
+        }
+        // Cherche dans le contenu texte (hors frontmatter)
+        const bodyStart = rawContent.indexOf('\n---\n', rawContent.startsWith('---') ? 3 : 0)
+        const body = bodyStart !== -1 ? rawContent.slice(bodyStart + 5) : rawContent
+        const bodyLower = body.toLowerCase()
+        const contentIdx = bodyLower.indexOf(q)
+        if (contentIdx !== -1) {
+          const start = Math.max(0, contentIdx - 30)
+          const end = Math.min(body.length, contentIdx + 80)
+          const excerpt = (start > 0 ? '…' : '') + body.slice(start, end).replace(/\n/g, ' ').trim() + (end < body.length ? '…' : '')
+          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'content', matchText: excerpt, icon: (meta as any)?.icon })
+        }
       }
     }
 
-    const order: Record<SearchMatch['matchKind'], number> = { filename: 0, title: 1, tag: 2, description: 3 }
+    const order: Record<SearchMatch['matchKind'], number> = { filename: 0, title: 1, tag: 2, description: 3, heading: 4, content: 5 }
     return matches.sort((a, b) => order[a.matchKind] - order[b.matchKind]).slice(0, 50)
-  }, [query, knownPaths, fileMetaByPath, rootPath])
+  }, [query, knownPaths, fileMetaByPath, fileContents, rootPath])
 
   // Réinitialise le curseur quand les résultats changent
   useEffect(() => { setActiveIndex(0) }, [results])

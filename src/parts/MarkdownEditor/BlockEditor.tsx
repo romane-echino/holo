@@ -16,6 +16,7 @@ import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import { GripVertical } from 'lucide-react'
 import { ParagraphBlock } from './blocks/ParagraphBlock'
 import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
@@ -230,6 +231,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
   const dragAnchorRef = useRef<string | null>(null)
+
+  // Drag-reorder state
+  const [dragReorderBlockId, setDragReorderBlockId] = useState<string | null>(null)
+  const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null)
+  const [dragOverPos, setDragOverPos] = useState<'before' | 'after'>('after')
 
   // Refs impératifs vers chaque InlineEditor — pour la navigation inter-blocs
   const blockRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
@@ -703,26 +709,67 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       onMouseDown={handleContainerMouseDown}
       onMouseMove={handleContainerMouseMove}
       onMouseUp={handleContainerMouseUp}
-      onDragStart={(e) => e.preventDefault()}
+      onDragStart={(e) => { if (!(e.target as HTMLElement).closest('[data-drag-handle]')) e.preventDefault() }}
     >
       {blocks.map((block, idx) => (
         <div
           key={block.id}
           data-block-id={block.id}
           id={block.node.type === 'heading' ? 'heading-' + (block.node as HeadingNode).children.map((n: InlineNode) => ('value' in n ? (n as any).value : '')).join('').toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') : undefined}
+          draggable
+          onDragStart={(e) => {
+            if (!(e.target as HTMLElement).closest('[data-drag-handle]')) { e.preventDefault(); return }
+            setDragReorderBlockId(block.id)
+            e.dataTransfer.effectAllowed = 'move'
+          }}
+          onDragOver={(e) => {
+            if (!dragReorderBlockId || dragReorderBlockId === block.id) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            setDragOverBlockId(block.id)
+            setDragOverPos(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
+          }}
+          onDragLeave={() => { if (dragOverBlockId === block.id) setDragOverBlockId(null) }}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (!dragReorderBlockId || dragReorderBlockId === block.id) return
+            blocksDirtyRef.current = true
+            setBlocks(prev => {
+              const next = prev.filter(b => b.id !== dragReorderBlockId)
+              const srcBlock = prev.find(b => b.id === dragReorderBlockId)!
+              const targetIdx = next.findIndex(b => b.id === block.id)
+              const insertAt = dragOverPos === 'before' ? targetIdx : targetIdx + 1
+              next.splice(insertAt, 0, srcBlock)
+              return next
+            })
+            setDragReorderBlockId(null)
+            setDragOverBlockId(null)
+          }}
+          onDragEnd={() => { setDragReorderBlockId(null); setDragOverBlockId(null) }}
           className={cn(
             'group/block relative rounded-sm transition-colors',
             selectedBlockIds.has(block.id) && 'bg-holo-primary/10 ring-1 ring-inset ring-holo-primary/30',
+            dragOverBlockId === block.id && dragOverPos === 'before' && 'border-t-2 border-holo-primary',
+            dragOverBlockId === block.id && dragOverPos === 'after' && 'border-b-2 border-holo-primary',
+            dragReorderBlockId === block.id && 'opacity-40',
           )}
           onFocusCapture={() => {
             lastFocusedBlockIdRef.current = block.id
             setSelectedBlockIds(new Set())
           }}
         >
-          {/* Bouton + dans la marge */}
-          <div
-            className="absolute -left-7 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover/block:opacity-100"
-          >
+          {/* Drag handle + bouton + dans la marge */}
+          <div className="absolute -left-7 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 opacity-0 transition-opacity group-hover/block:opacity-100">
+            <div
+              data-drag-handle
+              draggable
+              className="flex size-4 cursor-grab items-center justify-center rounded text-holo-text-faint transition hover:text-holo-text active:cursor-grabbing"
+              title="Glisser pour réordonner"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={12} />
+            </div>
             <button
               onMouseDown={(e) => { e.preventDefault(); handleInsertAndSlash(block.id) }}
               className="flex size-5 items-center justify-center rounded-full border border-holo-border-soft bg-holo-bg text-holo-text-faint shadow-sm transition hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft"
