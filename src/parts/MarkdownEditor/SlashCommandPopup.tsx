@@ -29,6 +29,9 @@ const COMMANDS: SlashCommand[] = [
   { id: 'checklist',    label: 'Checklist',            description: 'Liste de tâches à cocher',  icon: '☑',  blockType: 'checklist',    keywords: ['todo', 'task', 'tâche', 'checkbox', 'check', 'cocher'] },
   { id: 'table',        label: 'Tableau',         description: 'Tableau avec colonnes',     icon: '⊞',  blockType: 'table',        keywords: ['grid', 'grille', 'colonnes', 'rows'] },
   { id: 'math',         label: 'LaTeX / Formule', description: 'Formule mathématique $$…$$', icon: '∑',  blockType: 'math',         keywords: ['latex', 'math', 'formule', 'equation', 'katex', 'tex'] },
+  { id: 'blockquote',   label: 'Citation',         description: 'Bloc de citation (> …)',     icon: '❝',  blockType: 'blockquote',   keywords: ['quote', 'citation', 'blockquote', 'indent', 'remarque'] },
+  { id: 'footnote',     label: 'Note de bas de page', description: 'Note référencée [^id]',   icon: '†',  blockType: 'footnote',     keywords: ['note', 'footnote', 'reference', 'bas', 'page'] },
+  { id: 'separator',    label: 'Séparateur',       description: 'Ligne de séparation (---)',  icon: '—',  blockType: 'separator',    keywords: ['hr', 'separateur', 'divider', 'ligne', 'horizontal', 'rule'] },
 ]
 
 function matchesQuery(cmd: SlashCommand, query: string): boolean {

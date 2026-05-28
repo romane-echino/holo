@@ -8,6 +8,7 @@ import { useConfig } from '../contexts/ConfigContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
+import { MergeConflictDiffModal } from './MergeConflictDiffModal'
 
 type EditorFrameProps = {
   filepath: string
@@ -434,12 +435,16 @@ export function EditorFrame({
   const { rootPath } = useWorkspace()
   const {
     appAuthor,
+    gitState,
     repoImageStorageMode,
     azureBlobContainerUrl, azureBlobSasToken,
     s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey, s3Endpoint, s3PublicBaseUrl,
     dropboxAccessToken, dropboxFolderPath,
     gdriveAccessToken, gdriveFolderId,
   } = useConfig()
+
+  const [diffModalOpen, setDiffModalOpen] = useState(false)
+  const isConflicted = (gitState?.conflictedFiles ?? []).includes(filepath)
   const filename = filenameFromPath(filepath)
   const breadcrumb = buildBreadcrumb(filepath, rootPath ?? undefined)
 
@@ -833,11 +838,32 @@ export function EditorFrame({
           />
         ) : (
           <article>
+            {isConflicted && (
+              <div className="mb-4 flex items-center gap-3 rounded-holo-xl border border-amber-600/30 bg-amber-500/10 px-4 py-3">
+                <span className="text-amber-400 text-sm">⚠️</span>
+                <p className="flex-1 text-sm text-amber-200">Ce fichier contient des conflits de fusion non résolus.</p>
+                <button
+                  onClick={() => setDiffModalOpen(true)}
+                  className="rounded-holo-lg border border-amber-600/40 bg-amber-900/30 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-800/40"
+                >
+                  Résoudre le conflit
+                </button>
+              </div>
+            )}
             <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
           </article>
         )}
       </div>
+
+      {diffModalOpen && (
+        <MergeConflictDiffModal
+          filePath={filepath}
+          onResolve={async (strategy) => {
+            await window.holo?.gitResolveConflict(filepath, strategy)
+          }}
+          onDismiss={() => setDiffModalOpen(false)}
+        />
+      )}
     </section>
   )
-  
 }

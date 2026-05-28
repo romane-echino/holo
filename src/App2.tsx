@@ -13,6 +13,10 @@ import { SpaceRoute } from './parts/SpacePanel'
 import type { SpaceFileNode, TreeFileMeta } from './parts/SpacePanel'
 import { Clock, Star, Bot, Archive, Folder, FileText, X } from 'lucide-react'
 import { EditorFrame } from './parts/EditorFrame'
+import { SpaceCredentialsModal } from './parts/SpaceCredentialsModal'
+import type { SpaceCredentials } from './parts/Settings'
+import { AppUpdateNotification } from './parts/AppUpdateNotification'
+import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
 
 // Extraction rapide des 3 champs frontmatter pour la mise à jour live de l'arborescence
@@ -43,14 +47,17 @@ export default function App2() {
   const navigate = useNavigate()
   const hasPanel = pathname !== '/'
 
-  const {
-    appAuthor, gitEmail, gitState, setAppAuthor, setGitEmail,
+  const { updateAvailable, updateReady, updateProgress, dismissUpdate } = useAppUpdates()
+
+  const { appAuthor, gitEmail, gitState, setAppAuthor, setGitEmail,
     setAzureBlobContainerUrl, setAzureBlobSasToken,
     setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl,
     setDropboxAccessToken, setDropboxFolderPath,
     setGdriveAccessToken, setGdriveFolderId,
     setRepoImageStorageMode,
   } = useConfig()
+
+  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
 
   // ─── Favoris d'espaces ────────────────────────────────────────────────────
   const [favoriteFolders, setFavoriteFolders] = useState<string[]>([])
@@ -217,7 +224,7 @@ export default function App2() {
     setTimeout(() => setSettingsSaved(false), 3000)
   }, [setAppAuthor, setGitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId])
 
-  const handleSaveSpaceConfig = useCallback(async (spacePath: string, mode: string, credentials: import('./parts/Settings').SpaceCredentials) => {
+  const handleSaveSpaceConfig = useCallback(async (spacePath: string, mode: string, credentials: SpaceCredentials) => {
     try {
       // Mode → .holo.json (commité)
       const existingSpace = (await window.holo?.readSpaceConfig(spacePath).catch(() => null)) ?? {}
@@ -250,6 +257,34 @@ export default function App2() {
     }
   }, [rootPath, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setRepoImageStorageMode])
 
+  // ─── Identifiants manquants pour l'espace actif ────────────────────────────
+  const [pendingCredentials, setPendingCredentials] = useState<{ spacePath: string; mode: string } | null>(null)
+
+  useEffect(() => {
+    if (!rootPath || !window.holo) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [spaceCfg, appCfg] = await Promise.all([
+          window.holo!.readSpaceConfig(rootPath).catch(() => null),
+          window.holo!.getHoloConfig().catch(() => ({})),
+        ])
+        if (cancelled) return
+        const mode = (spaceCfg as any)?.imageStorageMode ?? 'local'
+        if (mode === 'local') return
+        const allCreds = ((appCfg as any)?.['space-credentials'] ?? {}) as Record<string, Record<string, string>>
+        const creds = allCreds[rootPath] ?? {}
+        const hasAzure = !!(creds.azureContainerUrl?.trim() && creds.azureSasToken?.trim())
+        const hasS3 = !!(creds.s3Region?.trim() && creds.s3Bucket?.trim() && creds.s3AccessKeyId?.trim() && creds.s3SecretAccessKey?.trim())
+        const hasDropbox = !!creds.dropboxAccessToken?.trim()
+        const hasGdrive = !!creds.gdriveAccessToken?.trim()
+        const credOk = (mode === 'azure' && hasAzure) || (mode === 's3' && hasS3) || (mode === 'dropbox' && hasDropbox) || (mode === 'gdrive' && hasGdrive)
+        if (!credOk) setPendingCredentials({ spacePath: rootPath, mode })
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [rootPath])
+
   // Listener pour le thème "system" (préférence OS)
   useEffect(() => {
     if (settingsValue?.theme !== 'system') return
@@ -258,8 +293,6 @@ export default function App2() {
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [settingsValue?.theme])
-
-  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
 
   // Chargement initial des espaces (dossiers récents) depuis l'IPC Electron
   useEffect(() => {
@@ -755,6 +788,29 @@ export default function App2() {
         </div>
       </div>
         </>
+      )}
+
+      {/* Notification mise à jour */}
+      {updateAvailable && (
+        <AppUpdateNotification
+          updateReady={updateReady}
+          updateProgress={updateProgress}
+          onInstall={() => window.holo?.installUpdate?.()}
+          onDismiss={dismissUpdate}
+        />
+      )}
+
+      {/* Modal identifiants espace */}
+      {pendingCredentials && (
+        <SpaceCredentialsModal
+          spacePath={pendingCredentials.spacePath}
+          mode={pendingCredentials.mode}
+          onSave={async (credentials) => {
+            await handleSaveSpaceConfig(pendingCredentials.spacePath, pendingCredentials.mode, credentials)
+            setPendingCredentials(null)
+          }}
+          onDismiss={() => setPendingCredentials(null)}
+        />
       )}
 
       <HoloSettingsDialog

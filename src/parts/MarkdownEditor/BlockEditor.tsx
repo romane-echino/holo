@@ -444,13 +444,20 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         } else if (targetType.startsWith('math-value:')) {
           const formula = targetType.slice('math-value:'.length)
           newNode = { type: 'math', value: formula, meta: null } as unknown as BlockNode
+        } else if (targetType === 'blockquote') {
+          newNode = { type: 'blockquote', children: [{ type: 'paragraph', children: kids }] } as unknown as BlockNode
+        } else if (targetType === 'footnote') {
+          const id = 'note-' + Math.random().toString(36).slice(2, 6)
+          newNode = { type: 'footnoteDefinition', identifier: id, label: id, children: [{ type: 'paragraph', children: kids }] } as unknown as BlockNode
+        } else if (targetType === 'separator') {
+          newNode = { type: 'thematicBreak' } as unknown as BlockNode
         } else {
           return prev
         }
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
-        // Si tableau/liste/math est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:')) && idx === prev.length - 1) {
+        // Si tableau/liste/math/blockquote/separator est inséré en dernière position, ajouter un paragraphe vide
+        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator') && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
         console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
@@ -511,20 +518,33 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       blocksDirtyRef.current = true
       setBlocks((prev) => {
         const focusedId = lastFocusedBlockIdRef.current
-        if (!focusedId) return [...prev, newBlock]
-        const idx = prev.findIndex((b) => b.id === focusedId)
-        if (idx === -1) return [...prev, newBlock]
-        const focused = prev[idx]
-        // Si le bloc focalisé est un paragraphe vide → le remplacer par l'image
-        const isParagraph = focused.node.type === 'paragraph'
-        const isEmpty = isParagraph && (focused.node as ParagraphNode).children.every(
-          (c) => c.type === 'text' && (c as TextNode).value === ''
-        )
-        if (isEmpty) {
-          return [...prev.slice(0, idx), newBlock, ...prev.slice(idx + 1)]
+        let next: BlockState[]
+        if (!focusedId) {
+          next = [...prev, newBlock]
+        } else {
+          const idx = prev.findIndex((b) => b.id === focusedId)
+          if (idx === -1) {
+            next = [...prev, newBlock]
+          } else {
+            const focused = prev[idx]
+            // Si le bloc focalisé est un paragraphe vide → le remplacer par l'image
+            const isParagraph = focused.node.type === 'paragraph'
+            const isEmpty = isParagraph && (focused.node as ParagraphNode).children.every(
+              (c) => c.type === 'text' && (c as TextNode).value === ''
+            )
+            if (isEmpty) {
+              next = [...prev.slice(0, idx), newBlock, ...prev.slice(idx + 1)]
+            } else {
+              next = [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
+            }
+          }
         }
-        // Sinon insérer après
-        return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
+        // Si l'image est le dernier bloc, ajouter un paragraphe vide après
+        const last = next[next.length - 1]
+        if (last?.id === newBlock.id) {
+          next = [...next, freshParagraph()]
+        }
+        return next
       })
     },
   }))
