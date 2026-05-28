@@ -20,6 +20,10 @@ function apiBase(host: string): string {
     : `https://${host}/api/v1`
 }
 
+function makeHeaders(token?: string): HeadersInit {
+  return token ? { Authorization: `token ${token}` } : {}
+}
+
 // ─── Repo metadata ────────────────────────────────────────────────────────────
 
 export interface RepoMeta {
@@ -29,10 +33,11 @@ export interface RepoMeta {
   name: string
   description: string | null
   defaultBranch: string
+  token?: string
 }
 
-export async function fetchRepoMeta(host: string, owner: string, repo: string): Promise<RepoMeta> {
-  const res = await fetch(`${apiBase(host)}/repos/${owner}/${repo}`)
+export async function fetchRepoMeta(host: string, owner: string, repo: string, token?: string): Promise<RepoMeta> {
+  const res = await fetch(`${apiBase(host)}/repos/${owner}/${repo}`, { headers: makeHeaders(token) })
   if (res.status === 404) throw new Error('Repo introuvable ou privé')
   if (!res.ok) throw new Error(`Erreur ${res.status}`)
   const data = await res.json()
@@ -53,9 +58,10 @@ export interface TreeFile {
   type: 'blob' | 'tree'
 }
 
-export async function getRepoTree(host: string, owner: string, repo: string, branch: string): Promise<TreeFile[]> {
+export async function getRepoTree(host: string, owner: string, repo: string, branch: string, token?: string): Promise<TreeFile[]> {
   const res = await fetch(
     `${apiBase(host)}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+    { headers: makeHeaders(token) },
   )
   if (!res.ok) throw new Error(`Impossible de lire l'arborescence`)
   const data = await res.json()
@@ -70,11 +76,12 @@ export async function getFileContent(
   repo: string,
   branch: string,
   path: string,
+  token?: string,
 ): Promise<string> {
   const rawUrl = host === 'github.com'
     ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`
     : `https://${host}/${owner}/${repo}/raw/branch/${branch}/${path}`
-  const res = await fetch(rawUrl)
+  const res = await fetch(rawUrl, { headers: makeHeaders(token) })
   if (!res.ok) throw new Error(`Fichier introuvable`)
   return res.text()
 }

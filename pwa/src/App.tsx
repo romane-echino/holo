@@ -51,7 +51,7 @@ export default function App() {
   // Load files when entering files screen
   useEffect(() => {
     if (screen.id !== 'files' || !screen.loading || screen.files !== null) return
-    getRepoTree(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch)
+    getRepoTree(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.repo.token)
       .then((files) =>
         setScreen((s) => (s.id === 'files' ? { ...s, files, loading: false } : s)),
       )
@@ -65,7 +65,7 @@ export default function App() {
   // Load file content when entering viewer
   useEffect(() => {
     if (screen.id !== 'viewer' || !screen.loading || screen.content !== null) return
-    getFileContent(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.path)
+    getFileContent(screen.repo.host, screen.repo.owner, screen.repo.repo, screen.repo.defaultBranch, screen.path, screen.repo.token)
       .then((content) =>
         setScreen((s) => (s.id === 'viewer' ? { ...s, content, loading: false } : s)),
       )
@@ -231,6 +231,7 @@ function AddRepoSheet({
   onCancel: () => void
 }) {
   const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -248,8 +249,8 @@ function AddRepoSheet({
     setStatus('loading')
     setErrorMsg('')
     try {
-      const meta = await fetchRepoMeta(coords.host, coords.owner, coords.repo)
-      onAdd(meta)
+      const meta = await fetchRepoMeta(coords.host, coords.owner, coords.repo, token || undefined)
+      onAdd({ ...meta, token: token || undefined })
     } catch (err: unknown) {
       setStatus('error')
       setErrorMsg(err instanceof Error ? err.message : 'Erreur inconnue')
@@ -270,6 +271,14 @@ function AddRepoSheet({
           value={url}
           onChange={(e) => { setUrl(e.target.value); setStatus('idle') }}
           placeholder="https://github.com/owner/repo  ou  https://git.example.com/owner/repo"
+          className="w-full rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2.5 text-sm text-holo-text placeholder:text-holo-text-faint outline-none focus:border-holo-primary/50"
+        />
+        <input
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="Token d'accès (optionnel, pour les repos privés)"
+          type="password"
+          autoComplete="off"
           className="w-full rounded-holo-lg border border-holo-border-soft bg-holo-glass px-3 py-2.5 text-sm text-holo-text placeholder:text-holo-text-faint outline-none focus:border-holo-primary/50"
         />
         {status === 'error' && (
