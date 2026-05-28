@@ -8,16 +8,19 @@
 import { useEffect, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { ImageNode } from '../lib/types'
+import { cn } from '../../../utils/global'
 
 interface ImageBlockProps {
   node: ImageNode
+  isSelected?: boolean
+  onSelect?: () => void
 }
 
 function isLocalRelativePath(url: string) {
   return url !== '' && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('file://')
 }
 
-export function ImageBlock({ node }: ImageBlockProps) {
+export function ImageBlock({ node, isSelected, onSelect }: ImageBlockProps) {
   const [error, setError] = useState(false)
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null)
 
@@ -34,7 +37,13 @@ export function ImageBlock({ node }: ImageBlockProps) {
 
   if (error || !node.url) {
     return (
-      <div className="my-4 flex items-center gap-3 rounded-holo-xl border border-dashed border-holo-border-soft px-4 py-6 text-holo-text-faint">
+      <div
+        onClick={onSelect}
+        className={cn(
+          'my-4 flex cursor-pointer items-center gap-3 rounded-holo-xl border border-dashed px-4 py-6 text-holo-text-faint transition',
+          isSelected ? 'border-holo-primary/60 ring-2 ring-holo-primary/40' : 'border-holo-border-soft',
+        )}
+      >
         <ImageOff size={18} className="shrink-0" />
         <div>
           <p className="text-sm">{node.alt || 'Image non disponible'}</p>
@@ -47,7 +56,10 @@ export function ImageBlock({ node }: ImageBlockProps) {
   }
 
   return (
-    <figure className="my-4">
+    <figure
+      className={cn('my-4 cursor-pointer rounded-holo-xl transition', isSelected && 'ring-2 ring-holo-primary/60')}
+      onClick={onSelect}
+    >
       {displaySrc ? (
         <img
           src={displaySrc}

@@ -138,6 +138,7 @@ interface HoloApi {
   filterExistingPaths: (paths: string[]) => Promise<string[]>
   scanMdFiles: (folderPath: string) => Promise<string[]>
   registerKnownRoots: (paths: string[]) => Promise<{ ok: boolean }>
+  renamePath: (
     targetPath: string,
     newName: string,
   ) => Promise<{ ok: true; newPath: string }>

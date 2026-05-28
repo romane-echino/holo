@@ -11,7 +11,6 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef } from 'react'
-import { Trash2, X } from 'lucide-react'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -195,9 +194,8 @@ export interface BlockEditorProps {
 export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps, ref) {
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
-  const [selectedBlockIds] = useState<Set<string>>(new Set())
-  const selectedBlockIds_unused = selectedBlockIds // kept for type compat
-  void selectedBlockIds_unused
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
+  const dragAnchorRef = useRef<string | null>(null)
 
   // Refs impératifs vers chaque InlineEditor — pour la navigation inter-blocs
   const blockRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
@@ -562,8 +560,87 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     })
   }, [])
 
+  // ─── Sélection de blocs ─────────────────────────────────────────────────────
+  // Helper: returns block IDs in range [anchorId, targetId] (inclusive, in order)
+  const getRangeOfBlocks = useCallback((anchorId: string, targetId: string): string[] => {
+    const list = blocksRef.current
+    const a = list.findIndex((b) => b.id === anchorId)
+    const t = list.findIndex((b) => b.id === targetId)
+    if (a === -1 || t === -1) return [anchorId]
+    const [lo, hi] = a <= t ? [a, t] : [t, a]
+    return list.slice(lo, hi + 1).map((b) => b.id)
+  }, [])
+
+  // Retourne le block-id de l'élément DOM (ou d'un ancêtre portant data-block-id)
+  const getBlockIdFromEl = useCallback((el: HTMLElement | null): string | null => {
+    return (el?.closest('[data-block-id]') as HTMLElement | null)?.dataset.blockId ?? null
+  }, [])
+
+  // Refs pour le drag-select au niveau conteneur
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null)
+  const dragModeActiveRef = useRef(false) // true une fois le seuil de mouvement dépassé
+
+  const handleContainerMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const blockId = getBlockIdFromEl(e.target as HTMLElement)
+    if (!blockId) return
+    dragStartPosRef.current = { x: e.clientX, y: e.clientY }
+    dragAnchorRef.current = blockId
+    dragModeActiveRef.current = false
+    // Shift+click sans drag → sélection de plage immédiate
+    if (e.shiftKey && selectedBlockIds.size > 0 && dragAnchorRef.current) {
+      // anchor = premier bloc de la sélection existante
+      const anchor = [...selectedBlockIds][0]
+      setSelectedBlockIds(new Set(getRangeOfBlocks(anchor, blockId)))
+      containerRef.current?.focus({ preventScroll: true })
+    }
+  }, [getBlockIdFromEl, getRangeOfBlocks, selectedBlockIds])
+
+  const handleContainerMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1 || !dragStartPosRef.current || !dragAnchorRef.current) return
+    const dy = Math.abs(e.clientY - dragStartPosRef.current.y)
+    const dx = Math.abs(e.clientX - dragStartPosRef.current.x)
+    // Seuil de 10px pour entrer en mode drag-select
+    if (!dragModeActiveRef.current && dy < 10 && dx < 10) return
+    // Entrée en mode bloc-select : annule la sélection texte native
+    if (!dragModeActiveRef.current) {
+      dragModeActiveRef.current = true
+      window.getSelection()?.removeAllRanges()
+      setSelectedBlockIds(new Set([dragAnchorRef.current]))
+      containerRef.current?.focus({ preventScroll: true })
+    }
+    // Étend la sélection vers le bloc sous la souris
+    window.getSelection()?.removeAllRanges()
+    const elUnder = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+    const hoverId = getBlockIdFromEl(elUnder)
+    if (hoverId) {
+      const range = getRangeOfBlocks(dragAnchorRef.current, hoverId)
+      setSelectedBlockIds((prev) => {
+        // Évite un setState si la sélection n'a pas changé
+        if (prev.size === range.length && range.every((id) => prev.has(id))) return prev
+        return new Set(range)
+      })
+    }
+  }, [getBlockIdFromEl, getRangeOfBlocks])
+
+  const handleContainerMouseUp = useCallback(() => {
+    dragStartPosRef.current = null
+    dragModeActiveRef.current = false
+    isDraggingRef.current = false
+  }, [])
+
   // Ctrl+A → sélectionne tout le contenu de tous les blocs
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Supprimer les blocs sélectionnés
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
+      e.preventDefault()
+      blocksDirtyRef.current = true
+      setBlocks((prev) => {
+        const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
+        return filtered.length > 0 ? filtered : [freshParagraph()]
+      })
+      setSelectedBlockIds(new Set())
+      return
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault()
       const container = containerRef.current
@@ -574,19 +651,33 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       sel?.removeAllRanges()
       sel?.addRange(range)
     }
-  }, [])
+  }, [selectedBlockIds])
 
   return (
-    <div ref={containerRef} data-testid="block-editor" className={cn('holo-markdown', className)} style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined} onKeyDown={handleContainerKeyDown}>
+    <div
+      ref={containerRef}
+      data-testid="block-editor"
+      tabIndex={-1}
+      className={cn('holo-markdown outline-none', className)}
+      style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined}
+      onKeyDown={handleContainerKeyDown}
+      onMouseDown={handleContainerMouseDown}
+      onMouseMove={handleContainerMouseMove}
+      onMouseUp={handleContainerMouseUp}
+    >
       {blocks.map((block, idx) => (
         <div
           key={block.id}
           data-block-id={block.id}
           id={block.node.type === 'heading' ? 'heading-' + (block.node as HeadingNode).children.map((n: InlineNode) => ('value' in n ? (n as any).value : '')).join('').toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') : undefined}
           className={cn(
-            'group/block relative',
+            'group/block relative rounded-sm transition-colors',
+            selectedBlockIds.has(block.id) && 'bg-holo-primary/10 ring-1 ring-inset ring-holo-primary/30',
           )}
-          onFocusCapture={() => { lastFocusedBlockIdRef.current = block.id }}
+          onFocusCapture={() => {
+            lastFocusedBlockIdRef.current = block.id
+            setSelectedBlockIds(new Set())
+          }}
         >
           {/* Bouton + dans la marge */}
           <div
@@ -604,6 +695,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           <BlockDispatcher
             block={block}
             isFirst={idx === 0}
+            isSelected={selectedBlockIds.has(block.id)}
+            onSelect={() => {
+              setSelectedBlockIds(new Set([block.id]))
+              containerRef.current?.focus({ preventScroll: true })
+            }}
             blockRef={(handle) => {
               if (handle) blockRefs.current.set(block.id, handle)
               else blockRefs.current.delete(block.id)
@@ -640,6 +736,8 @@ function BlockDispatcher({
   block,
   blockRef,
   isFirst,
+  isSelected,
+  onSelect,
   onChange,
   onEnterAtStart,
   onEnterAtEnd,
@@ -655,6 +753,8 @@ function BlockDispatcher({
   block: BlockState
   blockRef: React.Ref<InlineEditorHandle>
   isFirst?: boolean
+  isSelected?: boolean
+  onSelect?: () => void
   onChange: (node: BlockNode) => void
   onEnterAtStart: () => void
   onEnterAtEnd: () => void
@@ -672,7 +772,7 @@ function BlockDispatcher({
       // Un paragraphe ne contenant qu'une image → rendu comme ImageBlock (évite perte lors du blur)
       const para = block.node as ParagraphNode
       if (para.children.length === 1 && para.children[0].type === 'image') {
-        return <ImageBlock node={para.children[0] as ImageNode} />
+        return <ImageBlock node={para.children[0] as ImageNode} isSelected={isSelected} onSelect={onSelect} />
       }
       return (
         <ParagraphBlock
@@ -741,13 +841,32 @@ function BlockDispatcher({
       return <CodeBlock node={block.node as CodeNode} />
 
     case 'blockquote':
-      return <BlockquoteBlock node={block.node as BlockquoteNode} />
+      return (
+        <BlockquoteBlock
+          ref={blockRef}
+          node={block.node as BlockquoteNode}
+          onChange={(node) => onChange(node as unknown as BlockNode)}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
+          onArrowUp={onArrowUp}
+          onArrowDown={onArrowDown}
+          onSplit={onSplit}
+          onSmartPaste={onSmartPaste}
+        />
+      )
 
     case 'image':
-      return <ImageBlock node={block.node as ImageNode} />
+      return <ImageBlock node={block.node as ImageNode} isSelected={isSelected} onSelect={onSelect} />
 
     case 'thematicBreak':
-      return <hr className="my-6 border-holo-border-soft" />
+      return (
+        <div
+          onClick={onSelect}
+          className={cn('cursor-pointer rounded py-1 transition', isSelected && 'ring-2 ring-holo-primary/40')}
+        >
+          <hr className="border-holo-border-soft" />
+        </div>
+      )
 
     case 'math':
       return (
@@ -765,6 +884,13 @@ function BlockDispatcher({
         <FootnoteBlock
           ref={blockRef}
           node={block.node as unknown as FootnoteDefinitionNode}
+          onChange={(node) => onChange(node as unknown as BlockNode)}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
+          onArrowUp={onArrowUp}
+          onArrowDown={onArrowDown}
+          onSplit={onSplit}
+          onSmartPaste={onSmartPaste}
         />
       )
 

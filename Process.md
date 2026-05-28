@@ -724,9 +724,9 @@ src/main.tsx
 - ✅ Intégration d'un git diff lors de merge nécessaire qui est modal sur le fichier
 - ✅ Rebrancher / optimiser le design de electron updater
 - ✅Designer le panel AI comme copilot
-- Possibilité de pouvoir sélectionner plusieurs bloc avec la souris (drag select?) et les supprimer (BACKSPACE / DELETE)
-- Impossible d'écrire dans les block footnote et blockquote
-- Pouvoir cliquer sur une image pour la sélectionner et faire BACKSPACE pour la supprimer
+- ✅Possibilité de pouvoir sélectionner plusieurs bloc avec la souris (drag select?) et les supprimer (BACKSPACE / DELETE)
+- ✅Impossible d'écrire dans les block footnote et blockquote
+- ✅Pouvoir cliquer sur une image pour la sélectionner et faire BACKSPACE pour la supprimer
 
 ## A la fin des tâches
 - Ajouter une grosse batterie de tests sur les nouveau composant et sur l'app, faire un gros tsc + lint + test

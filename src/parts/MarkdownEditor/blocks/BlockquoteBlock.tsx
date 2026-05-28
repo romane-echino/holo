@@ -1,54 +1,52 @@
 /**
- * BlockquoteBlock.tsx — Bloc citation (blockquote)
- *
- * Rendu avec bordure gauche colorée et typographie adaptée.
- * Les blocs enfants sont rendus en lecture seule.
+ * BlockquoteBlock.tsx — Bloc citation éditable (blockquote)
  */
 
+import { forwardRef } from 'react'
+import { InlineEditor } from '../InlineEditor'
+import type { InlineEditorHandle } from '../InlineEditor'
 import type { BlockquoteNode, ParagraphNode, InlineNode } from '../lib/types'
 import { cn } from '../../../utils/global'
 
-// Rendu simple des inlines en texte
-function renderInlines(nodes: InlineNode[]): string {
-  return nodes.map((n) => {
-    if (n.type === 'text') return n.value
-    if (n.type === 'strong' || n.type === 'emphasis') return renderInlines(n.children)
-    if (n.type === 'inlineCode') return n.value
-    return ''
-  }).join('')
-}
-
-interface BlockquoteBlockProps {
+export interface BlockquoteBlockProps {
   node: BlockquoteNode
   className?: string
+  onChange?: (node: BlockquoteNode) => void
+  onEnterAtEnd?: () => void
+  onBackspaceAtStart?: () => void
+  onArrowUp?: (x: number) => void
+  onArrowDown?: (x: number) => void
+  onSplit?: (after: InlineNode[]) => void
+  onSmartPaste?: (before: InlineNode[], after: InlineNode[], md: string) => void
 }
 
-export function BlockquoteBlock({ node, className }: BlockquoteBlockProps) {
-  return (
-    <blockquote
-      className={cn(
-        'my-3 border-l-[3px] border-holo-primary/50 pl-4 py-1',
-        className,
-      )}
-    >
-      {node.children.map((child, i) => {
-        if (child.type === 'paragraph') {
-          const para = child as ParagraphNode
-          return (
-            <p key={i} className="text-holo-text-muted italic leading-relaxed">
-              {renderInlines(para.children)}
-            </p>
-          )
-        }
-        if (child.type === 'blockquote') {
-          return <BlockquoteBlock key={i} node={child as BlockquoteNode} className="ml-2 mt-2" />
-        }
-        return (
-          <p key={i} className="text-sm italic text-holo-text-faint">
-            [{child.type}]
-          </p>
-        )
-      })}
-    </blockquote>
-  )
-}
+export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockProps>(
+  function BlockquoteBlock({ node, className, onChange, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onSplit, onSmartPaste }, ref) {
+    const firstPara = node.children[0] as ParagraphNode | undefined
+    const inlines: InlineNode[] = firstPara?.type === 'paragraph' ? firstPara.children : []
+
+    const handleSave = (newChildren: InlineNode[]) => {
+      if (!onChange) return
+      const updatedPara: ParagraphNode = { type: 'paragraph', children: newChildren }
+      onChange({ ...node, children: [updatedPara, ...node.children.slice(1)] })
+    }
+
+    return (
+      <blockquote className={cn('my-3 border-l-[3px] border-holo-primary/50 pl-4 py-1 italic text-holo-text-muted', className)}>
+        <InlineEditor
+          ref={ref}
+          initialContent={inlines}
+          onSave={handleSave}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
+          onArrowUp={onArrowUp}
+          onArrowDown={onArrowDown}
+          onSplit={onSplit}
+          onSmartPaste={onSmartPaste}
+          blockType="blockquote"
+          placeholder="Citation…"
+        />
+      </blockquote>
+    )
+  },
+)
