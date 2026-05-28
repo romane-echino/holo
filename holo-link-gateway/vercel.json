@@ -3,6 +3,6 @@
   "rewrites": [
     { "source": "/open", "destination": "/open.html" },
     { "source": "/pwa",    "destination": "/pwa/index.html" },
-    { "source": "/pwa/(.*)", "destination": "/pwa/index.html" }
+    { "source": "/pwa/:path((?!.*\\.).*)", "destination": "/pwa/index.html" }
   ]
 }
