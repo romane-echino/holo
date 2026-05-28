@@ -27,3 +27,4 @@ Ne marche pas :Drag sort les blocks -> Dans l'idéale il faudrai pour chaque blo
 
 
 # Phase 3
+Voir les tags du fichier dans la recherche. Est-ce qu'il serait pas opportun de créer un truc in-ram ou in-file (par espace) pour l'indexation des fichiers pour aider a la recherche? Je pose la question mais j'en sais rien du tout.
