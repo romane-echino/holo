@@ -567,8 +567,11 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           const text = e.clipboardData.getData('text/plain')
           if (!text) return
 
+          // Normalise les fins de ligne (Windows CRLF → LF)
+          const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
           // Smart paste — plusieurs paragraphes → déléguer au BlockEditor
-          if (onSmartPaste && text.includes('\n\n')) {
+          if (onSmartPaste && normalized.includes('\n\n')) {
             const el = divRef.current
             const sel = window.getSelection()
             if (el && sel?.rangeCount) {
@@ -588,14 +591,24 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
                 afterTmp.appendChild(afterRange.cloneContents())
                 const afterNodes = domToInlines(afterTmp)
 
-                onSmartPaste(beforeNodes, afterNodes, text)
+                onSmartPaste(beforeNodes, afterNodes, normalized)
                 return
               } catch { /* fall through */ }
             }
           }
 
-          // Paste simple — insérer le texte brut à la position du curseur
-          document.execCommand('insertText', false, text)
+          // Paste simple — insérer le texte normalisé à la position du curseur
+          const sel = window.getSelection()
+          if (sel?.rangeCount) {
+            const range = sel.getRangeAt(0)
+            range.deleteContents()
+            range.insertNode(document.createTextNode(normalized))
+            range.collapse(false)
+            sel.removeAllRanges()
+            sel.addRange(range)
+            syncEmpty(divRef.current!)
+            savedRef.current = false
+          }
         }}
         onInput={(e) => { syncEmpty(e.currentTarget); savedRef.current = false }}
         className={cn('outline-none', className)}

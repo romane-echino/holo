@@ -6,7 +6,7 @@ import type { OnboardingWelcomeValue, HoloSettingsValue } from "./parts/"
 import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
-import { getBaseName } from './lib/appUtils'
+import { getBaseName, buildShareableHoloLink } from './lib/appUtils'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -30,7 +30,7 @@ function extractFmMeta(md: string): TreeFileMeta {
     const key = line.slice(0, colon).trim()
     if (key !== 'title' && key !== 'description' && key !== 'icon') continue
     const value = line.slice(colon + 1).trim().replace(/^['"']|['"']$/g, '')
-    if (value) result[key as keyof TreeFileMeta] = value
+    if (value) result[key as 'title' | 'description' | 'icon'] = value
   }
   return result
 }
@@ -55,6 +55,7 @@ export default function App2() {
     setDropboxAccessToken, setDropboxFolderPath,
     setGdriveAccessToken, setGdriveFolderId,
     setRepoImageStorageMode,
+    shareGatewayBaseUrl,
   } = useConfig()
 
   const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
@@ -164,6 +165,13 @@ export default function App2() {
       window.holo?.setHoloConfigValue('git-email', v.email.trim()),
       window.holo?.setHoloConfigValue('app-onboarding-done', true),
     ])
+    // Sync settingsValue so the Settings dialog shows the submitted name/email
+    setSettingsValue(prev => ({
+      ...(prev ?? {} as HoloSettingsValue),
+      firstName: v.firstName.trim(),
+      lastName: v.lastName.trim(),
+      gitEmail: v.email.trim(),
+    }))
     setOnboardingDone(true)
   }, [setAppAuthor, setGitEmail])
 
@@ -520,6 +528,20 @@ export default function App2() {
     void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
   }, [recentFolders, navigate, handleSelectFile])
 
+  // ─── Lien de partage ─────────────────────────────────────────────────────
+  const handleShare = useCallback(async () => {
+    const filePath = openedFileRef.current?.path
+    if (!filePath) return
+    const link = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
+    if (!link) return
+    try {
+      await navigator.clipboard.writeText(link)
+    } catch {
+      // fallback for Electron context
+      window.holo?.writeClipboardText?.(link)
+    }
+  }, [rootPath, shareGatewayBaseUrl])
+
   // ─── Sauvegarde git auto ────────────────────────────────────────────────────
   type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -744,6 +766,7 @@ export default function App2() {
               onToggleFavorite={() => handleFileFavorite(openedFile.path)}
               onArchive={openedFile.path.includes('/.archive/') ? undefined : () => setPendingArchivePath(openedFile.path)}
               onRestore={openedFile.path.includes('/.archive/') ? () => handleRestoreFile(openedFile.path) : undefined}
+              onShare={handleShare}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-holo-text-faint">

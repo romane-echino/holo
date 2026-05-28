@@ -425,6 +425,15 @@ export function EditorFrame({
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState('')
+  const rawTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize the raw textarea so it never shows its own scrollbar
+  useEffect(() => {
+    const ta = rawTextareaRef.current
+    if (!rawMode || !ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${ta.scrollHeight}px`
+  }, [rawMode, rawValue])
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -829,10 +838,11 @@ export function EditorFrame({
 
         {rawMode ? (
           <textarea
+            ref={rawTextareaRef}
             value={rawValue}
             onChange={(e) => handleRawChange(e.target.value)}
-            className="mt-2 w-full resize-none rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-holo-text-soft outline-none focus:border-holo-primary/30 holo-scrollbar"
-            style={{ minHeight: 'calc(100vh - 200px)' }}
+            className="mt-2 w-full resize-none rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-holo-text-soft outline-none focus:border-holo-primary/30"
+            style={{ minHeight: '200px', overflowY: 'hidden' }}
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"

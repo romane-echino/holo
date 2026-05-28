@@ -91,7 +91,23 @@ function markdownToBlocks(markdown: string): BlockState[] {
       result.push({ id: newId(), node: convertHtmlUnderline(node) })
     }
   }
-  return result.length > 0 ? result : [freshParagraph()]
+  return ensureTrailingParagraph(result.length > 0 ? result : [freshParagraph()])
+}
+
+// Ensure there is always a trailing empty paragraph so the user can always click below
+function ensureTrailingParagraph(blocks: BlockState[]): BlockState[] {
+  if (blocks.length === 0) return [freshParagraph()]
+  const lastNode = blocks[blocks.length - 1].node
+  if (lastNode.type === 'paragraph' && (!('children' in lastNode) || (lastNode as {children: unknown[]}).children.length === 0)) {
+    return blocks
+  }
+  // Check if last block is an empty paragraph (text = "")
+  if (lastNode.type === 'paragraph') {
+    const kids = (lastNode as {children: {value?: string}[]}).children
+    const text = kids.map(k => k.value ?? '').join('')
+    if (text === '') return blocks
+  }
+  return [...blocks, freshParagraph()]
 }
 
 // Convertit les nœuds HTML inline `<u>...</u>` en nœuds underline lors du chargement
@@ -472,8 +488,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         }
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
-        // Si tableau/liste/math/blockquote/separator est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator') && idx === prev.length - 1) {
+        // Si tableau/liste/math/blockquote/separator/heading/footnote est inséré en dernière position, ajouter un paragraphe vide
+        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
         console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
@@ -647,7 +663,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     dragModeActiveRef.current = false
   }, [])
 
-  // Ctrl+A → sélectionne tout le contenu de tous les blocs
+  // Ctrl+A → sélectionne tous les blocs | Ctrl+C → copie le markdown des blocs sélectionnés
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     // Supprimer les blocs sélectionnés
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
@@ -660,15 +676,19 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       setSelectedBlockIds(new Set())
       return
     }
+    // Ctrl+C avec des blocs sélectionnés → copie le markdown correspondant
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedBlockIds.size > 0) {
+      e.preventDefault()
+      const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
+      const md = blocksToMarkdown(selected)
+      navigator.clipboard.writeText(md).catch(() => {
+        window.holo?.writeClipboardText?.(md)
+      })
+      return
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault()
-      const container = containerRef.current
-      if (!container) return
-      const range = document.createRange()
-      range.selectNodeContents(container)
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(range)
+      setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }
   }, [selectedBlockIds])
 
@@ -683,6 +703,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       onMouseDown={handleContainerMouseDown}
       onMouseMove={handleContainerMouseMove}
       onMouseUp={handleContainerMouseUp}
+      onDragStart={(e) => e.preventDefault()}
     >
       {blocks.map((block, idx) => (
         <div

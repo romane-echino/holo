@@ -2,6 +2,22 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.3.0',
+    releasedAt: '2026-05-28',
+    items: [
+      'Blocs citation (blockquote) et notes de bas de page : désormais entièrement éditables.',
+      'Images : clic pour sélectionner un bloc image, Backspace/Suppr pour le supprimer.',
+      'Sélection multi-blocs : glisser la souris pour sélectionner plusieurs blocs, Shift+clic pour étendre la plage, Backspace/Suppr pour tout supprimer.',
+      'Séparateur : sélectionnable au clic et supprimable au clavier.',
+      'Palette de commandes : nouvelles entrées Citation, Note de bas de page et Séparateur.',
+      'Panneau IA : refonte dans le style Copilot — historique de conversation, bulles par rôle, état vide avec suggestions rapides.',
+      'Mises à jour automatiques : nouvelle notification flottante avec barre de progression.',
+      'Diff de conflits Git : visualisation côte à côte des conflits de fusion avec résolution en un clic.',
+      'Identifiants par espace : popup de saisie des identifiants cloud lors de l\'ouverture d\'un espace.',
+      'Correctif de démarrage : crash au lancement lié à une initialisation hors-ordre.',
+    ],
+  },
+  {
     version: '0.2.8',
     releasedAt: '2026-05-08',
     items: [

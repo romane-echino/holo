@@ -348,6 +348,18 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           return
         }
 
+        if (e.key === 'Enter' && e.shiftKey) {
+          // Shift+Enter: ajouter une ligne sans naviguer
+          return
+        }
+
+        // Escape: sortir du tableau et créer/cibler le bloc suivant
+        if (e.key === 'Escape' && onTabExit) {
+          e.preventDefault()
+          onTabExit()
+          return
+        }
+
         if (e.key === 'Backspace' && rows.length > 1) {
           const el = e.currentTarget
           const cursorAtStart = el.selectionStart === 0 && el.selectionEnd === 0

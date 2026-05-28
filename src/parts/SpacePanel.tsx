@@ -69,19 +69,47 @@ const tabClassName =
 
 // ─── Métadonnées fichier (frontmatter) ───────────────────────────────────────
 
-export type TreeFileMeta = { title?: string; description?: string; icon?: string }
+export type TreeFileMeta = { title?: string; description?: string; icon?: string; tags?: string[] }
 
 function parseFrontmatterQuick(content: string): TreeFileMeta {
   const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
   const result: TreeFileMeta = {}
-  for (const line of match[1].split('\n')) {
+  const lines = match[1].split('\n')
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
     const colon = line.indexOf(':')
-    if (colon === -1) continue
+    if (colon === -1) { i++; continue }
     const key = line.slice(0, colon).trim()
-    if (key !== 'title' && key !== 'description' && key !== 'icon') continue
+    if (key === 'tags') {
+      const raw = line.slice(colon + 1).trim()
+      if (raw.startsWith('[')) {
+        // Inline array: tags: [a, b, c]
+        const inner = raw.replace(/^\[|\]$/g, '')
+        result.tags = inner.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+      } else if (!raw) {
+        // YAML block list:
+        // tags:
+        //   - a
+        //   - b
+        const tagItems: string[] = []
+        i++
+        while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
+          tagItems.push(lines[i].replace(/^\s*-\s+/, '').trim().replace(/^['"]|['"]$/g, ''))
+          i++
+        }
+        result.tags = tagItems
+        continue
+      } else {
+        result.tags = [raw.replace(/^['"]|['"]$/g, '')]
+      }
+      i++; continue
+    }
+    if (key !== 'title' && key !== 'description' && key !== 'icon') { i++; continue }
     const value = line.slice(colon + 1).trim().replace(/^['"]|['"]$/g, '')
-    if (value) result[key as keyof TreeFileMeta] = value
+    if (value) result[key as 'title' | 'description' | 'icon'] = value
+    i++
   }
   return result
 }
@@ -333,6 +361,7 @@ export function SpacePanel({
   favoriteFilePaths = [],
   onToggleFileFavorite,
 }: SpacePanelProps) {
+  const { setFileMetaByPath } = useWorkspace()
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
@@ -386,6 +415,8 @@ export function SpacePanel({
         .then(content => {
           const meta = parseFrontmatterQuick(content)
           setFileMeta(prev => ({ ...prev, [path]: meta }))
+          // Sync to WorkspaceContext so SearchModal and other consumers see updated metadata (incl. tags)
+          setFileMetaByPath(prev => ({ ...prev, [path]: meta as unknown as import('../types/app').FileMeta }))
         })
         .catch(() => {
           setFileMeta(prev => ({ ...prev, [path]: {} }))
@@ -750,7 +781,9 @@ export function SpacePanel({
               <Folder size={11} className="shrink-0 text-holo-text-faint" />
               <span className="flex-1 truncate text-left">
                 {addParentOverride
-                  ? addParentOverride.split('/').filter(Boolean).at(-1)
+                  ? (rootPath && addParentOverride.startsWith(rootPath)
+                      ? addParentOverride.slice(rootPath.length).replace(/^\//, '') || 'Racine'
+                      : addParentOverride.split('/').filter(Boolean).at(-1))
                   : 'Racine de l\'espace'}
               </span>
               <ChevronDown size={11} className={cn('shrink-0 text-holo-text-faint transition-transform', folderPickerOpen && 'rotate-180')} />

@@ -79,6 +79,15 @@ export function SlashCommandPopup({ onSelect, onClose }: SlashCommandPopupProps)
     active?.scrollIntoView({ block: 'nearest' })
   }, [safeIdx])
 
+  // Fermeture globale par Escape même si le focus n'est plus sur l'input
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
