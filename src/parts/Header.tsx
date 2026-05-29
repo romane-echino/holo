@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import WindowControls from "./WindowControls";
 import { ALargeSmall, Settings, Bug, Monitor, RefreshCw, Lock } from 'lucide-react'
 import { useWorkspace } from '../contexts/WorkspaceContext'
+import { useAppUpdates } from '../hooks'
 import { cn } from '../utils/global'
 import { FontSizePopover } from './FontSizePopover';
 
@@ -39,6 +40,7 @@ export function Header({
   onOpenSettings?: () => void
 }) {
   const { rootPath } = useWorkspace()
+  const { appVersion } = useAppUpdates()
   const [status, setStatus] = useState<WorkspaceStatus | null>(null)
   const [fontSizeOpen, setFontSizeOpen] = useState(false)
   const fontSizeRef = useRef<HTMLDivElement>(null)
@@ -76,8 +78,7 @@ export function Header({
           <div className="min-w-0">
             <div className="truncate text-lg font-semibold tracking-tight sm:text-xl">holo</div>
             <div className="-mt-1 hidden text-[11px] text-holo-text-faint sm:block">
-              {/* TODO Add version */}
-              v 0.1.0-alpha
+              v {appVersion}
             </div>
           </div>
         </div>

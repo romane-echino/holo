@@ -363,6 +363,38 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     [],
   )
 
+  const handleDeleteAtEnd = useCallback(
+    (id: string) => {
+      const prev = blocksRef.current
+      const idx = prev.findIndex((b) => b.id === id)
+      if (idx === -1 || idx === prev.length - 1) return
+      const nextBlock = prev[idx + 1]
+      const currentBlock = prev[idx]
+      // Bloc suivant vide → le supprimer, focus reste sur le bloc courant
+      if (isEmptyBlock(nextBlock.node)) {
+        blocksDirtyRef.current = true
+        setBlocks((s) => s.filter((b) => b.id !== nextBlock.id))
+        return
+      }
+      // Paragraphe + paragraphe suivant → fusionner les contenus
+      if (currentBlock.node.type === 'paragraph' && nextBlock.node.type === 'paragraph') {
+        const mergedChildren = [
+          ...(currentBlock.node as ParagraphNode).children,
+          ...(nextBlock.node as ParagraphNode).children,
+        ]
+        blocksDirtyRef.current = true
+        setBlocks((s) =>
+          s
+            .map((b) => b.id === id ? { ...b, node: { type: 'paragraph', children: mergedChildren } as ParagraphNode } : b)
+            .filter((b) => b.id !== nextBlock.id),
+        )
+        return
+      }
+      // Sinon : laisser le navigateur gérer la suppression dans le bloc courant
+    },
+    [],
+  )
+
   const handleSmartPaste = useCallback(
     (id: string, before: InlineNode[], after: InlineNode[], pastedMd: string) => {
       const pastedBlocks = markdownToBlocks(pastedMd.trim())
@@ -692,6 +724,22 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       })
       return
     }
+    // Ctrl+X avec des blocs sélectionnés → coupe le markdown (copie + suppression)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'x' && selectedBlockIds.size > 0) {
+      e.preventDefault()
+      const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
+      const md = blocksToMarkdown(selected)
+      navigator.clipboard.writeText(md).catch(() => {
+        window.holo?.writeClipboardText?.(md)
+      })
+      blocksDirtyRef.current = true
+      setBlocks((prev) => {
+        const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
+        return filtered.length > 0 ? filtered : [freshParagraph()]
+      })
+      setSelectedBlockIds(new Set())
+      return
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
@@ -760,11 +808,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           }}
         >
           {/* Drag handle + bouton + dans la marge */}
-          <div className="absolute -left-7 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 opacity-0 transition-opacity group-hover/block:opacity-100">
+          <div className="absolute -left-7 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 opacity-0 transition-opacity group-hover/block:opacity-100 group-focus-within/block:opacity-100">
             <div
               data-drag-handle
               draggable
-              className="flex size-4 cursor-grab items-center justify-center rounded text-holo-text-faint transition hover:text-holo-text active:cursor-grabbing"
+              className="flex size-5 cursor-grab items-center justify-center rounded text-holo-text-faint transition hover:text-holo-text active:cursor-grabbing"
               title="Glisser pour réordonner"
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -795,6 +843,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             onEnterAtStart={() => handleEnterAtStart(block.id)}
             onEnterAtEnd={() => handleEnterAtEnd(block.id)}
             onBackspaceAtStart={() => handleBackspaceAtStart(block.id)}
+            onDeleteAtEnd={() => handleDeleteAtEnd(block.id)}
             onArrowUp={(x) => handleArrowUp(block.id, x)}
             onArrowDown={(x) => handleArrowDown(block.id, x)}
             onConvert={(type, children) => handleConvert(block.id, type, children)}
@@ -829,6 +878,7 @@ function BlockDispatcher({
   onEnterAtStart,
   onEnterAtEnd,
   onBackspaceAtStart,
+  onDeleteAtEnd,
   onArrowUp,
   onArrowDown,
   onConvert,
@@ -846,6 +896,7 @@ function BlockDispatcher({
   onEnterAtStart: () => void
   onEnterAtEnd: () => void
   onBackspaceAtStart: () => void
+  onDeleteAtEnd: () => void
   onArrowUp: (x: number) => void
   onArrowDown: (x: number) => void
   onConvert: (type: string, children: InlineNode[]) => void
@@ -869,6 +920,7 @@ function BlockDispatcher({
           onEnterAtStart={onEnterAtStart}
           onEnterAtEnd={onEnterAtEnd}
           onBackspaceAtStart={onBackspaceAtStart}
+          onDeleteAtEnd={onDeleteAtEnd}
           onArrowUp={onArrowUp}
           onArrowDown={onArrowDown}
           onConvert={onConvert}
@@ -889,6 +941,7 @@ function BlockDispatcher({
           onEnterAtStart={onEnterAtStart}
           onEnterAtEnd={onEnterAtEnd}
           onBackspaceAtStart={onBackspaceAtStart}
+          onDeleteAtEnd={onDeleteAtEnd}
           onArrowUp={onArrowUp}
           onArrowDown={onArrowDown}
           onConvert={onConvert}

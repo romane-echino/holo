@@ -15,16 +15,21 @@
 
 
 # Phase 2
-Le popup d'onboarding apparait a chaque démarrage alors que j'ai saisie mes infos.
-Quand je change la configuration de l'espace (ça modifie .holo.json) il faut aussi le sync avec git
-Il faudrai que la barre sticky dans editor frame ai les meme bouton et pas avoir du code redondant. ce qui serait fun c'est que le header se transforme en sticky au scroll
-Ne marche pas : Possibité de créer 1 block dans une cellule de tableau (ça veut dire que chaque cellule est un bloc unique inline ou on peut faire des commande)
-Ne marche pas :j'ai crée un fichier mis un tag, j'ai essayé de le rechercher mais il ne l'a pas trouvé. Les tags des fichiers ne sont pas recherchable
+✅Le popup d'onboarding apparait a chaque démarrage alors que j'ai saisie mes infos.
+✅Quand je change la configuration de l'espace (ça modifie .holo.json) il faut aussi le sync avec git
+✅Il faudrai que la barre sticky dans editor frame ai les meme bouton et pas avoir du code redondant. ce qui serait fun c'est que le header se transforme en sticky au scroll
+
+✅Ne marche pas :j'ai crée un fichier mis un tag, j'ai essayé de le rechercher mais il ne l'a pas trouvé. Les tags des fichiers ne sont pas recherchable
     - (focaliser sur les nom de fichier -> les titre -> les tags -> la description -> les titre dans le contenu -> le contenu (ordre de pertinance / rank pour le tri))
-Ne marche pas : Lien de partage ne marche pas -> l'idée c'est que dans l'ancien software on pouvait générer un URI pour le coller dans une conversation teams afin d'ouvrir holo et le bon dossier bon fichier, il y'avait une erreur si la personne n'avais pas l'espace correpondant
-Ne marche pas :Drag sort les blocks -> Dans l'idéale il faudrai pour chaque bloc un drag-handle pour qu'on puisse glisser déplacer et réordrer les blocks en adaptant le markdown
+✅Ne marche pas : Lien de partage ne marche pas -> l'idée c'est que dans l'ancien software on pouvait générer un URI pour le coller dans une conversation teams afin d'ouvrir holo et le bon dossier bon fichier, il y'avait une erreur si la personne n'avais pas l'espace correpondant
+✅Ne marche pas :Drag sort les blocks -> Dans l'idéale il faudrai pour chaque bloc un drag-handle pour qu'on puisse glisser déplacer et réordrer les blocks en adaptant le markdown
 
 
 
 # Phase 3
-Voir les tags du fichier dans la recherche. Est-ce qu'il serait pas opportun de créer un truc in-ram ou in-file (par espace) pour l'indexation des fichiers pour aider a la recherche? Je pose la question mais j'en sais rien du tout.
+Voir les tags du fichier dans la recherche. Est-ce qu'il serait pas opportun de créer un truc in-ram ou in-file (par espace) pour l'indexation des fichiers pour aider a la recherche? Je pose la question mais j'en sais rien du tout. Parce que la, dernier test, j'ai démarrer le programme fait une recherche directement et j'ai aucun fichier
+Changer le texte de la version pour l'adapter a la version actuelle dans le header de l'app
+Pourvoir Couper CTRL+X (Mettre le MD dans le presse papier)
+DELETE la touche ne fonctionne pas
+Ne marche pas : Possibité de créer 1 block dans une cellule de tableau (ça veut dire que chaque cellule est un bloc unique inline ou on peut faire des commande)
+Le drag-sort fonctionne mais est un peu délicat et pas pratique en terme UX

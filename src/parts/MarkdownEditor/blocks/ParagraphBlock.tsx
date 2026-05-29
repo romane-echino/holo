@@ -17,6 +17,7 @@ interface ParagraphBlockProps {
   onEnterAtStart?: () => void
   onEnterAtEnd?: () => void
   onBackspaceAtStart?: () => void
+  onDeleteAtEnd?: () => void
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
   onConvert?: (type: string, children: InlineNode[]) => void
@@ -27,7 +28,7 @@ interface ParagraphBlockProps {
 }
 
 export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps>(
-  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, alwaysShowPlaceholder }, ref) {
+  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -46,6 +47,7 @@ export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps
         onEnterAtStart={onEnterAtStart}
         onEnterAtEnd={onEnterAtEnd}
         onBackspaceAtStart={onBackspaceAtStart}
+        onDeleteAtEnd={onDeleteAtEnd}
         onArrowUp={onArrowUp}
         onArrowDown={onArrowDown}
         onConvert={onConvert}

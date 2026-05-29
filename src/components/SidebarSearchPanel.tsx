@@ -8,6 +8,7 @@ interface SearchResult {
   originalPath?: string
   matchType: string
   excerpt: string
+  tags?: string[]
 }
 
 interface SidebarSearchPanelProps {
@@ -109,6 +110,15 @@ export function SidebarSearchPanel({
               <span className={`text-xs truncate ${result.matchType === 'tag' ? 'text-[#9d8bff]' : result.matchType === 'archive' ? 'text-amber-200/80' : 'text-white/40'}`}>
                 {result.excerpt}
               </span>
+              {result.tags && result.tags.length > 0 && result.matchType !== 'tag' && (
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {result.tags.slice(0, 4).map((tag) => (
+                    <span key={tag} className="rounded px-1 py-0.5 text-[10px] bg-[#7B61FF]/15 text-[#9d8bff]">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </button>
           ))}
         </div>

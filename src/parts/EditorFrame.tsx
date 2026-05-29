@@ -589,7 +589,7 @@ export function EditorFrame({
     if (!scrollEl) return
 
     const target = scrollEl
-    const handleScroll = () => setShowStickyHeader(target.scrollTop > 12)
+    const handleScroll = () => setShowStickyHeader(target.scrollTop > 48)
 
     handleScroll()
     target.addEventListener('scroll', handleScroll, { passive: true })

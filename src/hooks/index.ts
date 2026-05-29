@@ -20,6 +20,7 @@ export { useGitDialogActions } from './useGitDialogActions'
 
 // Search and navigation
 export { useSearchWorkflow } from './useSearchWorkflow'
+export { useSearchIndex } from './useSearchIndex'
 export { useNavigationSuggestions } from './useNavigationSuggestions'
 
 // UI state

@@ -10,11 +10,13 @@ export function useSaveCurrentFile({
   getHoloApi,
   refreshGitState,
   refreshTree,
+  onAfterSave,
 }: {
   ensureWritableMode: () => boolean
   getHoloApi: () => Window['holo'] | null
   refreshGitState: (silent?: boolean) => Promise<void>
   refreshTree: () => Promise<void>
+  onAfterSave?: (path: string, content: string) => void
 }) {
   const { activeTab, setActiveTab, readOnlyMode } = useEditor()
   const { rootPath, setPathStatsByPath } = useWorkspace()
@@ -37,6 +39,7 @@ export function useSaveCurrentFile({
     }
 
     await holo.writeFile(activeTab.path, activeTab.content)
+    onAfterSave?.(activeTab.path, activeTab.content)
     const stats = await holo.getPathStats(activeTab.path).catch(() => null)
     setActiveTab((prev) => (prev ? { ...prev, isDirty: false } : prev))
 
@@ -70,8 +73,7 @@ export function useSaveCurrentFile({
     appAuthor,
     ensureWritableMode,
     getHoloApi,
-    gitState.isRepo,
-    refreshGitState,
+    gitState.isRepo,    onAfterSave,    refreshGitState,
     refreshTree,
     rootPath,
     setActiveTab,

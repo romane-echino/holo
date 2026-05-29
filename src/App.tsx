@@ -31,7 +31,7 @@ import {
   useEditorBodyUpdate, useTableDndAndMarkdownConversion, useExportPdf, useSyncWysiwygFromMarkdown,
   useRawEditorDrop, useRawEditorKeyDown, useContextMenuActions,
   useReadonlyDateFormatter, useEditorUIHelpers, useToggleTemplateStatus,
-  useTocItems, useEditorImageLoader, useStartupNavigation, usePendingTitleFocus,
+  useTocItems, useEditorImageLoader, useStartupNavigation, usePendingTitleFocus, useSearchIndex,
 } from './hooks'
 import { flatTreeFiles } from './lib/appUtils'
 
@@ -47,6 +47,7 @@ function App() {
     fileMetaByPath,
     activeSidebar,
     contextMenu,
+    rootPath,
   } = useWorkspace()
 
   const {
@@ -140,6 +141,7 @@ function App() {
 
   const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
   const { myFilePaths } = useMyFilePaths({ allFilePaths, getHoloApi })
+  const { indexEntries, updateIndexEntry } = useSearchIndex({ rootPath, allFilePaths, getHoloApi })
   const { visibleRecentFilePaths, linkPageSuggestions } = useNavigationSuggestions({ allFilePaths })
 
   useCompactToc({
@@ -164,7 +166,7 @@ function App() {
   })
 
   const { saveCurrentFile } = useSaveCurrentFile({
-    ensureWritableMode, getHoloApi, refreshGitState, refreshTree,
+    ensureWritableMode, getHoloApi, refreshGitState, refreshTree, onAfterSave: updateIndexEntry,
   })
 
   const { updateActiveTabContent, updateEditableHeader, updateTags } = useTabContentUpdates()
@@ -181,7 +183,7 @@ function App() {
     clearSearch,
   } = useSearchWorkflow({
     getHoloApi,
-    allFilePaths,
+    indexEntries,
   })
 
   const { askAi } = useAiProviderClient()

@@ -19,11 +19,21 @@ export type FileMeta = {
   isTemplate: boolean
 }
 
+export type SearchIndexEntry = {
+  path: string
+  name: string
+  title: string
+  description: string
+  tags: string[]
+  mtime: string
+}
+
 export type SearchResultItem = {
   path: string
   name: string
   excerpt: string
   matchType: 'content' | 'tag' | 'archive'
+  tags?: string[]
   isArchived?: boolean
   archivedPath?: string
   originalPath?: string

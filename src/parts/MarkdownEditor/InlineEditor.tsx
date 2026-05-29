@@ -58,6 +58,8 @@ export interface InlineEditorProps {
   onEnterAtEnd?: () => void
   onEnterAtStart?: () => void
   onBackspaceAtStart?: () => void
+  /** Delete en fin de bloc → fusionner avec le bloc suivant */
+  onDeleteAtEnd?: () => void
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
   /** Type sémantique du bloc — utilisé comme data-block-type pour le CSS */
@@ -83,6 +85,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   onEnterAtEnd,
   onEnterAtStart,
   onBackspaceAtStart,
+  onDeleteAtEnd,
   onArrowUp,
   onArrowDown,
   blockType,
@@ -513,6 +516,14 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         return
       }
       // Autre bloc non-vide → laisser le navigateur gérer
+      return
+    }
+
+    // Delete en fin de bloc → fusionner avec le bloc suivant
+    if (e.key === 'Delete' && isAtEnd() && onDeleteAtEnd) {
+      e.preventDefault()
+      save()
+      onDeleteAtEnd()
       return
     }
 

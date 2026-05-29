@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { normalizeVersionLabel } from '../lib/appUtils'
 
+// Version statique de fallback — mise à jour à chaque release
+const FALLBACK_VERSION = '0.3.2'
+
 export function useAppUpdates() {
-  const [appVersion, setAppVersion] = useState('')
+  const [appVersion, setAppVersion] = useState(FALLBACK_VERSION)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
