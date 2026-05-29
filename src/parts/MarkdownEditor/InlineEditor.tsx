@@ -321,6 +321,24 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     }
   }
 
+  // Vérifie si le curseur est à la toute fin du contenu
+  const isAtEnd = (): boolean => {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) return false
+    const range = sel.getRangeAt(0)
+    if (!range.collapsed) return false
+    const el = divRef.current
+    if (!el) return false
+    try {
+      const testRange = document.createRange()
+      testRange.setStart(range.endContainer, range.endOffset)
+      testRange.setEnd(el, el.childNodes.length)
+      return testRange.toString().length === 0
+    } catch {
+      return false
+    }
+  }
+
   // Détecte si le curseur est visuellement sur la première ligne
   const isOnFirstLine = (): boolean => {
     const sel = window.getSelection()
