@@ -40,6 +40,7 @@ type EditorTopBarWrapperProps = {
   onExportPdf: () => void
   onCopyLink: () => void
   onSave: () => void
+  onToggleTemplate?: (path: string, isTemplate: boolean) => Promise<void>
 }
 
 export const EditorTopBarWrapper: React.FC<EditorTopBarWrapperProps> = ({
@@ -52,12 +53,15 @@ export const EditorTopBarWrapper: React.FC<EditorTopBarWrapperProps> = ({
   onExportPdf,
   onCopyLink,
   onSave,
+  onToggleTemplate,
 }) => {
   const { activeTab, readOnlyMode, editorMode } = useEditor()
   const { saveStatus, copyLinkStatus } = useUI()
   const { showCompactToc, compactTocRef } = useEditorOverlay()
-  const { rootPath, setSelectedPath, setExpandedDirectories } = useWorkspace()
+  const { rootPath, setSelectedPath, setExpandedDirectories, fileMetaByPath } = useWorkspace()
   const effectiveEditorMode = readOnlyMode ? 'wysiwyg' : editorMode
+
+  const isTemplate = activeTab?.path ? (fileMetaByPath[activeTab.path]?.isTemplate ?? false) : false
 
   const breadcrumbSegments = computeBreadcrumb(activeTab?.path ?? null, rootPath)
 
@@ -90,6 +94,11 @@ export const EditorTopBarWrapper: React.FC<EditorTopBarWrapperProps> = ({
       onExportPdf={onExportPdf}
       onCopyLink={onCopyLink}
       onSave={onSave}
+      isTemplate={isTemplate}
+      onToggleTemplate={activeTab?.path && onToggleTemplate
+        ? () => onToggleTemplate(activeTab.path, !isTemplate)
+        : undefined
+      }
     />
   )
 }

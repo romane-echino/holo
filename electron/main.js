@@ -1061,6 +1061,7 @@ function spawnDetachedHoloInstance({ rootPath = '', filePath = '' } = {}) {
 }
 
 function createWindow(launchPayload = null) {
+  const isWindows = process.platform === 'win32'
   const window = new BrowserWindow({
     width: 1440,
     height: 940,
@@ -1068,8 +1069,11 @@ function createWindow(launchPayload = null) {
     minHeight: 640, 
     title: "Holo",
     frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
+    // Sur Windows, titleBarStyle:'hidden' réactive l'Aero snap (drag vers le haut/côtés)
+    // et les raccourcis Win+flèches, tout en conservant le rendu personnalisé.
+    ...(isWindows && { titleBarStyle: 'hidden' }),
+    transparent: !isWindows,
+    backgroundColor: isWindows ? '#1a1a2e' : '#00000000',
     vibrancy: "under-window",
     visualEffectState: "active",
     show: false,
@@ -1670,6 +1674,7 @@ ipcMain.handle('fs:archive-path', async (_event, targetPath) => {
 })
 
 ipcMain.handle('fs:list-archived-files', async () => {
+  if (!currentRootPath) return []
   const archiveRoot = getArchiveRootPath()
   const archiveStats = await fs.stat(archiveRoot).catch(() => null)
 

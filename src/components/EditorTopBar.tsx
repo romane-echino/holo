@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { FileDown, Link, MoreHorizontal } from 'lucide-react'
+import { FileDown, Link, MoreHorizontal, LayoutTemplate } from 'lucide-react'
 import { ContextMenu } from './ContextMenu'
 import type { ContextMenuAction } from './ContextMenu'
 
@@ -30,6 +30,8 @@ type EditorTopBarProps = {
   onExportPdf: () => void
   onCopyLink: () => void
   onSave: () => void
+  isTemplate?: boolean
+  onToggleTemplate?: () => void
 }
 
 export const EditorTopBar: React.FC<EditorTopBarProps> = ({
@@ -51,6 +53,8 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
   onExportPdf,
   onCopyLink,
   onSave,
+  isTemplate,
+  onToggleTemplate,
 }) => {
   const [moreMenuAnchor, setMoreMenuAnchor] = useState<HTMLElement | null>(null)
 
@@ -183,6 +187,20 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
         >
           <MoreHorizontal size={14} />
         </button>
+        {onToggleTemplate && (
+          <button
+            className={`flex size-7 items-center justify-center rounded border transition ${
+              isTemplate
+                ? 'border-violet-400/50 bg-violet-500/20 text-violet-300 hover:bg-violet-500/30'
+                : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+            }`}
+            onClick={onToggleTemplate}
+            title={isTemplate ? 'Retirer du modèle' : 'Établir comme modèle'}
+            aria-label={isTemplate ? 'Retirer du modèle' : 'Établir comme modèle'}
+          >
+            <LayoutTemplate size={14} />
+          </button>
+        )}
         {moreMenuAnchor && (
           <ContextMenu
             anchorEl={moreMenuAnchor}

@@ -370,7 +370,12 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     return rect.left || el.getBoundingClientRect().left
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {    // CTRL+Z / CTRL+Y / CTRL+SHIFT+Z → déléguer à BlockEditor (empêcher l'undo natif du navigateur)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y' || e.key === 'Z')) {
+      e.preventDefault()
+      // Ne pas stopPropagation — l'événement doit remonter jusqu'au conteneur BlockEditor
+      return
+    }
     // Raccourcis de conversion : # + espace au début d’un bloc (avec ou sans contenu)
     if (e.key === ' ' && onConvert) {
       const el = divRef.current
@@ -599,8 +604,12 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           // Normalise les fins de ligne (Windows CRLF → LF)
           const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
-          // Smart paste — plusieurs paragraphes → déléguer au BlockEditor
-          if (onSmartPaste && normalized.includes('\n\n')) {
+          // Smart paste — contenu multi-blocs → déléguer au BlockEditor
+          // Déclenché dès qu'il y a une séquence multi-paragraphe (\n\n) OU
+          // des indicateurs de blocs markdown en début de ligne (heading, liste, blockquote, code fence)
+          const isBlockMarkdown = normalized.includes('\n\n')
+            || /(?:^|\n)(?:[#>][ \t]|[-*+][ \t]|\d+\.[ \t]|```|---$)/.test(normalized)
+          if (onSmartPaste && isBlockMarkdown) {
             const el = divRef.current
             const sel = window.getSelection()
             if (el && sel?.rangeCount) {

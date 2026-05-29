@@ -7,7 +7,8 @@ import { useConfig } from '../contexts/ConfigContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
 import type { TreeNode } from '../types/app'
-import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch, Archive } from 'lucide-react'
+import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch, Archive, Layers } from 'lucide-react'
+import { updateMarkdownBooleanHeaderField } from '../lib/markdown'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import type { LucideIcon } from 'lucide-react'
@@ -60,6 +61,7 @@ type SpacePanelProps = {
   // Favoris fichiers
   favoriteFilePaths?: string[]
   onToggleFileFavorite?: (path: string) => void
+  onAddFromTemplate?: (name: string, content: string, parentPath?: string) => void
 }
 
 
@@ -69,7 +71,7 @@ const tabClassName =
 
 // ─── Métadonnées fichier (frontmatter) ───────────────────────────────────────
 
-export type TreeFileMeta = { title?: string; description?: string; icon?: string; tags?: string[] }
+export type TreeFileMeta = { title?: string; description?: string; icon?: string; tags?: string[]; isTemplate?: boolean }
 
 function parseFrontmatterQuick(content: string): TreeFileMeta {
   const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
@@ -106,8 +108,9 @@ function parseFrontmatterQuick(content: string): TreeFileMeta {
       }
       i++; continue
     }
-    if (key !== 'title' && key !== 'description' && key !== 'icon') { i++; continue }
+    if (key !== 'title' && key !== 'description' && key !== 'icon' && key !== 'template') { i++; continue }
     const value = line.slice(colon + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (key === 'template') { result.isTemplate = value === 'true'; i++; continue }
     if (value) result[key as 'title' | 'description' | 'icon'] = value
     i++
   }
@@ -185,6 +188,8 @@ function TreeNode({
   const FileIcon = getFileIcon(node)
   const isDragOver = drag?.dragOverPath === node.path && isFolder
   const isFav = !isFolder && (favoriteFilePaths?.includes(node.path) ?? false)
+  const { fileMetaByPath: workspaceFileMeta } = useWorkspace()
+  const isTemplate = !isFolder && Boolean(workspaceFileMeta[node.path]?.isTemplate)
   // Utiliser l'override si disponible (mise à jour immédiate sans attendre le cache)
   const metaRaw = metaOverride?.path === node.path ? metaOverride : (!isFolder ? fileMeta?.[node.path] : undefined)
   const displayTitle = metaRaw?.title || node.name
@@ -248,6 +253,9 @@ function TreeNode({
 
         {isFav && (
           <Star size={10} className="shrink-0 fill-amber-400 text-amber-400 opacity-70" />
+        )}
+        {isTemplate && (
+          <Layers size={10} className="shrink-0 text-violet-400 opacity-80" />
         )}
       </button>
 
@@ -360,8 +368,9 @@ export function SpacePanel({
   onGitSync,
   favoriteFilePaths = [],
   onToggleFileFavorite,
+  onAddFromTemplate,
 }: SpacePanelProps) {
-  const { setFileMetaByPath } = useWorkspace()
+  const { setFileMetaByPath, fileMetaByPath } = useWorkspace()
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
@@ -416,7 +425,7 @@ export function SpacePanel({
           const meta = parseFrontmatterQuick(content)
           setFileMeta(prev => ({ ...prev, [path]: meta }))
           // Sync to WorkspaceContext so SearchModal and other consumers see updated metadata (incl. tags)
-          setFileMetaByPath(prev => ({ ...prev, [path]: meta as unknown as import('../types/app').FileMeta }))
+          setFileMetaByPath(prev => ({ ...prev, [path]: { title: meta.title ?? '', description: meta.description ?? '', isTemplate: meta.isTemplate ?? false } }))
         })
         .catch(() => {
           setFileMeta(prev => ({ ...prev, [path]: {} }))
@@ -523,6 +532,49 @@ export function SpacePanel({
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null)
   const [moreMenuAnchorEl, setMoreMenuAnchorEl] = useState<HTMLElement | null>(null)
   const [gitSyncing, setGitSyncing] = useState(false)
+
+  // ─── Dialog "À partir d'un modèle" ────────────────────────────────────────
+  const [tplOpen, setTplOpen] = useState(false)
+  const [tplSelected, setTplSelected] = useState<string | null>(null)
+  const [tplName, setTplName] = useState('')
+  const [tplParent, setTplParent] = useState<string | undefined>(undefined)
+  const [tplContent, setTplContent] = useState<string | null>(null)
+  const [tplVars, setTplVars] = useState<string[]>([])
+  const [tplVarValues, setTplVarValues] = useState<Record<string, string>>({})
+  const [tplLoading, setTplLoading] = useState(false)
+  const tplNameRef = useRef<HTMLInputElement>(null)
+  const templateFiles = useMemo(
+    () => Object.entries(fileMetaByPath).filter(([, m]) => m.isTemplate).map(([path, m]) => ({ path, title: m.title || getBaseName(path) })),
+    [fileMetaByPath],
+  )
+  const openTplDialog = useCallback(() => {
+    setTplSelected(null)
+    setTplName('')
+    setTplParent((selectedFolderPath) || undefined)
+    setTplContent(null)
+    setTplVars([])
+    setTplVarValues({})
+    setMenuAnchorEl(null)
+    setTplOpen(true)
+  }, [selectedFolderPath])
+  const handleTplConfirm = useCallback(() => {
+    if (!tplSelected || !tplName.trim() || !tplContent) return
+    const name = tplName.trim().includes('.') ? tplName.trim() : tplName.trim() + '.md'
+    // Supprimer la ligne template:true puis remplacer les variables (\$VAR et $VAR)
+    let processed = tplContent.replace(/^template:\s*true\s*\r?\n/m, '')
+    for (const [varName, value] of Object.entries(tplVarValues)) {
+      processed = processed.split(`\\$${varName}`).join(value).split(`$${varName}`).join(value)
+    }
+    // Mettre à jour le titre dans le frontmatter selon le nom saisi
+    const titleValue = name.replace(/\.md$/i, '')
+    if (/^title:/m.test(processed)) {
+      processed = processed.replace(/^title:[ \t]*.*/m, `title: ${titleValue}`)
+    } else {
+      processed = processed.replace(/^(---[ \t]*\r?\n)/, `$1title: ${titleValue}\n`)
+    }
+    onAddFromTemplate?.(name, processed, tplParent)
+    setTplOpen(false)
+  }, [tplSelected, tplName, tplContent, tplVarValues, tplParent, onAddFromTemplate])
 
   // ─── Menu contextuel clic-droit ────────────────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; node: SpaceFileNode } | null>(null)
@@ -850,6 +902,83 @@ export function SpacePanel({
       </div>
     )}
 
+    {/* Dialog "À partir d'un modèle" */}
+    {tplOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setTplOpen(false)}>
+        <div className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.5)]" onClick={(e) => e.stopPropagation()}>
+          <div className="mb-4 flex items-center gap-2">
+            <Layers size={15} className="text-violet-400 shrink-0" />
+            <h3 className="text-sm font-semibold text-holo-text">À partir d'un modèle</h3>
+          </div>
+          {templateFiles.length === 0 ? (
+            <p className="mb-4 text-sm text-holo-text-faint">Aucun modèle disponible. Marquez un fichier comme modèle via le menu contextuel.</p>
+          ) : (
+            <div className="mb-3 max-h-[180px] overflow-y-auto rounded-holo-lg border border-holo-border-soft holo-scrollbar">
+              {templateFiles.map((t) => (
+                <button key={t.path} type="button"
+                  onClick={() => {
+                    setTplSelected(t.path)
+                    setTplContent(null)
+                    setTplVars([])
+                    setTplVarValues({})
+                    setTplLoading(true)
+                    setTplName(t.title ? t.title + ' - ' : '')
+                    window.holo?.readFile(t.path).then(content => {
+                      const vars = [...new Set((content.match(/\\?\$([A-Z][A-Z0-9_]*)/g) ?? []).map(m => m.replace(/^\\?\$/, '')))]
+                      setTplContent(content)
+                      setTplVars(vars)
+                      setTplVarValues(Object.fromEntries(vars.map(v => [v, ''])))
+                      setTplLoading(false)
+                      setTimeout(() => {
+                        const el = tplNameRef.current
+                        if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
+                      }, 50)
+                    }).catch(() => setTplLoading(false))
+                  }}
+                  className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-holo-glass-hover',
+                    tplSelected === t.path ? 'bg-holo-primary-surface text-holo-primary-soft ring-inset ring-1 ring-holo-primary/20' : 'text-holo-text-muted')}>
+                  <Layers size={12} className={cn('shrink-0', tplSelected === t.path ? 'text-violet-400' : 'text-holo-text-faint')} />
+                  <span className="truncate">{t.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Variables du modèle */}
+          {tplLoading && (
+            <p className="mb-3 text-xs text-holo-text-faint animate-pulse">Analyse du modèle…</p>
+          )}
+          {!tplLoading && tplVars.length > 0 && (
+            <div className="mb-3 space-y-2 rounded-holo-lg border border-violet-500/20 bg-violet-500/5 p-3">
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-violet-400/80">Variables</p>
+              {tplVars.map(varName => (
+                <div key={varName} className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 truncate font-mono text-xs text-violet-400">${varName}</span>
+                  <input
+                    value={tplVarValues[varName] ?? ''}
+                    onChange={(e) => setTplVarValues(prev => ({ ...prev, [varName]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleTplConfirm(); if (e.key === 'Escape') setTplOpen(false) }}
+                    placeholder={varName.charAt(0) + varName.slice(1).toLowerCase()}
+                    className="min-w-0 flex-1 rounded-holo-md border border-holo-border-soft bg-holo-glass px-2.5 py-1 text-sm text-holo-text placeholder:text-holo-text-faint/60 focus:border-violet-500/40 focus:outline-none"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <input ref={tplNameRef} value={tplName} onChange={(e) => setTplName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleTplConfirm(); if (e.key === 'Escape') setTplOpen(false) }}
+            placeholder={tplSelected ? 'Suffixe du titre (ex : 25.06.26)' : 'Nom du nouveau fichier'}
+            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setTplOpen(false)} className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text">Annuler</button>
+            <button onClick={handleTplConfirm} disabled={!tplSelected || !tplName.trim() || !tplContent} className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]">Créer</button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* Menu contextuel clic-droit */}
     {ctxMenu && (
       <ContextMenu
@@ -860,6 +989,22 @@ export function SpacePanel({
           { type: 'header', label: `${ctxMenu.node.type === 'folder' ? 'Dossier' : 'Fichier'} · ${ctxMenu.node.name}` },
           { type: 'separator' },
           { type: 'item', label: 'Renommer', icon: Pencil, onClick: () => openRenameDialog(ctxMenu.node) },
+          ...(ctxMenu.node.type === 'file' ? [{
+            type: 'item' as const,
+            label: fileMetaByPath[ctxMenu.node.path]?.isTemplate ? 'Retirer du modèle' : 'Définir comme modèle',
+            icon: Layers,
+            onClick: async () => {
+              const cur = Boolean(fileMetaByPath[ctxMenu.node.path]?.isTemplate)
+              try {
+                const content = await window.holo?.readFile(ctxMenu.node.path)
+                if (content == null) return
+                const next = updateMarkdownBooleanHeaderField(content, 'template', !cur)
+                await window.holo?.writeFile(ctxMenu.node.path, next)
+                setFileMetaByPath(prev => ({ ...prev, [ctxMenu.node.path]: { ...(prev[ctxMenu.node.path] ?? { title: '', description: '', isTemplate: false }), isTemplate: !cur } }))
+              } catch (err) { console.error('[SpacePanel] toggleTemplate:', err) }
+              setCtxMenu(null)
+            },
+          }] : []),
           ...(ctxMenu.node.type === 'file' && onToggleFileFavorite ? [{
             type: 'item' as const,
             label: favoriteFilePaths.includes(ctxMenu.node.path) ? 'Retirer des favoris' : 'Mettre en favori',
@@ -889,8 +1034,12 @@ export function SpacePanel({
         anchorAlign="right"
         onClose={() => setMenuAnchorEl(null)}
         items={[
-          { type: 'item', label: 'Nouveau fichier', icon: FileText, onClick: () => openAddDialog('file') },
-          { type: 'item', label: 'Nouveau dossier', icon: Folder, onClick: () => openAddDialog('folder') },
+          { type: 'item', label: 'Nouveau fichier', icon: FileText, onClick: () => { openAddDialog('file'); setMenuAnchorEl(null) } },
+          { type: 'item', label: 'Nouveau dossier', icon: Folder, onClick: () => { openAddDialog('folder'); setMenuAnchorEl(null) } },
+          ...(templateFiles.length > 0 ? [
+            { type: 'separator' as const },
+            { type: 'item' as const, label: 'À partir d\'un modèle…', icon: Layers, onClick: openTplDialog },
+          ] : []),
         ] satisfies ContextMenuAction[]}
       />
     )}
@@ -1074,6 +1223,23 @@ export function SpaceRoute({
     }
   }, [rootPath, setTree, onSelectFile])
 
+  const handleAddFromTemplate = useCallback(async (name: string, content: string, parentPath?: string) => {
+    const parent = parentPath || rootPath
+    if (!parent) return
+    const finalName = name.includes('.') ? name : name + '.md'
+    const newPath = `${parent}/${finalName}`
+    try {
+      await window.holo?.createFile(parent, finalName)
+      await window.holo?.writeFile(newPath, content)
+      const result = await window.holo?.refreshTree()
+      if (result) setTree(result.tree)
+      onSelectFile?.({ id: newPath, path: newPath, name: finalName, type: 'file' })
+      void window.holo?.gitAutoSave(null as unknown as string)
+    } catch (err) {
+      console.error('[SpaceRoute] Impossible de créer depuis modèle :', err)
+    }
+  }, [rootPath, setTree, onSelectFile])
+
   const handleMoveItem = useCallback(async (sourcePath: string, targetFolderPath: string) => {
     try {
       await window.holo?.movePath(sourcePath, targetFolderPath)
@@ -1227,6 +1393,7 @@ export function SpaceRoute({
         onGitSync={isGitRepo ? handleGitSync : undefined}
         favoriteFilePaths={favoriteFilePaths}
         onToggleFileFavorite={onToggleFileFavorite}
+        onAddFromTemplate={handleAddFromTemplate}
       />
 
       {/* Confirmation d'archivage */}

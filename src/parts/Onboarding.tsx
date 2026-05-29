@@ -100,7 +100,7 @@ export function Onboarding({
           {/* Left visual / positioning */}
           <div className="hidden border-r border-holo-border-soft/80 p-10 lg:flex lg:flex-col">
             <div className="flex items-center gap-3">
-              <img src="/app-icon.png" className='size-11' alt="" />
+              <img src="./app-icon.png" className='size-11' alt="" />
 
               <div>
                 <div className="text-xl font-semibold tracking-tight text-holo-text">holo</div>

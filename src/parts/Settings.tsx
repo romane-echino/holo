@@ -6,6 +6,7 @@ import {
   Database,
   KeyRound,
   Palette,
+  RotateCcw,
   Save,
   Settings,
   Sparkles,
@@ -253,6 +254,7 @@ export function HoloSettingsDialog({
 }: HoloSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
   const [draft, setDraft] = useState<HoloSettingsValue>({ ...defaultValue, ...value })
+  const [confirmReset, setConfirmReset] = useState(false)
   const [selectedSpace, setSelectedSpace] = useState<string>(currentSpace ?? '')
   const [spaceImageMode, setSpaceImageMode] = useState<string>('local')
   const [spaceCredentials, setSpaceCredentials] = useState<SpaceCredentials>({})
@@ -704,7 +706,24 @@ export function HoloSettingsDialog({
 
           <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-holo-border-soft bg-white/[0.018] px-5 py-4 md:px-6">
             <div className="min-w-0">
-              {saved ? (
+              {confirmReset ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-holo-text-muted">Réinitialiser tous les paramètres ?</span>
+                  <button
+                    onClick={() => {
+                      setDraft({ ...defaultValue })
+                      onChange?.({ ...defaultValue })
+                      onSave?.({ ...defaultValue })
+                      setConfirmReset(false)
+                    }}
+                    className="rounded-holo-md bg-red-500/20 px-3 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/30 active:scale-[0.98]"
+                  >Confirmer</button>
+                  <button
+                    onClick={() => setConfirmReset(false)}
+                    className="rounded-holo-md px-3 py-1 text-xs text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
+                  >Annuler</button>
+                </div>
+              ) : saved ? (
                 <p className="truncate text-sm text-holo-success">✓ Configuration sauvegardée</p>
               ) : (
                 <p className="truncate text-sm text-holo-text-faint">Les changements sont enregistrés dans .holo.json.</p>
@@ -712,6 +731,14 @@ export function HoloSettingsDialog({
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="flex items-center gap-1.5 rounded-holo-md px-3 py-2 text-sm text-red-400/70 transition hover:bg-red-500/10 hover:text-red-400 active:scale-[0.98]"
+                title="Réinitialiser les paramètres par défaut"
+              >
+                <RotateCcw size={13} />
+                Réinitialiser
+              </button>
               <button
                 onClick={onClose}
                 className="rounded-holo-md px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"

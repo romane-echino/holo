@@ -33,7 +33,7 @@ import {
   useReadonlyDateFormatter, useEditorUIHelpers, useToggleTemplateStatus,
   useTocItems, useEditorImageLoader, useStartupNavigation, usePendingTitleFocus, useSearchIndex,
 } from './hooks'
-import { flatTreeFiles } from './lib/appUtils'
+import { flatTreeFiles, getBaseName } from './lib/appUtils'
 
 function App() {
   // ── State from contexts ──────────────────────────────────────────────────────
@@ -479,7 +479,19 @@ function App() {
       <section className="flex min-w-0 min-h-0 flex-col bg-[#292929]" style={{ gridArea: 'content' }}>
           {/* Éditeur */}
           <div className="flex-1 min-h-0 flex">
-            <div className="flex-1 min-w-0 flex flex-col">
+            <div
+              className="flex-1 min-w-0 flex flex-col"
+              onContextMenu={(e) => {
+                if (!activeTab) return
+                // Laisser le menu natif du navigateur pour les zones de texte éditables
+                if ((e.target as HTMLElement).closest('[contenteditable="true"], textarea, input')) return
+                e.preventDefault()
+                openTreeContextMenu(
+                  { name: getBaseName(activeTab.path), path: activeTab.path, type: 'file' },
+                  { x: e.clientX, y: e.clientY },
+                )
+              }}
+            >
             {activeTab ? (
               <>
                 <EditorTopBarWrapper
@@ -492,6 +504,7 @@ function App() {
                   onExportPdf={onEditorExportPdf}
                   onCopyLink={() => { void copyHoloLink(activeTab.path) }}
                   onSave={onEditorSave}
+                  onToggleTemplate={toggleTemplateStatus}
                 />
 
                 <EditorCanvasWrapper

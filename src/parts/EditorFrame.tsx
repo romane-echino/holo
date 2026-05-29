@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, PanelRight, Save, Star } from 'lucide-react'
+import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, Layers, PanelRight, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
@@ -26,6 +26,8 @@ type EditorFrameProps = {
   onToggleFavorite?: () => void
   onArchive?: () => void
   onRestore?: () => void
+  isTemplate?: boolean
+  onToggleTemplate?: () => void
 }
 
 function filenameFromPath(filepath: string) {
@@ -451,6 +453,8 @@ export function EditorFrame({
   onToggleFavorite,
   onArchive,
   onRestore,
+  isTemplate,
+  onToggleTemplate,
 }: EditorFrameProps) {
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
@@ -757,6 +761,21 @@ export function EditorFrame({
             <div className="flex shrink-0 items-center gap-2">
               <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
 
+              {onToggleTemplate && (
+                <button
+                  onClick={onToggleTemplate}
+                  className={cn(
+                    'flex size-10 items-center justify-center rounded-holo-md border transition active:scale-[0.98]',
+                    isTemplate
+                      ? 'border-violet-500/40 bg-violet-500/15 text-violet-400 hover:bg-violet-500/25'
+                      : 'border-holo-border-soft bg-holo-glass text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
+                  )}
+                  title={isTemplate ? 'Retirer du modèle' : 'Définir comme modèle'}
+                  aria-label={isTemplate ? 'Retirer du modèle' : 'Définir comme modèle'}
+                >
+                  <Layers size={14} />
+                </button>
+              )}
               {onToggleFavorite && (
                 <button
                   onClick={onToggleFavorite}
@@ -821,6 +840,12 @@ export function EditorFrame({
                         icon: Star,
                         onClick: () => { toggleFavorite(); setMenuAnchorEl(null) },
                       },
+                      ...(onToggleTemplate ? [{
+                        type: 'item' as const,
+                        label: isTemplate ? 'Retirer du modèle' : 'Définir comme modèle',
+                        icon: Layers,
+                        onClick: () => { onToggleTemplate(); setMenuAnchorEl(null) },
+                      }] : []),
                       ...(onArchive ? [{
                         type: 'item' as const,
                         label: 'Archiver',

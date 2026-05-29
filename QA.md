@@ -33,3 +33,17 @@ Pourvoir Couper CTRL+X (Mettre le MD dans le presse papier)
 DELETE la touche ne fonctionne pas
 Ne marche pas : Possibité de créer 1 block dans une cellule de tableau (ça veut dire que chaque cellule est un bloc unique inline ou on peut faire des commande)
 Le drag-sort fonctionne mais est un peu délicat et pas pratique en terme UX
+
+# Phase 4
+Pouvoir faire un système meilleure pour le CTRL+Z dans l'editeur (et CTRL+Y redo)
+Comportement de la fenêtre sous windows
+    - Quand on drag la fenêtre pas possibilité de la coller vers le haut pour l'agrandir en pleine écran (comportement standard windows)
+    - Les touches COMMAND+GAUCHE (droite haut bas) ne marche pas sur windows pour positionner la fenêtre
+DELETE dans un block vide le supprimer et met le curseur dans le premier caractère du bloc suivant
+Coller le markdown dans un bloc ne marche plus?
+Réimplémenter le système de modèle (template)
+    - Menu contextuelle spacepanel et editor frame -> Etablir en tant que modèle
+    - quand on crée un fichier possibilité de choisir a partir d'un modèle
+    - possibilité dans le modèle d'ajouter des variable $NOM $DATE qui lors de la création sont demandée (remplissage facultatif, si vide remplacer par vide)
+    - Voir dans l'arboresence si le fichier est un modèle 
+Pour le drag-sort le handle est parfait c'est surtout la zone de dépot qui est pas très visuel (petite) et clignote tellement c'est petit

@@ -232,6 +232,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
   const dragAnchorRef = useRef<string | null>(null)
 
+  // ─── Historique undo/redo ────────────────────────────────────────────────────
+  // Chaque entrée est la sérialisation markdown de l'état des blocs.
+  // L'état initial est seedé au montage.
+  const historyRef = useRef<{ stack: string[]; pos: number }>({
+    stack: [markdown],
+    pos: 0,
+  })
+  const isHistoryMovingRef = useRef(false)
+  const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Drag-reorder state
   const [dragReorderBlockId, setDragReorderBlockId] = useState<string | null>(null)
   const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null)
@@ -278,6 +288,9 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
       setBlocks(markdownToBlocks(markdown))
+      // Réinitialise l'historique quand le document change de l'extérieur
+      historyRef.current = { stack: [markdown], pos: 0 }
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
     }
   }, [markdown])
 
@@ -289,6 +302,22 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     console.log('[BlockEditor] 📤 EMIT', blocks.length, 'blocks →', JSON.stringify(md.slice(0, 120)))
     lastEmittedRef.current = md
     onChangeRef.current(md)
+
+    // Pousse dans l'historique (debounce 400 ms) sauf pendant undo/redo
+    if (!isHistoryMovingRef.current) {
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      historyTimerRef.current = setTimeout(() => {
+        const h = historyRef.current
+        // Tronque le futur quand une nouvelle modification survient
+        h.stack = h.stack.slice(0, h.pos + 1)
+        h.stack.push(md)
+        h.pos = h.stack.length - 1
+        // Limite à 100 entrées
+        if (h.stack.length > 100) { h.stack.shift(); h.pos-- }
+      }, 400)
+    } else {
+      isHistoryMovingRef.current = false
+    }
   }, [blocks])
 
   const handleBlockChange = useCallback(
@@ -370,6 +399,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (idx === -1 || idx === prev.length - 1) return
       const nextBlock = prev[idx + 1]
       const currentBlock = prev[idx]
+
+      // Bloc courant vide → le supprimer et placer le curseur au début du bloc suivant
+      if (isEmptyBlock(currentBlock.node)) {
+        blocksDirtyRef.current = true
+        setBlocks((s) => s.filter((b) => b.id !== id))
+        setTimeout(() => blockRefs.current.get(nextBlock.id)?.focus(), 0)
+        return
+      }
       // Bloc suivant vide → le supprimer, focus reste sur le bloc courant
       if (isEmptyBlock(nextBlock.node)) {
         blocksDirtyRef.current = true
@@ -703,6 +740,32 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   // Ctrl+A → sélectionne tous les blocs | Ctrl+C → copie le markdown des blocs sélectionnés
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // CTRL+Z → undo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault()
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      const h = historyRef.current
+      if (h.pos > 0) {
+        h.pos--
+        isHistoryMovingRef.current = true
+        blocksDirtyRef.current = true
+        setBlocks(markdownToBlocks(h.stack[h.pos]))
+      }
+      return
+    }
+    // CTRL+Y / CTRL+SHIFT+Z → redo
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey) || e.key === 'Z')) {
+      e.preventDefault()
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      const h = historyRef.current
+      if (h.pos < h.stack.length - 1) {
+        h.pos++
+        isHistoryMovingRef.current = true
+        blocksDirtyRef.current = true
+        setBlocks(markdownToBlocks(h.stack[h.pos]))
+      }
+      return
+    }
     // Supprimer les blocs sélectionnés
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
       e.preventDefault()
@@ -778,7 +841,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             setDragOverBlockId(block.id)
             setDragOverPos(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
           }}
-          onDragLeave={() => { if (dragOverBlockId === block.id) setDragOverBlockId(null) }}
+          onDragLeave={(e) => {
+            // Ignorer si le curseur quitte vers un enfant du même bloc (évite le scintillement)
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              if (dragOverBlockId === block.id) setDragOverBlockId(null)
+            }
+          }}
           onDrop={(e) => {
             e.preventDefault()
             if (!dragReorderBlockId || dragReorderBlockId === block.id) return
@@ -798,8 +866,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           className={cn(
             'group/block relative rounded-sm transition-colors',
             selectedBlockIds.has(block.id) && 'bg-holo-primary/10 ring-1 ring-inset ring-holo-primary/30',
-            dragOverBlockId === block.id && dragOverPos === 'before' && 'border-t-2 border-holo-primary',
-            dragOverBlockId === block.id && dragOverPos === 'after' && 'border-b-2 border-holo-primary',
             dragReorderBlockId === block.id && 'opacity-40',
           )}
           onFocusCapture={() => {
@@ -807,6 +873,17 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             setSelectedBlockIds(new Set())
           }}
         >
+          {/* Indicateur de dépôt drag-sort */}
+          {dragOverBlockId === block.id && dragOverPos === 'before' && (
+            <div className="pointer-events-none absolute inset-x-0 -top-0.5 z-10 flex items-center">
+              <div className="h-0.5 w-full rounded-full bg-holo-primary shadow-[0_0_8px_2px_rgba(123,97,255,0.5)]" />
+            </div>
+          )}
+          {dragOverBlockId === block.id && dragOverPos === 'after' && (
+            <div className="pointer-events-none absolute inset-x-0 -bottom-0.5 z-10 flex items-center">
+              <div className="h-0.5 w-full rounded-full bg-holo-primary shadow-[0_0_8px_2px_rgba(123,97,255,0.5)]" />
+            </div>
+          )}
           {/* Drag handle + bouton + dans la marge */}
           <div className="absolute -left-7 top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 opacity-0 transition-opacity group-hover/block:opacity-100 group-focus-within/block:opacity-100">
             <div

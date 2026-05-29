@@ -7,6 +7,7 @@ import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
 import { getBaseName, buildShareableHoloLink } from './lib/appUtils'
+import { updateMarkdownBooleanHeaderField } from './lib/markdown'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -58,7 +59,7 @@ export default function App2() {
     shareGatewayBaseUrl,
   } = useConfig()
 
-  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
+  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setFileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
 
   // ─── Favoris d'espaces ────────────────────────────────────────────────────
   const [favoriteFolders, setFavoriteFolders] = useState<string[]>([])
@@ -657,6 +658,18 @@ export default function App2() {
   }, [])
 
   // Fermer le fichier ouvert s'il est supprimé ou archivé depuis SpacePanel
+  const handleToggleTemplate = useCallback(async () => {
+    const path = openedFile?.path
+    if (!path) return
+    const cur = Boolean(fileMetaByPath[path]?.isTemplate)
+    const content = await window.holo?.readFile(path)
+    if (content == null) return
+    const next = updateMarkdownBooleanHeaderField(content, 'template', !cur)
+    await window.holo?.writeFile(path, next)
+    setFileMetaByPath(prev => ({ ...prev, [path]: { ...(prev[path] ?? { title: '', description: '', isTemplate: false }), isTemplate: !cur } }))
+    setOpenedFile(prev => prev ? { ...prev, content: next } : prev)
+  }, [openedFile?.path, fileMetaByPath, setFileMetaByPath])
+
   useEffect(() => {
     const handler = (e: Event) => {
       const path = (e as CustomEvent<{ path: string }>).detail?.path
@@ -771,6 +784,8 @@ export default function App2() {
               onArchive={openedFile.path.includes('/.archive/') ? undefined : () => setPendingArchivePath(openedFile.path)}
               onRestore={openedFile.path.includes('/.archive/') ? () => handleRestoreFile(openedFile.path) : undefined}
               onShare={handleShare}
+              isTemplate={Boolean(fileMetaByPath[openedFile.path]?.isTemplate)}
+              onToggleTemplate={handleToggleTemplate}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-holo-text-faint">
