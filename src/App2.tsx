@@ -774,6 +774,7 @@ export default function App2() {
               filepath={openedFile.path}
               markdown={openedFile.content}
               onMarkdownChange={handleMarkdownChange}
+              onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
               onToggleInspector={() => setInspectorOpen((o) => !o)}
               saveStatus={saveStatus}
               saveErrorMsg={saveErrorMsg ?? undefined}

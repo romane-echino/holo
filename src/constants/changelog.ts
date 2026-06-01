@@ -2,6 +2,20 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.4.0',
+    releasedAt: '2026-06-01',
+    items: [
+      'Liens relatifs dans l editeur : recherche de pages de l espace courant depuis la barre de formatage.',
+      'Liens dans l editeur : tooltip avec l URL et ouverture via Ctrl/Cmd+clic.',
+      'Tableaux : le curseur global de taille du texte s applique maintenant aux cellules et aux en tetes.',
+      'Selection de texte : le drag-select de blocs ne s active plus tant que la souris reste dans le bloc courant.',
+      'Recherche : affichage des tags de fichier dans les resultats.',
+      'Collage d images : prise en charge du presse-papier directement dans l editeur.',
+      'Tableaux : placeholder de cellule mieux aligne et espacement corrige.',
+      'Modeles : option Definir comme modele disponible dans le menu contextuel des fichiers.',
+    ],
+  },
+  {
     version: '0.3.0',
     releasedAt: '2026-05-28',
     items: [

@@ -15,6 +15,7 @@ type EditorFrameProps = {
   filepath: string
   markdown?: string
   onMarkdownChange?: (value: string) => void
+  onOpenLinkedFile?: (filePath: string) => Promise<void> | void
   onIconClick?: () => void
   onToggleInspector?: () => void
   onShare?: () => void
@@ -444,6 +445,7 @@ export function EditorFrame({
   filepath,
   markdown = '',
   onMarkdownChange,
+  onOpenLinkedFile,
   onToggleInspector,
   onShare,
   saveStatus,
@@ -960,7 +962,7 @@ export function EditorFrame({
               </div>
             )}
             <EditorFileContext.Provider value={{ currentFilePath: filepath }}>
-              <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
+              <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} onOpenLinkedFile={onOpenLinkedFile} fontScale={contentFontScale} />
             </EditorFileContext.Provider>
           </article>
         )}

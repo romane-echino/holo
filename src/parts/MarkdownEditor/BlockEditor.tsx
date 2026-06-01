@@ -29,6 +29,9 @@ import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
 import { cn } from '../../utils/global'
+import { useWorkspace } from '../../contexts/WorkspaceContext'
+import { useEditorFilePath } from './EditorFileContext'
+import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
@@ -224,13 +227,16 @@ export interface BlockEditorProps {
   onChange: (markdown: string) => void
   className?: string
   fontScale?: number
+  onOpenLinkedFile?: (filePath: string) => Promise<void> | void
 }
 
-export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale }: BlockEditorProps, ref) {
+export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale, onOpenLinkedFile }: BlockEditorProps, ref) {
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
   const dragAnchorRef = useRef<string | null>(null)
+  const { rootPath } = useWorkspace()
+  const currentFilePath = useEditorFilePath()
 
   // ─── Historique undo/redo ────────────────────────────────────────────────────
   // Chaque entrée est la sérialisation markdown de l'état des blocs.
@@ -809,6 +815,79 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     }
   }, [selectedBlockIds])
 
+  const buildLinkTooltip = useCallback((href: string) => {
+    const trimmedHref = href.trim()
+    if (!trimmedHref) return ''
+    const actionHint = /^(https?:|mailto:|holo:)/i.test(trimmedHref)
+      ? 'Ctrl/Cmd+clic pour ouvrir dans le navigateur'
+      : 'Ctrl/Cmd+clic pour ouvrir le fichier'
+    return `${trimmedHref}\n${actionHint}`
+  }, [])
+
+  const resolveLinkedFilePath = useCallback((href: string) => {
+    const trimmedHref = href.trim()
+    if (!trimmedHref || trimmedHref.startsWith('#')) return null
+
+    const cleanHref = trimmedHref.split('#')[0]?.split('?')[0]?.trim() ?? ''
+    if (!cleanHref) return null
+
+    if (cleanHref.startsWith('/')) {
+      if (!rootPath) return null
+      return resolveRepoRelativePath(rootPath, cleanHref.replace(/^\/+/, ''))
+    }
+
+    if (!currentFilePath) return null
+
+    const normalizedBaseDir = getParentPath(currentFilePath).replace(/\\/g, '/')
+    const baseParts = normalizedBaseDir.split('/').filter(Boolean)
+    const hrefParts = cleanHref.replace(/\\/g, '/').split('/').filter(Boolean)
+    const resolvedParts = [...baseParts]
+
+    for (const part of hrefParts) {
+      if (part === '.') continue
+      if (part === '..') {
+        if (resolvedParts.length > 0) resolvedParts.pop()
+        continue
+      }
+      resolvedParts.push(part)
+    }
+
+    return `${currentFilePath.replace(/\\/g, '/').startsWith('/') ? '/' : ''}${resolvedParts.join('/')}`
+  }, [currentFilePath, rootPath])
+
+  const handleContainerMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
+    if (!anchor) return
+    const href = anchor.getAttribute('href')?.trim() ?? ''
+    if (!href) return
+    anchor.title = buildLinkTooltip(href)
+  }, [buildLinkTooltip])
+
+  const handleContainerClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
+    if (!anchor) return
+
+    const href = anchor.getAttribute('href')?.trim() ?? ''
+    if (!href) return
+
+    anchor.title = buildLinkTooltip(href)
+
+    if (!(e.ctrlKey || e.metaKey)) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (/^(https?:|mailto:|holo:)/i.test(href)) {
+      await window.holo?.openExternalUrl(href)
+      return
+    }
+
+    const targetPath = resolveLinkedFilePath(href)
+    if (targetPath?.toLowerCase().endsWith('.md')) {
+      await onOpenLinkedFile?.(targetPath)
+    }
+  }, [buildLinkTooltip, onOpenLinkedFile, resolveLinkedFilePath])
+
   return (
     <div
       ref={containerRef}
@@ -820,6 +899,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       onMouseDown={handleContainerMouseDown}
       onMouseMove={handleContainerMouseMove}
       onMouseUp={handleContainerMouseUp}
+      onMouseOver={handleContainerMouseOver}
+      onClick={(e) => { void handleContainerClick(e) }}
       onDragStart={(e) => { if (!(e.target as HTMLElement).closest('[data-drag-handle]')) e.preventDefault() }}
     >
       {blocks.map((block, idx) => (

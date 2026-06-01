@@ -367,6 +367,7 @@
 
   .holo-markdown a {
     color: var(--color-holo-primary-soft);
+    cursor: pointer;
     text-decoration: none;
     transition: opacity 120ms ease;
   }

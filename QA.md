@@ -49,16 +49,16 @@ Comportement de la fenêtre sous windows
 ✅Pour le drag-sort le handle est parfait c'est surtout la zone de dépot qui est pas très visuel (petite) et clignote tellement c'est petit
 
 # Phase 5
-Lien relatif vers des documents du meme espace, quand je selectionn du texte et que je met "lien" il faudrai avoir un search pour les page de l'espace courant
-Le curseur textsize n'adapte pas les tableau
-Depuis qu'il y'a la sélection des blocs (drag-select) c'est moins facile de selectionner du text il faudrai que le drag-select de bloc s'active seulement si je sort du bloc avec la souris
-Dans la recherche je vois pas les tags des fichiers
-Pouvoir coller une image du presse-papier
-Dans les cellule le tableau le placeholder "Saisir..." est mal placé (pas centré verticalement, manque le padding left)
+✅Lien relatif vers des documents du meme espace, quand je selectionn du texte et que je met "lien" il faudrai avoir un search pour les page de l'espace courant
+✅Le curseur textsize n'adapte pas les tableau
+✅Depuis qu'il y'a la sélection des blocs (drag-select) c'est moins facile de selectionner du text il faudrai que le drag-select de bloc s'active seulement si je sort du bloc avec la souris
+✅Dans la recherche je vois pas les tags des fichiers
+✅Pouvoir coller une image du presse-papier
+✅Dans les cellule le tableau le placeholder "Saisir..." est mal placé (pas centré verticalement, manque le padding left)
 
 # Phase 6
-Clique droite sur un fichier -> Ajouter "Définir comme modèle"
-Afficher un tooltip sur les liens qui montre le lien et suggèrer / implémenter CTRL+Clique gauche pour ouvrir un liens (si relatif -> ouvre le fichier désigné / si absolu -> ouvre le lien dans un navigateur)
+✅Clique droite sur un fichier -> Ajouter "Définir comme modèle"
+✅Afficher un tooltip sur les liens qui montre le lien et suggèrer / implémenter CTRL+Clique gauche pour ouvrir un liens (si relatif -> ouvre le fichier désigné / si absolu -> ouvre le lien dans un navigateur)
 
  
 
