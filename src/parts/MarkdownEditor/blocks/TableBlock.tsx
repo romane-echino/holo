@@ -32,7 +32,6 @@ type InternalColumn = {
   title: string
   align: ColAlign
   width: number
-  textSize?: string // ex: 'text-xs', 'text-sm', 'text-base', etc.
 }
 
 type InternalRow = {
@@ -68,7 +67,6 @@ function nodeToInternal(node: TableNode): InternalTable {
     title: cellText(cell),
     align: toColAlign(node.align?.[i]),
     width: 200,
-    textSize: 'text-sm',
   }))
 
   if (columns.length === 0) {
@@ -215,18 +213,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       },
       [emit],
     )
-      const setColumnTextSize = useCallback(
-        (colId: string, textSize: string) => {
-          const next = {
-            ...tableRef.current,
-            columns: tableRef.current.columns.map((c) => (c.id === colId ? { ...c, textSize } : c)),
-          }
-          setTable(next)
-          emit(next)
-          setActiveColMenu(null)
-        },
-        [emit],
-      )
 
     const addRowAt = useCallback(
       (index: number, focusColId?: string) => {
@@ -420,7 +406,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             }
                           }}
                           className={cn(
-                            'min-w-0 flex-1 rounded-holo-sm border border-transparent bg-transparent px-0 py-1 text-sm font-semibold text-holo-text-muted outline-none placeholder:text-holo-text-faint transition',
+                            'min-w-0 flex-1 rounded-holo-sm border border-transparent bg-transparent px-0 py-1 font-semibold text-holo-text-muted outline-none placeholder:text-holo-text-faint transition',
                             'hover:bg-white/[0.025] focus:border-holo-border-soft focus:bg-white/[0.035] focus:px-2 focus:text-holo-text',
                             alignClass(col.align),
                           )}
@@ -501,24 +487,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             ))}
 
                             <div className="my-1 h-px bg-holo-border-soft" />
-
-                            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-holo-text-faint">
-                              Taille du texte
-                            </div>
-                            {[['text-xs','XS'],['text-sm','S'],['text-base','M'],['text-lg','L'],['text-xl','XL']].map(([cls, label]) => (
-                              <button
-                                key={cls}
-                                onClick={() => setColumnTextSize(col.id, cls)}
-                                className={cn(
-                                  'flex w-full items-center gap-2 rounded-holo-md px-2.5 py-2 text-sm transition',
-                                  col.textSize === cls
-                                    ? 'bg-holo-primary-surface text-holo-primary-soft'
-                                    : 'text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
-                                )}
-                              >
-                                {label}
-                              </button>
-                            ))}
 
                             <button
                               onClick={() => removeColumn(col.id)}
@@ -658,11 +626,9 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                               onArrowUp={(x) => rowIdx > 0 ? focusCell(rowIdx - 1, colIdx) : onArrowUp?.(x)}
                               onArrowDown={(x) => rowIdx < table.rows.length - 1 ? focusCell(rowIdx + 1, colIdx) : onArrowDown?.(x)}
                               blockType="table-cell"
-                              // className déjà défini ci-dessus, suppression du doublon
                               placeholder="Saisir…"
                               className={cn(
                                 'min-h-11 w-full px-3 py-3 leading-6 text-holo-text-soft outline-none',
-                                col.textSize ?? 'text-sm',
                                 'hover:bg-white/[0.012] focus-within:bg-white/[0.02]',
                                 alignClass(col.align),
                               )}
