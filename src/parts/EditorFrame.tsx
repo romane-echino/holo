@@ -4,6 +4,7 @@ import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLin
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
+import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { useConfig } from '../contexts/ConfigContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { ContextMenu } from '../components/ContextMenu'
@@ -658,6 +659,34 @@ export function EditorFrame({
     }
   }, [buildImageStorageOptions])
 
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const imageItems = Array.from(e.clipboardData.items).filter((item) => item.type.startsWith('image/'))
+    if (!imageItems.length) return
+    const opts = buildImageStorageOptions()
+    if (!opts) return
+    e.preventDefault()
+    e.stopPropagation()
+    for (const item of imageItems) {
+      const file = item.getAsFile()
+      if (!file) continue
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+        const base64 = dataUrl.split(',')[1]
+        const name = file.name || `image-${Date.now()}.png`
+        const result = await window.holo!.saveImage(name, base64, opts)
+        const alt = name.replace(/\.[^.]+$/, '')
+        blockEditorRef.current?.insertImage(result.relativePath, alt)
+      } catch (err) {
+        console.error('[EditorFrame] paste image error', err)
+      }
+    }
+  }, [buildImageStorageOptions])
+
   return (
     <section
       ref={sectionRef}
@@ -666,6 +695,7 @@ export function EditorFrame({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-holo-lg border-2 border-dashed border-holo-primary/60 bg-holo-primary-surface/30 backdrop-blur-sm">
@@ -929,7 +959,9 @@ export function EditorFrame({
                 </button>
               </div>
             )}
-            <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
+            <EditorFileContext.Provider value={{ currentFilePath: filepath }}>
+              <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} fontScale={contentFontScale} />
+            </EditorFileContext.Provider>
           </article>
         )}
       </div>

@@ -27,23 +27,38 @@
 
 
 # Phase 3
-Voir les tags du fichier dans la recherche. Est-ce qu'il serait pas opportun de créer un truc in-ram ou in-file (par espace) pour l'indexation des fichiers pour aider a la recherche? Je pose la question mais j'en sais rien du tout. Parce que la, dernier test, j'ai démarrer le programme fait une recherche directement et j'ai aucun fichier
-Changer le texte de la version pour l'adapter a la version actuelle dans le header de l'app
-Pourvoir Couper CTRL+X (Mettre le MD dans le presse papier)
-DELETE la touche ne fonctionne pas
-Ne marche pas : Possibité de créer 1 block dans une cellule de tableau (ça veut dire que chaque cellule est un bloc unique inline ou on peut faire des commande)
-Le drag-sort fonctionne mais est un peu délicat et pas pratique en terme UX
+✅Voir les tags du fichier dans la recherche. Est-ce qu'il serait pas opportun de créer un truc in-ram ou in-file (par espace) pour l'indexation des fichiers pour aider a la recherche? Je pose la question mais j'en sais rien du tout. Parce que la, dernier test, j'ai démarrer le programme fait une recherche directement et j'ai aucun fichier
+✅Changer le texte de la version pour l'adapter a la version actuelle dans le header de l'app
+✅Pourvoir Couper CTRL+X (Mettre le MD dans le presse papier)
+✅DELETE la touche ne fonctionne pas
+✅Ne marche pas : Possibité de créer 1 block dans une cellule de tableau (ça veut dire que chaque cellule est un bloc unique inline ou on peut faire des commande)
+✅Le drag-sort fonctionne mais est un peu délicat et pas pratique en terme UX
 
 # Phase 4
-Pouvoir faire un système meilleure pour le CTRL+Z dans l'editeur (et CTRL+Y redo)
+✅ Pouvoir faire un système meilleure pour le CTRL+Z dans l'editeur (et CTRL+Y redo)
 Comportement de la fenêtre sous windows
     - Quand on drag la fenêtre pas possibilité de la coller vers le haut pour l'agrandir en pleine écran (comportement standard windows)
     - Les touches COMMAND+GAUCHE (droite haut bas) ne marche pas sur windows pour positionner la fenêtre
-DELETE dans un block vide le supprimer et met le curseur dans le premier caractère du bloc suivant
-Coller le markdown dans un bloc ne marche plus?
-Réimplémenter le système de modèle (template)
+✅ DELETE dans un block vide le supprimer et met le curseur dans le premier caractère du bloc suivant
+✅ Coller le markdown dans un bloc ne marche plus?
+✅ Réimplémenter le système de modèle (template)
     - Menu contextuelle spacepanel et editor frame -> Etablir en tant que modèle
     - quand on crée un fichier possibilité de choisir a partir d'un modèle
     - possibilité dans le modèle d'ajouter des variable $NOM $DATE qui lors de la création sont demandée (remplissage facultatif, si vide remplacer par vide)
     - Voir dans l'arboresence si le fichier est un modèle 
-Pour le drag-sort le handle est parfait c'est surtout la zone de dépot qui est pas très visuel (petite) et clignote tellement c'est petit
+✅Pour le drag-sort le handle est parfait c'est surtout la zone de dépot qui est pas très visuel (petite) et clignote tellement c'est petit
+
+# Phase 5
+Lien relatif vers des documents du meme espace, quand je selectionn du texte et que je met "lien" il faudrai avoir un search pour les page de l'espace courant
+Le curseur textsize n'adapte pas les tableau
+Depuis qu'il y'a la sélection des blocs (drag-select) c'est moins facile de selectionner du text il faudrai que le drag-select de bloc s'active seulement si je sort du bloc avec la souris
+Dans la recherche je vois pas les tags des fichiers
+Pouvoir coller une image du presse-papier
+Dans les cellule le tableau le placeholder "Saisir..." est mal placé (pas centré verticalement, manque le padding left)
+
+# Phase 6
+Clique droite sur un fichier -> Ajouter "Définir comme modèle"
+Afficher un tooltip sur les liens qui montre le lien et suggèrer / implémenter CTRL+Clique gauche pour ouvrir un liens (si relatif -> ouvre le fichier désigné / si absolu -> ouvre le lien dans un navigateur)
+
+ 
+

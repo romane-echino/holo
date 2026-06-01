@@ -708,12 +708,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   const handleContainerMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.buttons !== 1 || !dragStartPosRef.current || !dragAnchorRef.current) return
-    const dy = Math.abs(e.clientY - dragStartPosRef.current.y)
-    const dx = Math.abs(e.clientX - dragStartPosRef.current.x)
-    // Seuil de 10px pour entrer en mode drag-select
-    if (!dragModeActiveRef.current && dy < 10 && dx < 10) return
-    // Entrée en mode bloc-select : annule la sélection texte native
+    // Entrée en mode bloc-select seulement si la souris sort du bloc d'origine
     if (!dragModeActiveRef.current) {
+      const elUnder = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+      const currentBlockId = getBlockIdFromEl(elUnder)
+      // Tant que la souris reste sur le même bloc → laisser le navigateur gérer la sélection texte
+      if (currentBlockId === dragAnchorRef.current || !currentBlockId) return
       dragModeActiveRef.current = true
       window.getSelection()?.removeAllRanges()
       setSelectedBlockIds(new Set([dragAnchorRef.current]))

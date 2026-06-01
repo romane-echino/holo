@@ -20,6 +20,7 @@ type SearchMatch = {
   matchKind: 'filename' | 'title' | 'tag' | 'description' | 'heading' | 'content'
   matchText?: string
   icon?: string
+  tags?: string[]
 }
 
 function MatchBadge({ kind }: { kind: SearchMatch['matchKind'] }) {
@@ -152,27 +153,27 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
 
       if (isTagSearch && tagQuery) {
         const tagHit = tags.find((t) => t.toLowerCase().includes(tagQuery))
-        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
+        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon, tags })
         continue
       }
 
       if (filenameNoExt.toLowerCase().includes(q)) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'filename', icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'filename', icon: (meta as any)?.icon, tags })
         continue
       }
       if (title.toLowerCase().includes(q) && title !== filenameNoExt) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'title', icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'title', icon: (meta as any)?.icon, tags })
         continue
       }
       const tagHit = tags.find((t) => t.toLowerCase().includes(q))
       if (tagHit) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon, tags })
         continue
       }
       if (description.toLowerCase().includes(q)) {
         const idx = description.toLowerCase().indexOf(q)
         const excerpt = description.slice(Math.max(0, idx - 20), idx + 60)
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon, tags })
         continue
       }
 
@@ -183,7 +184,7 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
         const headingMatches = [...rawContent.matchAll(/^#{1,6}\s+(.+)$/gm)]
         const headingHit = headingMatches.find(m => m[1].toLowerCase().includes(q))
         if (headingHit) {
-          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'heading', matchText: headingHit[1].trim(), icon: (meta as any)?.icon })
+          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'heading', matchText: headingHit[1].trim(), icon: (meta as any)?.icon, tags })
           continue
         }
         // Cherche dans le contenu texte (hors frontmatter)
@@ -195,7 +196,7 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
           const start = Math.max(0, contentIdx - 30)
           const end = Math.min(body.length, contentIdx + 80)
           const excerpt = (start > 0 ? '…' : '') + body.slice(start, end).replace(/\n/g, ' ').trim() + (end < body.length ? '…' : '')
-          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'content', matchText: excerpt, icon: (meta as any)?.icon })
+          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'content', matchText: excerpt, icon: (meta as any)?.icon, tags })
         }
       }
     }
@@ -323,6 +324,15 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
                     </div>
                     {r.matchText && r.matchKind !== 'filename' && r.matchKind !== 'title' && (
                       <div className="mt-0.5 truncate text-[11px] italic text-holo-text-faint/70">{r.matchText}</div>
+                    )}
+                    {r.tags && r.tags.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {r.tags.map((tag) => (
+                          <span key={tag} className="rounded-full bg-emerald-500/10 px-1.5 py-px text-[9px] font-medium text-emerald-400/80">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </button>

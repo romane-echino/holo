@@ -252,6 +252,14 @@
     inset: 0;
   }
 
+  /* Placeholder centré verticalement dans les cellules de tableau */
+  [data-block-type="table-cell"][data-placeholder][data-empty="true"]:focus::before {
+    display: flex;
+    align-items: center;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
   /* Placeholder toujours visible (premier bloc) */
   [data-placeholder][data-empty="true"][data-always-placeholder] {
     position: relative;

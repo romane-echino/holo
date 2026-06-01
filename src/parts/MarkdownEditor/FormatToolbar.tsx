@@ -9,9 +9,12 @@
  *   de détecter que le focus reste « dans la toolbar » et de ne pas la masquer.
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Bold, Code2, Italic, Link2, Link2Off, Strikethrough, Underline } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bold, Code2, FileText, Italic, Link2, Link2Off, Strikethrough, Underline } from 'lucide-react'
 import { cn } from '../../utils/global'
+import { useWorkspace } from '../../contexts/WorkspaceContext'
+import { useEditorFilePath } from './EditorFileContext'
+import { flatTreeFiles, getRelativeLinkPath, getBaseName } from '../../lib/appUtils'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +50,27 @@ export function FormatToolbar({
   const inputRef = useRef<HTMLInputElement>(null)
   // Range sauvegardée avant de passer en link mode (le focus quitte le contentEditable)
   const savedRangeRef = useRef<Range | null>(null)
+
+  // Recherche de pages de l'espace courant
+  const { tree, rootPath } = useWorkspace()
+  const currentFilePath = useEditorFilePath()
+
+  const allMdFiles = useMemo(() => {
+    if (!tree) return []
+    return flatTreeFiles(tree).filter((p) => p.toLowerCase().endsWith('.md'))
+  }, [tree])
+
+  const pageSuggestions = useMemo(() => {
+    if (!linkMode) return []
+    const q = linkUrl.trim().toLowerCase()
+    // N'afficher les suggestions que si l'URL n'est pas déjà une URL externe
+    if (q.startsWith('http://') || q.startsWith('https://') || q.startsWith('mailto:')) return []
+    const candidates = allMdFiles.filter((p) => p !== currentFilePath)
+    if (!q) return candidates.slice(0, 8)
+    return candidates
+      .filter((p) => getBaseName(p).toLowerCase().includes(q) || p.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [linkMode, linkUrl, allMdFiles, currentFilePath])
 
   // Quand linkMode s'active, pré-remplir l'URL et focus l'input
   useEffect(() => {
@@ -110,31 +134,57 @@ export function FormatToolbar({
     >
       {linkMode ? (
         /* ── Mode saisie de lien ── */
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5">
-          <Link2 size={13} className="shrink-0 text-holo-text-faint" />
-          <input
-            ref={inputRef}
-            value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); applyLink() }
-              if (e.key === 'Escape') { e.preventDefault(); cancelLink(e) }
-            }}
-            placeholder="https://…"
-            className="w-52 bg-transparent text-sm text-holo-text outline-none placeholder:text-holo-text-faint"
-          />
-          <button
-            onMouseDown={(e) => { e.preventDefault(); applyLink() }}
-            className="rounded-holo-md px-2 py-1 text-xs text-holo-primary-soft transition hover:bg-holo-primary-surface"
-          >
-            OK
-          </button>
-          <button
-            onMouseDown={cancelLink}
-            className="rounded-holo-md px-2 py-1 text-xs text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
-          >
-            ✕
-          </button>
+        <div className="flex flex-col">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+            <Link2 size={13} className="shrink-0 text-holo-text-faint" />
+            <input
+              ref={inputRef}
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); applyLink() }
+                if (e.key === 'Escape') { e.preventDefault(); cancelLink(e) }
+              }}
+              placeholder="https://… ou nom de page"
+              className="w-52 bg-transparent text-sm text-holo-text outline-none placeholder:text-holo-text-faint"
+            />
+            <button
+              onMouseDown={(e) => { e.preventDefault(); applyLink() }}
+              className="rounded-holo-md px-2 py-1 text-xs text-holo-primary-soft transition hover:bg-holo-primary-surface"
+            >
+              OK
+            </button>
+            <button
+              onMouseDown={cancelLink}
+              className="rounded-holo-md px-2 py-1 text-xs text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
+            >
+              ✕
+            </button>
+          </div>
+          {pageSuggestions.length > 0 && (
+            <div className="border-t border-holo-border-soft pb-1">
+              {pageSuggestions.map((filePath) => {
+                const rel = getRelativeLinkPath(currentFilePath, filePath, rootPath ?? null)
+                const label = getBaseName(filePath).replace(/\.md$/i, '')
+                return (
+                  <button
+                    key={filePath}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      setLinkUrl(rel)
+                      setTimeout(() => inputRef.current?.focus(), 0)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-holo-glass-hover"
+                  >
+                    <FileText size={11} className="shrink-0 text-holo-text-faint" />
+                    <span className="flex-1 truncate text-xs text-holo-text">{label}</span>
+                    <span className="truncate text-[10px] text-holo-text-faint">{rel}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
       ) : (
         /* ── Boutons de formatage ── */
