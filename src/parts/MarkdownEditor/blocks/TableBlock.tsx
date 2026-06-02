@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import { InlineEditor } from '../InlineEditor'
+import { setClipboardEventData, writeClipboardPayload } from '../lib/clipboard'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
 import type { InlineNode, TableNode } from '../lib/types'
 
@@ -116,6 +117,15 @@ function getCellContentVersion(nodes: InlineNode[] | undefined): string {
   return JSON.stringify(nodes ?? [])
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function estimateColumnWidth(title: string, cells: InlineNode[][], totalColumns: number): number {
   const lengths = [title.trim().length, ...cells.map((cell) => cellText({ children: cell }).trim().length)]
   const longest = Math.max(0, ...lengths)
@@ -200,6 +210,7 @@ const ALIGN_OPTIONS: { value: ColAlign; label: string; Icon: ElementType }[] = [
 export interface TableBlockProps {
   node: TableNode
   onChange: (node: TableNode) => void
+  onSelect?: () => void
   onArrowUp?: (cursorX: number) => void
   onArrowDown?: (cursorX: number) => void
   /** Appelé quand Tab est pressé depuis la dernière cellule. Si fourni, focus le bloc suivant plutôt que d'ajouter une ligne. */
@@ -207,7 +218,7 @@ export interface TableBlockProps {
 }
 
 export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
-  function TableBlock({ node, onChange, onArrowUp, onArrowDown, onTabExit }, ref) {
+  function TableBlock({ node, onChange, onSelect, onArrowUp, onArrowDown, onTabExit }, ref) {
     const [table, setTable] = useState<InternalTable>(() => nodeToInternal(node))
     // Ref toujours synchronisé avec table pour éviter les closures périmées
     const tableRef = useRef(table)
@@ -431,6 +442,58 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         .join('\n')
     }, [selectionAnchor, selectionFocus])
 
+    const serializeSelectionMarkdown = useCallback(() => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return ''
+
+      const rows = tableRef.current.rows
+        .slice(bounds.rowStart, bounds.rowEnd + 1)
+        .map((row) => tableRef.current.columns
+          .slice(bounds.colStart, bounds.colEnd + 1)
+          .map((col) => inlineNodesToPlainText(row.cells[col.id] ?? [])))
+
+      if (rows.length === 0) return ''
+
+      const formatRow = (cells: string[]) => `| ${cells.map((cell) => cell.replace(/\|/g, '\\|')).join(' | ')} |`
+      const separator = `| ${rows[0].map(() => '---').join(' | ')} |`
+
+      return [
+        formatRow(rows[0]),
+        separator,
+        ...rows.slice(1).map(formatRow),
+      ].join('\n')
+    }, [selectionAnchor, selectionFocus])
+
+    const serializeSelectionHtml = useCallback(() => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return ''
+
+      const rows = tableRef.current.rows
+        .slice(bounds.rowStart, bounds.rowEnd + 1)
+        .map((row) => tableRef.current.columns
+          .slice(bounds.colStart, bounds.colEnd + 1)
+          .map((col) => inlineNodesToPlainText(row.cells[col.id] ?? [])))
+
+      if (rows.length === 0) return ''
+
+      const body = rows
+        .map((cells) => `<tr>${cells.map((cell) => `<td>${escapeHtml(cell).replace(/\n/g, '<br>')}</td>`).join('')}</tr>`)
+        .join('')
+
+      return `<table><tbody>${body}</tbody></table>`
+    }, [selectionAnchor, selectionFocus])
+
+    const copySelectionToClipboard = useCallback((clipboardData?: DataTransfer | null) => {
+      const payload = {
+        plainText: serializeSelection(),
+        html: serializeSelectionHtml(),
+        markdown: serializeSelectionMarkdown(),
+      }
+
+      setClipboardEventData(clipboardData, payload)
+      void writeClipboardPayload(payload)
+    }, [serializeSelection, serializeSelectionHtml, serializeSelectionMarkdown])
+
     const clearSelectedCells = useCallback(() => {
       const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
       if (!bounds) return
@@ -529,7 +592,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
         event.preventDefault()
         event.stopPropagation()
-        event.clipboardData?.setData('text/plain', serializeSelection())
+        copySelectionToClipboard(event.clipboardData)
       }
 
       const handlePaste = (event: ClipboardEvent) => {
@@ -556,7 +619,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         window.removeEventListener('copy', handleCopy, true)
         window.removeEventListener('paste', handlePaste, true)
       }
-    }, [clearSelectedCells, clearSelection, focusSelectionLayer, hasSelection, pasteIntoSelection, serializeSelection])
+    }, [clearSelectedCells, clearSelection, copySelectionToClipboard, focusSelectionLayer, hasSelection, pasteIntoSelection])
 
     useEffect(() => {
       const onMouseMove = (e: MouseEvent) => {
@@ -618,7 +681,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
             if (!hasSelection) return
             e.preventDefault()
             e.stopPropagation()
-            e.clipboardData.setData('text/plain', serializeSelection())
+            copySelectionToClipboard(e.clipboardData)
           }}
           onPasteCapture={(e) => {
             if (!hasSelection) return
@@ -645,7 +708,22 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           <table className="w-full min-w-max border-separate border-spacing-0 overflow-hidden rounded-holo-xl">
             <thead>
               <tr>
-                <th className="w-[42px] min-w-[42px] border-b border-r border-holo-border-soft bg-white/[0.028] p-0 first:rounded-tl-holo-xl" />
+                <th className="w-[42px] min-w-[42px] border-b border-r border-holo-border-soft bg-white/[0.028] p-0 first:rounded-tl-holo-xl">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      clearSelection()
+                      onSelect?.()
+                    }}
+                    className="flex h-full min-h-11 w-full items-center justify-center rounded-tl-holo-xl text-holo-text-faint transition hover:bg-white/[0.04] hover:text-holo-text"
+                    title="Sélectionner le tableau"
+                    aria-label="Sélectionner le tableau"
+                  >
+                    <span className="text-sm leading-none">•</span>
+                  </button>
+                </th>
 
                 {table.columns.map((col, colIdx) => {
                   const isLastCol = colIdx === table.columns.length - 1

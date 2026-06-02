@@ -69,3 +69,5 @@ Selectionner plus cellule / plusieur ligne d'un tableau et pouvoir les copy past
 
 # Phase 8 
 Click scroll dans la table des matière + 64px (l'item ciblé par le scroll est sous le sticky header)
+clipboard html / plain et markdown fonctionn pas encore
+clipboard past dans holo cassé

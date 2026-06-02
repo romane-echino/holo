@@ -28,10 +28,12 @@ import { MathBlock } from './blocks/MathBlock'
 import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
+import { setClipboardEventData, writeClipboardPayload } from './lib/clipboard'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
+import { parseMarkdownToHtml } from '../../lib/markdown'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
@@ -66,6 +68,8 @@ const serializer = unified()
 
 let _counter = 0
 const newId = () => `b${++_counter}`
+let _clipboardTableCounter = 0
+const newClipboardTableId = () => `clipboard-table-${++_clipboardTableCounter}`
 
 function markdownToBlocks(markdown: string): BlockState[] {
   if (!markdown.trim()) return [freshParagraph()]
@@ -151,6 +155,73 @@ function blocksToMarkdown(blocks: BlockState[]): string {
     children: expanded,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as string
+}
+
+function inlineNodesToPlainText(nodes: InlineNode[]): string {
+  return nodes.map((node) => {
+    switch (node.type) {
+      case 'text':
+      case 'inlineCode':
+        return node.value
+      case 'break':
+        return '\n'
+      case 'strong':
+      case 'emphasis':
+      case 'delete':
+      case 'underline':
+      case 'link':
+        return inlineNodesToPlainText(node.children)
+      case 'image':
+        return node.alt ?? ''
+      default:
+        return ''
+    }
+  }).join('')
+}
+
+function blockNodeToPlainText(node: BlockNode): string {
+  switch (node.type) {
+    case 'paragraph':
+      return inlineNodesToPlainText(node.children)
+    case 'heading':
+      return inlineNodesToPlainText(node.children)
+    case 'code':
+      return node.value
+    case 'blockquote':
+      return node.children.map(blockNodeToPlainText).filter(Boolean).join('\n')
+    case 'list':
+      return node.children.map((item, index) => {
+        const marker = node.ordered ? `${(node.start ?? 1) + index}. ` : '- '
+        const body = item.children.map(blockNodeToPlainText).filter(Boolean).join('\n')
+        return marker + body
+      }).join('\n')
+    case 'thematicBreak':
+      return ''
+    case 'image':
+      return node.alt || node.url
+    case 'table':
+      return node.children
+        .map((row) => row.children.map((cell) => inlineNodesToPlainText(cell.children)).join('\t'))
+        .join('\n')
+    default:
+      return ''
+  }
+}
+
+function blocksToPlainText(blocks: BlockState[]): string {
+  return blocks
+    .map((block) => blockNodeToPlainText(block.node as BlockNode))
+    .filter((value) => value.trim() !== '')
+    .join('\n\n')
+}
+
+function blocksToClipboardPayload(blocks: BlockState[]) {
+  const markdown = blocksToMarkdown(blocks)
+  return {
+    plainText: blocksToPlainText(blocks),
+    html: parseMarkdownToHtml(markdown, newClipboardTableId),
+    markdown,
+  }
 }
 
 function freshParagraph(): BlockState {
@@ -783,37 +854,31 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       setSelectedBlockIds(new Set())
       return
     }
-    // Ctrl+C avec des blocs sélectionnés → copie le markdown correspondant
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedBlockIds.size > 0) {
-      e.preventDefault()
-      const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
-      const md = blocksToMarkdown(selected)
-      navigator.clipboard.writeText(md).catch(() => {
-        window.holo?.writeClipboardText?.(md)
-      })
-      return
-    }
-    // Ctrl+X avec des blocs sélectionnés → coupe le markdown (copie + suppression)
-    if ((e.ctrlKey || e.metaKey) && e.key === 'x' && selectedBlockIds.size > 0) {
-      e.preventDefault()
-      const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
-      const md = blocksToMarkdown(selected)
-      navigator.clipboard.writeText(md).catch(() => {
-        window.holo?.writeClipboardText?.(md)
-      })
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
-        const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
-        return filtered.length > 0 ? filtered : [freshParagraph()]
-      })
-      setSelectedBlockIds(new Set())
-      return
-    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }
   }, [selectedBlockIds])
+
+  const handleSelectedBlocksCopy = useCallback((clipboardData?: DataTransfer | null) => {
+    if (selectedBlockIds.size === 0) return false
+    const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
+    const payload = blocksToClipboardPayload(selected)
+    setClipboardEventData(clipboardData, payload)
+    void writeClipboardPayload(payload)
+    return true
+  }, [selectedBlockIds])
+
+  const handleSelectedBlocksCut = useCallback((clipboardData?: DataTransfer | null) => {
+    if (!handleSelectedBlocksCopy(clipboardData)) return false
+    blocksDirtyRef.current = true
+    setBlocks((prev) => {
+      const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
+      return filtered.length > 0 ? filtered : [freshParagraph()]
+    })
+    setSelectedBlockIds(new Set())
+    return true
+  }, [handleSelectedBlocksCopy, selectedBlockIds])
 
   const buildLinkTooltip = useCallback((href: string) => {
     const trimmedHref = href.trim()
@@ -902,6 +967,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       onMouseOver={handleContainerMouseOver}
       onClick={(e) => { void handleContainerClick(e) }}
       onDragStart={(e) => { if (!(e.target as HTMLElement).closest('[data-drag-handle]')) e.preventDefault() }}
+      onCopyCapture={(e) => {
+        if (!handleSelectedBlocksCopy(e.clipboardData)) return
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onCutCapture={(e) => {
+        if (!handleSelectedBlocksCut(e.clipboardData)) return
+        e.preventDefault()
+        e.stopPropagation()
+      }}
     >
       {blocks.map((block, idx) => (
         <div
@@ -1116,6 +1191,7 @@ function BlockDispatcher({
           ref={blockRef}
           node={block.node as TableNode}
           onChange={(node) => onChange(node)}
+          onSelect={onSelect}
           onArrowUp={onArrowUp}
           onArrowDown={onArrowDown}
           onTabExit={onTabExit}

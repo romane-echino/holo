@@ -12,10 +12,33 @@
 import { useRef, useEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react'
 import { domToInlines } from './lib/domToInlines'
 import { inlinesToHtml } from './lib/inlinesToHtml'
+import { inlinesToMarkdown } from './lib/inlinesToMarkdown'
 import { FormatToolbar } from './FormatToolbar'
 import type { FormatToolbarState } from './FormatToolbar'
 import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
+
+async function writeClipboardPayload(payload: {
+  plainText: string
+  html: string
+  markdown: string
+}) {
+  if (typeof navigator === 'undefined' || !('clipboard' in navigator)) return
+  if (typeof ClipboardItem === 'undefined' || typeof navigator.clipboard.write !== 'function') return
+
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/plain': new Blob([payload.plainText], { type: 'text/plain' }),
+        'text/html': new Blob([payload.html], { type: 'text/html' }),
+        'text/markdown': new Blob([payload.markdown], { type: 'text/markdown' }),
+        'text/x-markdown': new Blob([payload.markdown], { type: 'text/x-markdown' }),
+      }),
+    ])
+  } catch {
+    // Le fallback e.clipboardData reste la source principale si l'API async est refusée.
+  }
+}
 
 // ─── Helpers sélection (niveau module) ──────────────────────────────────────
 
@@ -596,6 +619,28 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         onKeyDown={handleKeyDown}
         data-placeholder={placeholder}
         data-always-placeholder={alwaysShowPlaceholder || undefined}
+        onCopy={(e) => {
+          const el = divRef.current
+          const sel = window.getSelection()
+          if (!el || !sel || sel.isCollapsed || !sel.rangeCount) return
+
+          const range = sel.getRangeAt(0)
+          if (!el.contains(range.commonAncestorContainer)) return
+
+          const tmp = document.createElement('div')
+          tmp.appendChild(range.cloneContents())
+
+          const plainText = range.toString()
+          const html = tmp.innerHTML
+          const markdown = inlinesToMarkdown(domToInlines(tmp))
+
+          e.preventDefault()
+          e.clipboardData.setData('text/plain', plainText)
+          e.clipboardData.setData('text/html', html)
+          e.clipboardData.setData('text/markdown', markdown)
+          e.clipboardData.setData('text/x-markdown', markdown)
+          void writeClipboardPayload({ plainText, html, markdown })
+        }}
         onPaste={(e) => {
           e.preventDefault()
           const text = e.clipboardData.getData('text/plain')

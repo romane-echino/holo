@@ -12,6 +12,41 @@ contextBridge.exposeInMainWorld('holo', {
     clipboard.writeText(String(text ?? ''))
     return Promise.resolve({ ok: true })
   },
+  writeClipboardPayload: ({ plainText, html, markdown }) => {
+    const text = String(plainText ?? '')
+    const htmlText = String(html ?? '')
+    const markdownText = String(markdown ?? '')
+
+    clipboard.writeText(text)
+
+    if (htmlText) {
+      try {
+        clipboard.writeHTML(htmlText)
+      } catch {
+        // Garder text/plain si HTML n'est pas supporté.
+      }
+    }
+
+    if (markdownText && process.platform !== 'linux') {
+      try {
+        clipboard.writeBuffer('text/markdown', Buffer.from(markdownText, 'utf8'))
+        clipboard.writeBuffer('text/x-markdown', Buffer.from(markdownText, 'utf8'))
+      } catch {
+        // Garder text/plain/text/html si le format custom n'est pas supporté.
+      }
+    }
+
+    return Promise.resolve({ ok: true })
+  },
+  getClipboardFormats: () => Promise.resolve(clipboard.availableFormats()),
+  clipboardHasFormat: (format) => Promise.resolve(clipboard.has(String(format))),
+  readClipboardFormat: (format) => {
+    try {
+      return Promise.resolve(clipboard.read(String(format)))
+    } catch {
+      return Promise.resolve('')
+    }
+  },
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   getWindowState: () => ipcRenderer.invoke('window:get-state'),
   dragWindowFromMaximized: (payload) => ipcRenderer.invoke('window:drag-from-maximized', payload),
