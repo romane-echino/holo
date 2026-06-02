@@ -32,6 +32,7 @@ type InternalColumn = {
   title: string
   align: ColAlign
   width: number
+  manualWidth?: boolean
 }
 
 type InternalRow = {
@@ -42,6 +43,11 @@ type InternalRow = {
 type InternalTable = {
   columns: InternalColumn[]
   rows: InternalRow[]
+}
+
+type CellCoord = {
+  rowIdx: number
+  colIdx: number
 }
 
 let _tc = 0
@@ -59,18 +65,87 @@ const toColAlign = (value: unknown): ColAlign => {
   return 'left'
 }
 
+function getSelectionBounds(anchor: CellCoord | null, focus: CellCoord | null) {
+  if (!anchor || !focus) return null
+  return {
+    rowStart: Math.min(anchor.rowIdx, focus.rowIdx),
+    rowEnd: Math.max(anchor.rowIdx, focus.rowIdx),
+    colStart: Math.min(anchor.colIdx, focus.colIdx),
+    colEnd: Math.max(anchor.colIdx, focus.colIdx),
+  }
+}
+
+function inlineNodesToPlainText(nodes: InlineNode[]): string {
+  return nodes.map((node) => {
+    switch (node.type) {
+      case 'text':
+      case 'inlineCode':
+        return node.value
+      case 'break':
+        return '\n'
+      case 'strong':
+      case 'emphasis':
+      case 'delete':
+      case 'underline':
+      case 'link':
+        return inlineNodesToPlainText(node.children)
+      case 'image':
+        return node.alt ?? ''
+      default:
+        return ''
+    }
+  }).join('')
+}
+
+function plainTextToInlineNodes(value: string): InlineNode[] {
+  if (!value) return []
+  const lines = value.replace(/\r/g, '').split('\n')
+  const result: InlineNode[] = []
+  lines.forEach((line, index) => {
+    if (line) {
+      result.push({ type: 'text', value: line })
+    }
+    if (index < lines.length - 1) {
+      result.push({ type: 'break' })
+    }
+  })
+  return result
+}
+
+function getCellContentVersion(nodes: InlineNode[] | undefined): string {
+  return JSON.stringify(nodes ?? [])
+}
+
+function estimateColumnWidth(title: string, cells: InlineNode[][], totalColumns: number): number {
+  const lengths = [title.trim().length, ...cells.map((cell) => cellText({ children: cell }).trim().length)]
+  const longest = Math.max(0, ...lengths)
+  const minWidth = totalColumns <= 2 ? 180 : totalColumns === 3 ? 104 : 72
+  const maxWidth = totalColumns <= 2 ? 420 : totalColumns === 3 ? 220 : 180
+  const estimated = 56 + longest * 8
+  return Math.max(minWidth, Math.min(maxWidth, estimated))
+}
+
 function nodeToInternal(node: TableNode): InternalTable {
   const headerRow = node.children[0]
 
-  const columns: InternalColumn[] = (headerRow?.children ?? []).map((cell, i) => ({
+  const headerCells = headerRow?.children ?? []
+  const bodyRows = node.children.slice(1)
+  const totalColumns = Math.max(1, headerCells.length)
+
+  const columns: InternalColumn[] = headerCells.map((cell, i) => ({
     id: newColId(),
     title: cellText(cell),
     align: toColAlign(node.align?.[i]),
-    width: 200,
+    width: estimateColumnWidth(
+      cellText(cell),
+      bodyRows.map((row) => (row.children[i]?.children ?? []) as InlineNode[]),
+      totalColumns,
+    ),
+    manualWidth: false,
   }))
 
   if (columns.length === 0) {
-    columns.push({ id: newColId(), title: '', align: 'left', width: 200 })
+    columns.push({ id: newColId(), title: '', align: 'left', width: 180, manualWidth: false })
   }
 
   const rows: InternalRow[] = node.children.slice(1).map((row) => {
@@ -141,11 +216,15 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     const [activeColMenu, setActiveColMenu] = useState<string | null>(null)
     const [colMenuPos, setColMenuPos] = useState<{ top: number; left: number } | null>(null)
     const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
+    const [selectionAnchor, setSelectionAnchor] = useState<CellCoord | null>(null)
+    const [selectionFocus, setSelectionFocus] = useState<CellCoord | null>(null)
 
     const cellRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
     const headerRefs = useRef<Map<string, HTMLInputElement>>(new Map())
     const menuRef = useRef<HTMLDivElement | null>(null)
     const resizingRef = useRef<{ colId: string; startX: number; startWidth: number } | null>(null)
+    const tableWrapRef = useRef<HTMLDivElement | null>(null)
+    const dragSelectRef = useRef<{ anchor: CellCoord; active: boolean } | null>(null)
 
     useImperativeHandle(ref, () => ({
       focus(cursor?: InitialCursor) {
@@ -263,7 +342,8 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           id: newColId(),
           title: '',
           align: 'left',
-          width: 180,
+          width: prev.columns.length <= 1 ? 180 : 120,
+          manualWidth: false,
         }
         const next = {
           columns: [...prev.columns.slice(0, index), newCol, ...prev.columns.slice(index)],
@@ -307,6 +387,177 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       [table],
     )
 
+    const clearSelection = useCallback(() => {
+      setSelectionAnchor(null)
+      setSelectionFocus(null)
+    }, [])
+
+    const focusSelectionLayer = useCallback(() => {
+      tableWrapRef.current?.focus({ preventScroll: true })
+    }, [])
+
+    const setRectSelection = useCallback((anchor: CellCoord, focus: CellCoord) => {
+      setSelectionAnchor(anchor)
+      setSelectionFocus(focus)
+      focusSelectionLayer()
+    }, [focusSelectionLayer])
+
+    const updateCells = useCallback((updater: (prev: InternalTable) => InternalTable) => {
+      const next = updater(tableRef.current)
+      setTable(next)
+      emit(next)
+    }, [emit])
+
+    const selectionBounds = getSelectionBounds(selectionAnchor, selectionFocus)
+    const hasSelection = selectionBounds !== null
+    const hasMultiSelection = selectionBounds !== null
+      && (selectionBounds.rowStart !== selectionBounds.rowEnd || selectionBounds.colStart !== selectionBounds.colEnd)
+
+    const isCellSelected = useCallback((rowIdx: number, colIdx: number) => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return false
+      return rowIdx >= bounds.rowStart && rowIdx <= bounds.rowEnd && colIdx >= bounds.colStart && colIdx <= bounds.colEnd
+    }, [selectionAnchor, selectionFocus])
+
+    const serializeSelection = useCallback(() => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return ''
+      return tableRef.current.rows
+        .slice(bounds.rowStart, bounds.rowEnd + 1)
+        .map((row) => tableRef.current.columns
+          .slice(bounds.colStart, bounds.colEnd + 1)
+          .map((col) => inlineNodesToPlainText(row.cells[col.id] ?? []))
+          .join('\t'))
+        .join('\n')
+    }, [selectionAnchor, selectionFocus])
+
+    const clearSelectedCells = useCallback(() => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return
+      updateCells((prev) => ({
+        ...prev,
+        rows: prev.rows.map((row, rowIdx) => {
+          if (rowIdx < bounds.rowStart || rowIdx > bounds.rowEnd) return row
+          const nextCells = { ...row.cells }
+          prev.columns.forEach((col, colIdx) => {
+            if (colIdx >= bounds.colStart && colIdx <= bounds.colEnd) {
+              nextCells[col.id] = []
+            }
+          })
+          return { ...row, cells: nextCells }
+        }),
+      }))
+    }, [selectionAnchor, selectionFocus, updateCells])
+
+    const pasteIntoSelection = useCallback((text: string) => {
+      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
+      if (!bounds) return false
+      const rows = text.replace(/\r/g, '').split('\n').map((line) => line.split('\t'))
+      if (rows.length === 0) return false
+
+      updateCells((prev) => {
+        const next = {
+          ...prev,
+          rows: prev.rows.map((row) => ({ ...row, cells: { ...row.cells } })),
+        }
+
+        if (rows.length === 1 && rows[0].length === 1 && hasMultiSelection) {
+          for (let rowIdx = bounds.rowStart; rowIdx <= bounds.rowEnd; rowIdx += 1) {
+            for (let colIdx = bounds.colStart; colIdx <= bounds.colEnd; colIdx += 1) {
+              const row = next.rows[rowIdx]
+              const col = prev.columns[colIdx]
+              if (row && col) row.cells[col.id] = plainTextToInlineNodes(rows[0][0])
+            }
+          }
+          return next
+        }
+
+        rows.forEach((line, rowOffset) => {
+          const row = next.rows[bounds.rowStart + rowOffset]
+          if (!row) return
+          line.forEach((value, colOffset) => {
+            const col = prev.columns[bounds.colStart + colOffset]
+            if (!col) return
+            row.cells[col.id] = plainTextToInlineNodes(value)
+          })
+        })
+
+        return next
+      })
+
+      return true
+    }, [selectionAnchor, selectionFocus, hasMultiSelection, updateCells])
+
+    useEffect(() => {
+      const handleMouseUp = () => {
+        dragSelectRef.current = null
+      }
+
+      window.addEventListener('mouseup', handleMouseUp)
+      return () => window.removeEventListener('mouseup', handleMouseUp)
+    }, [])
+
+    useEffect(() => {
+      if (!hasSelection) return
+
+      const handleKeyDown = (event: KeyboardEvent) => {
+        const target = event.target as Node | null
+        if (target && tableWrapRef.current && !tableWrapRef.current.contains(target) && document.activeElement !== tableWrapRef.current) {
+          return
+        }
+
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          event.preventDefault()
+          event.stopPropagation()
+          clearSelectedCells()
+          focusSelectionLayer()
+          return
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          clearSelection()
+        }
+      }
+
+      const handleCopy = (event: ClipboardEvent) => {
+        const target = event.target as Node | null
+        if (target && tableWrapRef.current && !tableWrapRef.current.contains(target) && document.activeElement !== tableWrapRef.current) {
+          return
+        }
+
+        event.preventDefault()
+        event.stopPropagation()
+        event.clipboardData?.setData('text/plain', serializeSelection())
+      }
+
+      const handlePaste = (event: ClipboardEvent) => {
+        const target = event.target as Node | null
+        if (target && tableWrapRef.current && !tableWrapRef.current.contains(target) && document.activeElement !== tableWrapRef.current) {
+          return
+        }
+
+        const text = event.clipboardData?.getData('text/plain') ?? ''
+        if (!text) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        pasteIntoSelection(text)
+        focusSelectionLayer()
+      }
+
+      window.addEventListener('keydown', handleKeyDown, true)
+      window.addEventListener('copy', handleCopy, true)
+      window.addEventListener('paste', handlePaste, true)
+
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown, true)
+        window.removeEventListener('copy', handleCopy, true)
+        window.removeEventListener('paste', handlePaste, true)
+      }
+    }, [clearSelectedCells, clearSelection, focusSelectionLayer, hasSelection, pasteIntoSelection, serializeSelection])
+
     useEffect(() => {
       const onMouseMove = (e: MouseEvent) => {
         const r = resizingRef.current
@@ -317,7 +568,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
         setTable((prev) => ({
           ...prev,
-          columns: prev.columns.map((c) => (c.id === r.colId ? { ...c, width: newWidth } : c)),
+          columns: prev.columns.map((c) => (c.id === r.colId ? { ...c, width: newWidth, manualWidth: true } : c)),
         }))
       }
 
@@ -354,7 +605,43 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     return (
       <div className="group/table relative my-7 w-full">
-        <div className="holo-scrollbar overflow-x-auto pb-1">
+        <div
+          ref={tableWrapRef}
+          tabIndex={-1}
+          className="holo-scrollbar overflow-x-auto pb-1 outline-none"
+          onMouseDown={(e) => {
+            if (!(e.target as HTMLElement).closest('td, th, [data-block-type="table-cell"]')) {
+              clearSelection()
+            }
+          }}
+          onCopyCapture={(e) => {
+            if (!hasSelection) return
+            e.preventDefault()
+            e.stopPropagation()
+            e.clipboardData.setData('text/plain', serializeSelection())
+          }}
+          onPasteCapture={(e) => {
+            if (!hasSelection) return
+            const text = e.clipboardData.getData('text/plain')
+            if (!text) return
+            e.preventDefault()
+            e.stopPropagation()
+            pasteIntoSelection(text)
+          }}
+          onKeyDownCapture={(e) => {
+            if (!hasSelection) return
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+              e.preventDefault()
+              e.stopPropagation()
+              clearSelectedCells()
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              e.stopPropagation()
+              clearSelection()
+            }
+          }}
+        >
           <table className="w-full min-w-max border-separate border-spacing-0 overflow-hidden rounded-holo-xl">
             <thead>
               <tr>
@@ -372,7 +659,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                         isLastCol && 'rounded-tr-holo-xl',
                         alignClass(col.align),
                       )}
-                      style={{ width: col.width }}
+                      style={col.manualWidth ? { width: col.width, minWidth: col.width } : { minWidth: col.width }}
                     >
                       <div className="flex min-h-11 items-center gap-2 px-3 pr-9">
                         <input
@@ -549,10 +836,27 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                       )}
                     >
                       <div className="relative flex h-full min-h-11 items-center justify-center">
+                        <span
+                          onMouseDown={(e) => {
+                            if ((e.target as HTMLElement).closest('button')) return
+                            e.preventDefault()
+                            const anchor = e.shiftKey && selectionAnchor
+                              ? { rowIdx: selectionAnchor.rowIdx, colIdx: 0 }
+                              : { rowIdx, colIdx: 0 }
+                            setRectSelection(anchor, { rowIdx, colIdx: table.columns.length - 1 })
+                          }}
+                          className={cn(
+                            'text-xs font-medium tabular-nums text-holo-text-faint transition cursor-pointer px-2 py-1 rounded-holo-sm hover:bg-white/[0.04]',
+                            hoveredRowId === row.id && 'opacity-0',
+                          )}
+                        >
+                          {rowIdx + 1}
+                        </span>
+
                         <button
                           onClick={() => removeRow(row.id)}
                           disabled={table.rows.length <= 1}
-                          className="flex size-7 items-center justify-center rounded-holo-sm text-holo-text-faint opacity-0 transition hover:bg-holo-danger/10 hover:text-holo-danger group-hover/row:opacity-100 disabled:pointer-events-none disabled:opacity-20"
+                          className="absolute inset-0 m-auto flex size-7 items-center justify-center rounded-holo-sm text-holo-text-faint opacity-0 transition hover:bg-holo-danger/10 hover:text-holo-danger group-hover/row:opacity-100 disabled:pointer-events-none disabled:opacity-20"
                           title="Supprimer la ligne"
                         >
                           <Trash2 size={13} />
@@ -573,6 +877,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
                     {table.columns.map((col, colIdx) => {
                       const cellKey = `${row.id}-${col.id}`
+                      const cellContentVersion = getCellContentVersion(row.cells[col.id])
                       const isActive = activeCell?.rowId === row.id && activeCell.colId === col.id
                       const isLastCol = colIdx === table.columns.length - 1
 
@@ -584,14 +889,63 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             !isLastRow && 'border-b border-holo-border-soft',
                             !isLastCol && 'border-r border-holo-border-soft',
                             isLastRow && isLastCol && 'rounded-br-holo-xl',
-                            isActive && 'bg-holo-primary-surface/25',
+                            isCellSelected(rowIdx, colIdx) && 'bg-holo-primary/12 ring-1 ring-inset ring-holo-primary/35',
+                            isActive && !isCellSelected(rowIdx, colIdx) && 'bg-holo-primary-surface/25',
                           )}
-                          style={{ width: col.width }}
+                          style={col.manualWidth ? { width: col.width, minWidth: col.width } : { minWidth: col.width }}
                         >
                           <div
                             onFocus={() => setActiveCell({ rowId: row.id, colId: col.id })}
                             onBlur={() => setActiveCell(null)}
+                            onMouseDown={(e) => {
+                              const clickedSelectedCell = isCellSelected(rowIdx, colIdx)
+
+                              if (!e.shiftKey) {
+                                dragSelectRef.current = { anchor: { rowIdx, colIdx }, active: false }
+                                if (hasSelection && clickedSelectedCell) {
+                                  e.preventDefault()
+                                  focusSelectionLayer()
+                                  return
+                                }
+                                if (hasSelection) clearSelection()
+                                return
+                              }
+                              const anchor = selectionAnchor
+                                ?? (activeCell
+                                  ? {
+                                      rowIdx: table.rows.findIndex((candidate) => candidate.id === activeCell.rowId),
+                                      colIdx: table.columns.findIndex((candidate) => candidate.id === activeCell.colId),
+                                    }
+                                  : { rowIdx, colIdx })
+                              if (anchor.rowIdx < 0 || anchor.colIdx < 0) return
+                              e.preventDefault()
+                              setRectSelection(anchor, { rowIdx, colIdx })
+                            }}
+                            onMouseEnter={(e) => {
+                              if (e.buttons !== 1) return
+                              const dragState = dragSelectRef.current
+                              if (!dragState) return
+                              if (dragState.anchor.rowIdx === rowIdx && dragState.anchor.colIdx === colIdx) return
+                              if (!dragState.active) {
+                                dragState.active = true
+                              }
+                              setRectSelection(dragState.anchor, { rowIdx, colIdx })
+                            }}
                             onKeyDown={(e) => {
+                              if (hasSelection && (e.key === 'Delete' || e.key === 'Backspace')) {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                clearSelectedCells()
+                                return
+                              }
+
+                              if (hasSelection && e.key === 'Escape') {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                clearSelection()
+                                return
+                              }
+
                               if (e.key === 'Tab' && !e.shiftKey) {
                                 e.preventDefault()
                                 if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
@@ -609,6 +963,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             }}
                           >
                             <InlineEditor
+                              key={`${cellKey}:${cellContentVersion}`}
                               ref={(handle) => {
                                 if (handle) cellRefs.current.set(cellKey, handle)
                                 else cellRefs.current.delete(cellKey)
