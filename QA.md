@@ -62,12 +62,13 @@ Comportement de la fenêtre sous windows
 
  
 # Phase 7
-Dans les tableau dans la case a la plus a gauche (ou on peut hover pour supprimer la ligne), ajouter le numéro de la ligne 1,2,3...
-Nouvelle systématique de largeur de colonne nécessaire :  Les tableau qui prennent toute la largeur quand il ont 1-2 colonne ne dérange pas fondamentalement mais ceux qui on plus de colonne et qui dépasse la largeur de la frame et qui commence a scroll pourrait être optimisé pour s'adapter a leur contenu
-Selectionner plus cellule / plusieur ligne d'un tableau et pouvoir les copy paste et pouvoir supprimer leur contenu avec DELETE
+✅Dans les tableau dans la case a la plus a gauche (ou on peut hover pour supprimer la ligne), ajouter le numéro de la ligne 1,2,3...
+✅Nouvelle systématique de largeur de colonne nécessaire :  Les tableau qui prennent toute la largeur quand il ont 1-2 colonne ne dérange pas fondamentalement mais ceux qui on plus de colonne et qui dépasse la largeur de la frame et qui commence a scroll pourrait être optimisé pour s'adapter a leur contenu
+✅Selectionner plus cellule / plusieur ligne d'un tableau et pouvoir les copy paste et pouvoir supprimer leur contenu avec DELETE
 
 
 # Phase 8 
 Click scroll dans la table des matière + 64px (l'item ciblé par le scroll est sous le sticky header)
-clipboard html / plain et markdown fonctionn pas encore
-clipboard past dans holo cassé
+Pour les liens : Le cursor pointer n'apparait que quand je presse CTRL et il faut que le tooltip s'affiche plus rapidement
+Si j'ai un bloc tableau (uniquement) sélectionné et que je presse ENTER crée une ligne vide après le tableau
+Si dans un tableau j'ai une séléction de cellule et que je clique sur une cellule a l'interieur de la sélection -> enleve la selection

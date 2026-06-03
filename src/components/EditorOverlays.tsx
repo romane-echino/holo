@@ -141,7 +141,7 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = ({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               const text = (hoveredCodeBlock.codeEl.textContent ?? '').replace(/\u200B/g, '').trim()
-              void navigator.clipboard.writeText(text)
+              void window.holo?.writeClipboardText?.(text)
             }}
             title="Copier"
           >

@@ -540,10 +540,9 @@ export default function App2() {
     const link = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
     if (!link) return
     try {
-      await navigator.clipboard.writeText(link)
+      await window.holo?.writeClipboardText?.(link)
     } catch {
-      // fallback for Electron context
-      window.holo?.writeClipboardText?.(link)
+      // ignore
     }
   }, [rootPath, shareGatewayBaseUrl])
 

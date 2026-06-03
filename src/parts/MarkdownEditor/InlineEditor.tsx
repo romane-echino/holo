@@ -18,28 +18,6 @@ import type { FormatToolbarState } from './FormatToolbar'
 import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
 
-async function writeClipboardPayload(payload: {
-  plainText: string
-  html: string
-  markdown: string
-}) {
-  if (typeof navigator === 'undefined' || !('clipboard' in navigator)) return
-  if (typeof ClipboardItem === 'undefined' || typeof navigator.clipboard.write !== 'function') return
-
-  try {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        'text/plain': new Blob([payload.plainText], { type: 'text/plain' }),
-        'text/html': new Blob([payload.html], { type: 'text/html' }),
-        'text/markdown': new Blob([payload.markdown], { type: 'text/markdown' }),
-        'text/x-markdown': new Blob([payload.markdown], { type: 'text/x-markdown' }),
-      }),
-    ])
-  } catch {
-    // Le fallback e.clipboardData reste la source principale si l'API async est refusée.
-  }
-}
-
 // ─── Helpers sélection (niveau module) ──────────────────────────────────────
 
 function isInsideTag(range: Range, boundary: HTMLElement, tag: string): boolean {
@@ -59,6 +37,20 @@ function getLinkHref(range: Range, boundary: HTMLElement): string | null {
     node = node.parentNode
   }
   return null
+}
+
+function isMarkdownTable(text: string): boolean {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length < 2) return false
+
+  const header = lines[0]
+  const separator = lines[1]
+  return /\|/.test(header)
+    && /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(separator)
 }
 
 export type InitialCursor =
@@ -630,16 +622,12 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           const tmp = document.createElement('div')
           tmp.appendChild(range.cloneContents())
 
-          const plainText = range.toString()
           const html = tmp.innerHTML
           const markdown = inlinesToMarkdown(domToInlines(tmp))
 
           e.preventDefault()
-          e.clipboardData.setData('text/plain', plainText)
+          e.clipboardData.setData('text/plain', markdown)
           e.clipboardData.setData('text/html', html)
-          e.clipboardData.setData('text/markdown', markdown)
-          e.clipboardData.setData('text/x-markdown', markdown)
-          void writeClipboardPayload({ plainText, html, markdown })
         }}
         onPaste={(e) => {
           e.preventDefault()
@@ -654,6 +642,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           // des indicateurs de blocs markdown en début de ligne (heading, liste, blockquote, code fence)
           const isBlockMarkdown = normalized.includes('\n\n')
             || /(?:^|\n)(?:[#>][ \t]|[-*+][ \t]|\d+\.[ \t]|```|---$)/.test(normalized)
+            || isMarkdownTable(normalized)
           if (onSmartPaste && isBlockMarkdown) {
             const el = divRef.current
             const sel = window.getSelection()

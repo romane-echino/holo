@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import { InlineEditor } from '../InlineEditor'
-import { setClipboardEventData, writeClipboardPayload } from '../lib/clipboard'
+import { setClipboardEventData } from '../lib/clipboard'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
 import type { InlineNode, TableNode } from '../lib/types'
 
@@ -111,6 +111,61 @@ function plainTextToInlineNodes(value: string): InlineNode[] {
     }
   })
   return result
+}
+
+function isMarkdownTableSeparatorRow(line: string): boolean {
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim())
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  let source = line.trim()
+  if (source.startsWith('|')) source = source.slice(1)
+  if (source.endsWith('|')) source = source.slice(0, -1)
+
+  const cells: string[] = []
+  let current = ''
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    const next = source[index + 1]
+
+    if (char === '\\' && (next === '|' || next === '\\')) {
+      current += next
+      index += 1
+      continue
+    }
+
+    if (char === '|') {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  cells.push(current.trim())
+  return cells
+}
+
+function parseClipboardGridData(text: string): string[][] {
+  const normalized = text.replace(/\r/g, '')
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (
+    lines.length >= 2
+    && /\|/.test(lines[0])
+    && isMarkdownTableSeparatorRow(lines[1])
+  ) {
+    return lines
+      .filter((line, index) => !(index === 1 && isMarkdownTableSeparatorRow(line)))
+      .map(splitMarkdownTableRow)
+  }
+
+  return normalized.split('\n').map((line) => line.split('\t'))
 }
 
 function getCellContentVersion(nodes: InlineNode[] | undefined): string {
@@ -430,18 +485,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       return rowIdx >= bounds.rowStart && rowIdx <= bounds.rowEnd && colIdx >= bounds.colStart && colIdx <= bounds.colEnd
     }, [selectionAnchor, selectionFocus])
 
-    const serializeSelection = useCallback(() => {
-      const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
-      if (!bounds) return ''
-      return tableRef.current.rows
-        .slice(bounds.rowStart, bounds.rowEnd + 1)
-        .map((row) => tableRef.current.columns
-          .slice(bounds.colStart, bounds.colEnd + 1)
-          .map((col) => inlineNodesToPlainText(row.cells[col.id] ?? []))
-          .join('\t'))
-        .join('\n')
-    }, [selectionAnchor, selectionFocus])
-
     const serializeSelectionMarkdown = useCallback(() => {
       const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
       if (!bounds) return ''
@@ -485,14 +528,12 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     const copySelectionToClipboard = useCallback((clipboardData?: DataTransfer | null) => {
       const payload = {
-        plainText: serializeSelection(),
         html: serializeSelectionHtml(),
         markdown: serializeSelectionMarkdown(),
       }
 
       setClipboardEventData(clipboardData, payload)
-      void writeClipboardPayload(payload)
-    }, [serializeSelection, serializeSelectionHtml, serializeSelectionMarkdown])
+    }, [serializeSelectionHtml, serializeSelectionMarkdown])
 
     const clearSelectedCells = useCallback(() => {
       const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
@@ -515,7 +556,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     const pasteIntoSelection = useCallback((text: string) => {
       const bounds = getSelectionBounds(selectionAnchor, selectionFocus)
       if (!bounds) return false
-      const rows = text.replace(/\r/g, '').split('\n').map((line) => line.split('\t'))
+      const rows = parseClipboardGridData(text)
       if (rows.length === 0) return false
 
       updateCells((prev) => {

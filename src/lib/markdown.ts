@@ -318,3 +318,37 @@ export function parseMarkdownToHtml(
 
   return doc.body.innerHTML
 }
+
+export function sanitizeHtmlForClipboard(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+
+  doc
+    .querySelectorAll('.table-summary-row, tfoot, .table-add-row-btn, .table-row-index-badge')
+    .forEach((el) => el.remove())
+
+  doc.querySelectorAll('.table-scroll-wrapper').forEach((wrapper) => {
+    while (wrapper.firstChild) wrapper.parentNode?.insertBefore(wrapper.firstChild, wrapper)
+    wrapper.parentNode?.removeChild(wrapper)
+  })
+
+  doc.querySelectorAll('[data-table-dnd-id], [data-table-drag-type], [data-table-drag-index]').forEach((el) => {
+    el.removeAttribute('data-table-dnd-id')
+    el.removeAttribute('data-table-drag-type')
+    el.removeAttribute('data-table-drag-index')
+  })
+
+  doc.querySelectorAll('[draggable], [contenteditable], [tabindex]').forEach((el) => {
+    el.removeAttribute('draggable')
+    el.removeAttribute('contenteditable')
+    el.removeAttribute('tabindex')
+  })
+
+  return doc.body.innerHTML
+}
+
+export function parseMarkdownToClipboardHtml(
+  markdown: string,
+  getTableDndId: () => string,
+): string {
+  return sanitizeHtmlForClipboard(parseMarkdownToHtml(markdown, getTableDndId))
+}

@@ -89,9 +89,10 @@ function PreComponent({ children, node, ...props }: MDProps) {
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
     const text = ref.current?.querySelector('code')?.textContent ?? ''
-    navigator.clipboard.writeText(text.trim())
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+    void window.holo?.writeClipboardText?.(text.trim()).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
   }
 
   return (

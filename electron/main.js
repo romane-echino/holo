@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItem, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, shell } from 'electron'
 import updaterPkg from 'electron-updater'
 import { execFile, spawn } from 'node:child_process'
 
@@ -761,9 +761,9 @@ async function getGitState({ fetchRemote = false } = {}) {
 
   const localChanges = statusResult.ok
     ? statusResult.stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0).length
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0).length
     : 0
 
   const conflictedFiles = statusResult.ok
@@ -1066,7 +1066,7 @@ function createWindow(launchPayload = null) {
     width: 1440,
     height: 940,
     minWidth: 320,
-    minHeight: 640, 
+    minHeight: 640,
     title: "Holo",
     frame: false,
     // Sur Windows, titleBarStyle:'hidden' réactive l'Aero snap (drag vers le haut/côtés)
@@ -1269,6 +1269,20 @@ ipcMain.handle('app:get-config-value', async (_event, key) => getHoloConfigValue
 ipcMain.handle('app:set-config-value', async (_event, key, value) => {
   await setHoloConfigValue(key, value)
   return { ok: true }
+})
+ipcMain.handle('clipboard:write-text', async (_event, text) => {
+  console.log('Received clipboard write-text request:', { text })
+  clipboard.writeText(String(text ?? ''))
+  return { ok: true }
+})
+ipcMain.handle('clipboard:get-formats', async () => clipboard.availableFormats())
+ipcMain.handle('clipboard:has-format', async (_event, format) => clipboard.has(String(format)))
+ipcMain.handle('clipboard:read-format', async (_event, format) => {
+  try {
+    return clipboard.read(String(format))
+  } catch {
+    return ''
+  }
 })
 
 ipcMain.handle('window:minimize', async (event) => {
@@ -1619,15 +1633,15 @@ ipcMain.handle('fs:copy-file', async (_event, sourcePath, targetDirectoryPath) =
   const basename = path.basename(sourcePath)
   const ext = path.extname(basename)
   const nameWithoutExt = basename.slice(0, -ext.length)
-  
+
   let copyPath = path.join(targetDirectoryPath, `${nameWithoutExt} (copie)${ext}`)
   let counter = 1
-  
+
   while (await fs.stat(copyPath).catch(() => null)) {
     copyPath = path.join(targetDirectoryPath, `${nameWithoutExt} (copie ${counter})${ext}`)
     counter++
   }
-  
+
   assertPathInsideRoot(copyPath)
 
   // Copier le fichier
@@ -2196,7 +2210,7 @@ ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions)
         ? 'dropbox'
         : storageOptions?.mode === 'gdrive'
           ? 'gdrive'
-      : 'local'
+          : 'local'
 
   if (storageMode === 'azure') {
     const uploadedUrl = await uploadImageToAzureBlob({
@@ -2275,7 +2289,7 @@ ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions)
 
 ipcMain.handle('fs:load-image', async (_event, relativePath) => {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
-  
+
   // Decode the path in case it contains URL-encoded characters
   let decodedPath = String(relativePath ?? '')
   try {
@@ -2289,12 +2303,12 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
   const normalizedRootWithSep = normalizedRoot.endsWith(path.sep)
     ? normalizedRoot
     : `${normalizedRoot}${path.sep}`
-  
+
   // Security check: ensure file is within project root
   if (normalizedPath !== normalizedRoot && !normalizedPath.startsWith(normalizedRootWithSep)) {
     throw new Error('Accès refusé.')
   }
-  
+
   try {
     const data = await fs.readFile(normalizedPath)
     const base64 = data.toString('base64')
@@ -2304,7 +2318,7 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
     else if (ext === '.gif') mimeType = 'image/gif'
     else if (ext === '.webp') mimeType = 'image/webp'
     else if (ext === '.svg') mimeType = 'image/svg+xml'
-    
+
     return { ok: true, dataUrl: `data:${mimeType};base64,${base64}` }
   } catch (error) {
     throw new Error(`Impossible de charger l'image: ${error instanceof Error ? error.message : String(error)}`)
@@ -2315,10 +2329,10 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
 
   // Purge unique au démarrage des dossiers récents invalides
-  cleanupRecentFolders().catch(() => {})
+  cleanupRecentFolders().catch(() => { })
 
   // Pré-charger tous les espaces récents dans knownRootPaths (pour la lecture cross-espace)
-  getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => {})
+  getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => { })
 
   try {
     if (app.isPackaged) {

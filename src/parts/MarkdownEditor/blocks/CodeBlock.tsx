@@ -17,11 +17,14 @@ interface CodeBlockProps {
 export function CodeBlock({ node }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(node.value).then(() => {
+  const handleCopy = async () => {
+    try {
+      await window.holo?.writeClipboardText?.(node.value)
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    })
+    } catch {
+      // ignore
+    }
   }
 
   return (

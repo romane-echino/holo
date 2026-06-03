@@ -28,12 +28,12 @@ import { MathBlock } from './blocks/MathBlock'
 import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
-import { setClipboardEventData, writeClipboardPayload } from './lib/clipboard'
+import { setClipboardEventData } from './lib/clipboard'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
-import { parseMarkdownToHtml } from '../../lib/markdown'
+import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
@@ -157,69 +157,10 @@ function blocksToMarkdown(blocks: BlockState[]): string {
   } as any) as string
 }
 
-function inlineNodesToPlainText(nodes: InlineNode[]): string {
-  return nodes.map((node) => {
-    switch (node.type) {
-      case 'text':
-      case 'inlineCode':
-        return node.value
-      case 'break':
-        return '\n'
-      case 'strong':
-      case 'emphasis':
-      case 'delete':
-      case 'underline':
-      case 'link':
-        return inlineNodesToPlainText(node.children)
-      case 'image':
-        return node.alt ?? ''
-      default:
-        return ''
-    }
-  }).join('')
-}
-
-function blockNodeToPlainText(node: BlockNode): string {
-  switch (node.type) {
-    case 'paragraph':
-      return inlineNodesToPlainText(node.children)
-    case 'heading':
-      return inlineNodesToPlainText(node.children)
-    case 'code':
-      return node.value
-    case 'blockquote':
-      return node.children.map(blockNodeToPlainText).filter(Boolean).join('\n')
-    case 'list':
-      return node.children.map((item, index) => {
-        const marker = node.ordered ? `${(node.start ?? 1) + index}. ` : '- '
-        const body = item.children.map(blockNodeToPlainText).filter(Boolean).join('\n')
-        return marker + body
-      }).join('\n')
-    case 'thematicBreak':
-      return ''
-    case 'image':
-      return node.alt || node.url
-    case 'table':
-      return node.children
-        .map((row) => row.children.map((cell) => inlineNodesToPlainText(cell.children)).join('\t'))
-        .join('\n')
-    default:
-      return ''
-  }
-}
-
-function blocksToPlainText(blocks: BlockState[]): string {
-  return blocks
-    .map((block) => blockNodeToPlainText(block.node as BlockNode))
-    .filter((value) => value.trim() !== '')
-    .join('\n\n')
-}
-
 function blocksToClipboardPayload(blocks: BlockState[]) {
   const markdown = blocksToMarkdown(blocks)
   return {
-    plainText: blocksToPlainText(blocks),
-    html: parseMarkdownToHtml(markdown, newClipboardTableId),
+    html: parseMarkdownToClipboardHtml(markdown, newClipboardTableId),
     markdown,
   }
 }
@@ -865,7 +806,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
     const payload = blocksToClipboardPayload(selected)
     setClipboardEventData(clipboardData, payload)
-    void writeClipboardPayload(payload)
     return true
   }, [selectedBlockIds])
 
