@@ -13,12 +13,17 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const isDev = !app.isPackaged
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
 const knownRootPaths = new Set() // tous les espaces jamais ouverts (pour la lecture cross-espace)
 const MAX_RECENT_FOLDERS = 10
 const ARCHIVE_DIR_NAME = '.archive'
 let updateState = { available: false, downloading: false, ready: false }
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+}
 
 function getRecentFoldersFilePath() {
   return path.join(app.getPath('userData'), 'recent-folders.json')
@@ -902,19 +907,42 @@ function collectDiffPreviewLines(output, maxPerKind = 2, maxChars = 140) {
       continue
     }
 
+    const normalizedLine = line.slice(1).trim()
+    if ((line.startsWith('+') || line.startsWith('-')) && isIgnorableMarkdownMetadataLine(normalizedLine)) {
+      continue
+    }
+
     if (line.startsWith('+') && additionsPreview.length < maxPerKind) {
-      const preview = line.slice(1).trim().replace(/\s+/g, ' ').slice(0, maxChars)
+      const preview = normalizedLine.replace(/\s+/g, ' ').slice(0, maxChars)
       if (preview) additionsPreview.push(preview)
       continue
     }
 
     if (line.startsWith('-') && deletionsPreview.length < maxPerKind) {
-      const preview = line.slice(1).trim().replace(/\s+/g, ' ').slice(0, maxChars)
+      const preview = normalizedLine.replace(/\s+/g, ' ').slice(0, maxChars)
       if (preview) deletionsPreview.push(preview)
     }
   }
 
   return { additionsPreview, deletionsPreview }
+}
+
+function isIgnorableMarkdownMetadataLine(line) {
+  const normalized = String(line ?? '').trim()
+  if (!normalized || normalized === '---') return true
+  return /^(updated(?:[-_ ]?at)?|modified(?:[-_ ]?at)?|last[-_ ]?modified)\s*:/i.test(normalized)
+}
+
+function isIgnorableActivityDiff(output) {
+  const changedLines = String(output ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('diff --git') && !line.startsWith('index ') && !line.startsWith('@@') && !line.startsWith('+++') && !line.startsWith('---'))
+    .filter((line) => line.startsWith('+') || line.startsWith('-'))
+    .map((line) => line.slice(1).trim())
+    .filter(Boolean)
+
+  return changedLines.length > 0 && changedLines.every(isIgnorableMarkdownMetadataLine)
 }
 
 async function getPrimaryRemoteWebUrl(cwd) {
@@ -1199,6 +1227,10 @@ function createWindow(launchPayload = null) {
     window.show()
   })
 
+  navigateWindowToLaunchPayload(window, launchPayload)
+}
+
+function navigateWindowToLaunchPayload(window, launchPayload = null) {
   const query = {}
   if (launchPayload?.rootPath) {
     query.rootPath = launchPayload.rootPath
@@ -1220,6 +1252,25 @@ function createWindow(launchPayload = null) {
   const indexPath = path.join(app.getAppPath(), 'dist', 'index.html')
   window.loadFile(indexPath, { query })
 }
+
+app.on('second-instance', (_event, argv) => {
+  void (async () => {
+    const payload = await getLaunchPayloadFromArgv(argv)
+    const window = BrowserWindow.getAllWindows()[0]
+
+    if (!window) {
+      createWindow(payload)
+      return
+    }
+
+    if (window.isMinimized()) window.restore()
+    window.focus()
+
+    if (payload.rootPath || payload.filePath || payload.startupError) {
+      navigateWindowToLaunchPayload(window, payload)
+    }
+  })()
+})
 
 ipcMain.handle('fs:open-folder', async () => {
   const result = await dialog.showOpenDialog({
@@ -1605,6 +1656,7 @@ ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
 
 ipcMain.handle('fs:write-file', async (_event, filePath, content) => {
   assertPathInsideRoot(filePath)
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, content, 'utf8')
   return { ok: true }
 })
@@ -1908,9 +1960,10 @@ ipcMain.handle('git:get-file-activity', async (_event, filePath, maxCount = 10) 
     }
   })
 
-  return Promise.all(commits.map(async (commit) => {
+  const activities = await Promise.all(commits.map(async (commit) => {
     const numstatResult = await runGit(['show', '--format=', '--numstat', commit.hash, '--', relativeFilePath], cwd)
     const diffResult = await runGit(['show', '--format=', '--unified=0', commit.hash, '--', relativeFilePath], cwd)
+    if (isIgnorableActivityDiff(diffResult.stdout)) return null
     const stats = parseNumstatOutput(numstatResult.stdout).find(Boolean) ?? { added: 0, deleted: 0 }
     const previews = collectDiffPreviewLines(diffResult.stdout)
 
@@ -1923,6 +1976,8 @@ ipcMain.handle('git:get-file-activity', async (_event, filePath, maxCount = 10) 
       commitUrl: buildCommitUrl(remoteWebUrl, commit.hash),
     }
   }))
+
+  return activities.filter(Boolean)
 })
 
 ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail) => {

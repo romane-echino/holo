@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import type {
   NameDialog,
   GitDialog,
@@ -111,6 +111,23 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onDismissUpdate,
   onInstallUpdate,
 }) => {
+  useEffect(() => {
+    if (
+      !nameDialog
+      || nameDialog.mode !== 'create-file'
+      || nameDialog.selectedTemplatePath
+      || templateOptions.length !== 1
+    ) {
+      return
+    }
+
+    onSetNameDialog((previous) => (
+      previous && previous.mode === 'create-file'
+        ? { ...previous, selectedTemplatePath: templateOptions[0].path }
+        : previous
+    ))
+  }, [nameDialog, onSetNameDialog, templateOptions])
+
   return (
     <>
       {/* Changelog modal */}

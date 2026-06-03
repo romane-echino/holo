@@ -50,6 +50,7 @@ export function ContextMenuPopup({
   const isFile = node.type === 'file'
   const isDir = node.type === 'directory'
   const isTemplate = Boolean(fileMetaByPath[node.path]?.isTemplate)
+  const hasTemplates = Object.values(fileMetaByPath).some((meta) => Boolean(meta?.isTemplate))
 
   const close = () => onRunContextAction(() => {})
 
@@ -63,6 +64,9 @@ export function ContextMenuPopup({
     // Création (non archivé)
     ...(!isArchivedContext ? [
       { type: 'item' as const, label: 'Nouveau fichier', icon: FilePlus, onClick: () => onRunContextAction(() => onOpenCreateFileDialog(node.path, node.type)) },
+      ...(isDir && hasTemplates
+        ? [{ type: 'item' as const, label: 'Nouveau fichier depuis un modèle', icon: Layers, onClick: () => onRunContextAction(() => onOpenCreateFileDialog(node.path, node.type)) }]
+        : []),
       { type: 'item' as const, label: 'Nouveau dossier', icon: FolderPlus, onClick: () => onRunContextAction(() => onOpenCreateDirectoryDialog(node.path, node.type)) },
     ] : []),
 

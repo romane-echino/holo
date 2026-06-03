@@ -1,21 +1,70 @@
 /**
- * CodeBlock.tsx — Bloc de code (fenced code block)
- *
- * Rendu en lecture seule avec style monospace et lang badge.
- * Cliquer permet de copier le code dans le presse-papiers.
+ * CodeBlock.tsx — Bloc de code éditable (fenced code block)
  */
 
-import { useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import hljs from 'highlight.js'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import type { CodeNode } from '../lib/types'
+import type { InlineEditorHandle } from '../InlineEditor'
 
 interface CodeBlockProps {
   node: CodeNode
+  onChange: (node: CodeNode) => void
+  onEnterAtEnd?: () => void
+  onBackspaceAtStart?: () => void
 }
 
-export function CodeBlock({ node }: CodeBlockProps) {
+const LANGUAGES = ['plaintext', 'javascript', 'typescript', 'python', 'sql', 'bash', 'html', 'css', 'json', 'markdown', 'rust', 'java', 'go', 'csharp', 'cpp'] as const
+
+export const CodeBlock = forwardRef<InlineEditorHandle, CodeBlockProps>(
+  function CodeBlock({ node, onChange, onEnterAtEnd, onBackspaceAtStart }, ref) {
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(node.value)
+  const [draftLang, setDraftLang] = useState(node.lang ?? 'plaintext')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      setEditing(true)
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+        textareaRef.current?.select()
+      })
+    },
+    clear: () => setDraft(''),
+    clearSlash: () => [],
+  }))
+
+  useEffect(() => {
+    setDraft(node.value)
+    setDraftLang(node.lang ?? 'plaintext')
+  }, [node.lang, node.value])
+
+  const commit = useMemo(
+    () => () => {
+      setEditing(false)
+      if (draft !== node.value || draftLang !== (node.lang ?? 'plaintext')) {
+        onChange({ ...node, value: draft, lang: draftLang === 'plaintext' ? 'plaintext' : draftLang })
+      }
+    },
+    [draft, draftLang, node, onChange],
+  )
+
+  const highlightedHtml = useMemo(() => {
+    const source = draft || node.value || ''
+    if (!source) return ''
+    if (!draftLang || draftLang === 'plaintext') {
+      return hljs.highlightAuto(source).value
+    }
+    try {
+      return hljs.highlight(source, { language: draftLang, ignoreIllegals: true }).value
+    } catch {
+      return hljs.highlightAuto(source).value
+    }
+  }, [draft, draftLang, node.value])
 
   const handleCopy = async () => {
     try {
@@ -27,32 +76,118 @@ export function CodeBlock({ node }: CodeBlockProps) {
     }
   }
 
-  return (
-    <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-holo-border-soft/60 px-4 py-2">
-        <span className="font-mono text-[11px] text-holo-text-faint">
-          {node.lang || 'code'}
-        </span>
+    if (editing) {
+      return (
+        <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
+          <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
+            <select
+              value={draftLang}
+              onChange={(event) => setDraftLang(event.target.value)}
+              className="rounded-holo-sm border border-holo-border-soft bg-holo-bg px-2 py-1 font-mono text-[11px] text-holo-text outline-none"
+            >
+              {LANGUAGES.map((language) => (
+                <option key={language} value={language}>{language}</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-2">
+              <button
+                onMouseDown={(event) => { event.preventDefault(); commit() }}
+                className="rounded-holo-sm px-2 py-0.5 text-[11px] text-holo-primary-soft hover:bg-holo-primary/10"
+              >
+                Valider
+              </button>
+              <button
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  setDraft(node.value)
+                  setDraftLang(node.lang ?? 'plaintext')
+                  setEditing(false)
+                }}
+                className="rounded-holo-sm px-2 py-0.5 text-[11px] text-holo-text-faint hover:bg-holo-glass"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-0 border-b border-holo-border-soft/50 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onBlur={commit}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setDraft(node.value)
+                  setDraftLang(node.lang ?? 'plaintext')
+                  setEditing(false)
+                }
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  commit()
+                  onEnterAtEnd?.()
+                }
+                if (event.key === 'Backspace' && draft === '') {
+                  event.preventDefault()
+                  onBackspaceAtStart?.()
+                }
+              }}
+              placeholder="console.log('Hello, Holo')"
+              className="min-h-[180px] w-full resize-y border-0 bg-transparent p-4 font-mono text-sm text-holo-text focus:outline-none holo-scrollbar"
+              spellCheck={false}
+            />
+            <div className="min-h-[180px] bg-black/20 p-4">
+              <pre className="h-full overflow-auto font-mono text-sm leading-relaxed text-holo-text holo-scrollbar">
+                {highlightedHtml
+                  ? <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+                  : <code className="text-holo-text-faint">Aperçu du code…</code>}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
+        <div className="flex items-center justify-between border-b border-holo-border-soft/60 px-4 py-2">
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="font-mono text-[11px] text-holo-text-faint transition hover:text-holo-text"
+            title="Cliquer pour modifier le bloc code"
+          >
+            {node.lang || 'plaintext'}
+          </button>
+          <button
+            onClick={handleCopy}
+            className={cn(
+              'flex items-center gap-1.5 rounded-holo-sm px-2 py-1 text-[11px] transition',
+              copied
+                ? 'text-holo-success'
+                : 'text-holo-text-faint opacity-0 group-hover:opacity-100 hover:text-holo-text',
+            )}
+            title="Copier le code"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? 'Copié' : 'Copier'}
+          </button>
+        </div>
+
         <button
-          onClick={handleCopy}
-          className={cn(
-            'flex items-center gap-1.5 rounded-holo-sm px-2 py-1 text-[11px] transition',
-            copied
-              ? 'text-holo-success'
-              : 'text-holo-text-faint opacity-0 group-hover:opacity-100 hover:text-holo-text',
-          )}
-          title="Copier le code"
+          type="button"
+          onClick={() => setEditing(true)}
+          className="block w-full text-left"
+          title="Cliquer pour modifier le code"
         >
-          {copied ? <Check size={11} /> : <Copy size={11} />}
-          {copied ? 'Copié' : 'Copier'}
+          <pre className="overflow-x-auto p-4 font-mono text-sm leading-relaxed text-holo-text-muted holo-scrollbar">
+            {node.value
+              ? <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+              : <code className="text-holo-text-faint">Bloc code vide — cliquer pour saisir du code</code>}
+          </pre>
         </button>
       </div>
-
-      {/* Code */}
-      <pre className="overflow-x-auto p-4 font-mono text-sm leading-relaxed text-holo-text-muted holo-scrollbar">
-        <code>{node.value}</code>
-      </pre>
-    </div>
-  )
-}
+    )
+  },
+)

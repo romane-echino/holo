@@ -680,6 +680,29 @@ export function HoloSettingsDialog({
                 </div>
 
                 <div className="rounded-holo-xl border border-holo-border-soft bg-holo-glass p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-holo-text">Index de recherche</p>
+                      <p className="mt-1 text-xs text-holo-text-faint">
+                        Ouvre le dossier contenant <span className="font-mono">.holo/search-index.json</span> pour inspecter l'index local.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!currentSpace}
+                      onClick={() => {
+                        if (!currentSpace) return
+                        void window.holo?.showItemInFolder(`${currentSpace}/.holo/search-index.json`)
+                      }}
+                      className="rounded-holo-md border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-xs font-medium text-holo-text transition hover:bg-holo-glass-hover disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Ouvrir le fichier d'indexation
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-holo-xl border border-holo-border-soft bg-holo-glass p-4">
                   <p className="text-sm font-medium text-holo-text">Changelog</p>
                   <div className="mt-3 space-y-4 text-sm text-holo-text-muted">
                     {CHANGELOG_ENTRIES.map((entry) => (

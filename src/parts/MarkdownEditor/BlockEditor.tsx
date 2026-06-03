@@ -28,6 +28,7 @@ import { MathBlock } from './blocks/MathBlock'
 import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { domToInlines } from './lib/domToInlines'
+import { inlinesToMarkdown } from './lib/inlinesToMarkdown'
 import { setClipboardEventData } from './lib/clipboard'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
@@ -281,6 +282,45 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const isHistoryMovingRef = useRef(false)
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const pushHistorySnapshot = useCallback((snapshot: string) => {
+    const history = historyRef.current
+    if (history.stack[history.pos] === snapshot) return
+    history.stack = history.stack.slice(0, history.pos + 1)
+    history.stack.push(snapshot)
+    history.pos = history.stack.length - 1
+    if (history.stack.length > 100) {
+      history.stack.shift()
+      history.pos -= 1
+    }
+  }, [])
+
+  const scheduleHistorySnapshot = useCallback((snapshot: string) => {
+    if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+    historyTimerRef.current = setTimeout(() => {
+      pushHistorySnapshot(snapshot)
+    }, 250)
+  }, [pushHistorySnapshot])
+
+  const applyBlocksMutation = useCallback((
+    updater: (previous: BlockState[]) => BlockState[],
+    historyMode: 'immediate' | 'debounced' = 'immediate',
+  ) => {
+    setBlocks((previous) => {
+      const next = updater(previous)
+      if (next === previous) return previous
+
+      blocksDirtyRef.current = true
+
+      if (!isHistoryMovingRef.current) {
+        const snapshot = blocksToMarkdown(next)
+        if (historyMode === 'immediate') pushHistorySnapshot(snapshot)
+        else scheduleHistorySnapshot(snapshot)
+      }
+
+      return next
+    })
+  }, [pushHistorySnapshot, scheduleHistorySnapshot])
+
   // Drag-reorder state
   const [dragReorderBlockId, setDragReorderBlockId] = useState<string | null>(null)
   const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null)
@@ -362,56 +402,41 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     lastEmittedRef.current = md
     onChangeRef.current(md)
 
-    // Pousse dans l'historique (debounce 400 ms) sauf pendant undo/redo
-    if (!isHistoryMovingRef.current) {
-      if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
-      historyTimerRef.current = setTimeout(() => {
-        const h = historyRef.current
-        // Tronque le futur quand une nouvelle modification survient
-        h.stack = h.stack.slice(0, h.pos + 1)
-        h.stack.push(md)
-        h.pos = h.stack.length - 1
-        // Limite à 100 entrées
-        if (h.stack.length > 100) { h.stack.shift(); h.pos-- }
-      }, 400)
-    } else {
+    if (isHistoryMovingRef.current) {
       isHistoryMovingRef.current = false
     }
   }, [blocks])
 
   const handleBlockChange = useCallback(
     (id: string, node: BlockNode) => {
-      blocksDirtyRef.current = true
-      setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, node } : b)))
+      applyBlocksMutation((prev) => prev.map((b) => (b.id === id ? { ...b, node } : b)), 'debounced')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleEnterAtStart = useCallback(
     (id: string) => {
       const newBlock = freshParagraph()
       pendingFocusRef.current = newBlock.id
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const idx = prev.findIndex((b) => b.id === id)
         if (idx === -1) return prev
         return [...prev.slice(0, idx), newBlock, ...prev.slice(idx)]
-      })
+      }, 'immediate')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleEnterAtEnd = useCallback(
     (id: string) => {
       const newBlock = freshParagraph()
       pendingFocusRef.current = newBlock.id
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const idx = prev.findIndex((b) => b.id === id)
         return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
-      })
+      }, 'immediate')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleSplit = useCallback(
@@ -421,14 +446,13 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         node: { type: 'paragraph', children: after } as ParagraphNode,
       }
       pendingFocusRef.current = newBlock.id
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const idx = prev.findIndex((b) => b.id === id)
         if (idx === -1) return prev
         return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
-      })
+      }, 'immediate')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleBackspaceAtStart = useCallback(
@@ -439,16 +463,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (idx === 0) {
         if (prev.length === 1) return
         pendingFocusRef.current = prev[1].id
-        blocksDirtyRef.current = true
-        setBlocks((s) => s.filter((b) => b.id !== id))
+        applyBlocksMutation((state) => state.filter((b) => b.id !== id), 'immediate')
         return
       }
       if (!isEmptyBlock(prev[idx].node)) return
       pendingFocusRef.current = prev[idx - 1].id
-      blocksDirtyRef.current = true
-      setBlocks((s) => s.filter((b) => b.id !== id))
+      applyBlocksMutation((state) => state.filter((b) => b.id !== id), 'immediate')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleDeleteAtEnd = useCallback(
@@ -461,15 +483,13 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
       // Bloc courant vide → le supprimer et placer le curseur au début du bloc suivant
       if (isEmptyBlock(currentBlock.node)) {
-        blocksDirtyRef.current = true
-        setBlocks((s) => s.filter((b) => b.id !== id))
+        applyBlocksMutation((state) => state.filter((b) => b.id !== id), 'immediate')
         setTimeout(() => blockRefs.current.get(nextBlock.id)?.focus(), 0)
         return
       }
       // Bloc suivant vide → le supprimer, focus reste sur le bloc courant
       if (isEmptyBlock(nextBlock.node)) {
-        blocksDirtyRef.current = true
-        setBlocks((s) => s.filter((b) => b.id !== nextBlock.id))
+        applyBlocksMutation((state) => state.filter((b) => b.id !== nextBlock.id), 'immediate')
         return
       }
       // Paragraphe + paragraphe suivant → fusionner les contenus
@@ -478,17 +498,18 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           ...(currentBlock.node as ParagraphNode).children,
           ...(nextBlock.node as ParagraphNode).children,
         ]
-        blocksDirtyRef.current = true
-        setBlocks((s) =>
-          s
-            .map((b) => b.id === id ? { ...b, node: { type: 'paragraph', children: mergedChildren } as ParagraphNode } : b)
-            .filter((b) => b.id !== nextBlock.id),
+        applyBlocksMutation(
+          (s) =>
+            s
+              .map((b) => b.id === id ? { ...b, node: { type: 'paragraph', children: mergedChildren } as ParagraphNode } : b)
+              .filter((b) => b.id !== nextBlock.id),
+          'immediate',
         )
         return
       }
       // Sinon : laisser le navigateur gérer la suppression dans le bloc courant
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleSmartPaste = useCallback(
@@ -518,14 +539,13 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       }
 
       pendingFocusRef.current = pastedBlocks[pastedBlocks.length - 1].id
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const idx = prev.findIndex((b) => b.id === id)
         if (idx === -1) return prev
         return [...prev.slice(0, idx), ...pastedBlocks, ...prev.slice(idx + 1)]
-      })
+      }, 'immediate')
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleArrowUp = useCallback(
@@ -549,8 +569,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         if (prev[idx].node.type === 'table') {
           const newBlock = freshParagraph()
           pendingFocusRef.current = newBlock.id
-          blocksDirtyRef.current = true
-          setBlocks((s) => [...s, newBlock])
+          applyBlocksMutation((s) => [...s, newBlock], 'immediate')
         }
         return
       }
@@ -563,8 +582,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // Conversion de type (raccourci markdown ou slash command)
   const handleConvert = useCallback(
     (id: string, targetType: string, children?: InlineNode[]) => {
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         console.log('[BlockEditor] 🔄 handleConvert setBlocks updater called — prev.length=', prev.length, 'targetType=', targetType, 'id=', id.slice(0,8))
         const idx = prev.findIndex((b) => b.id === id)
         if (idx === -1) {
@@ -584,6 +602,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           const cell = () => ({ type: 'tableCell' as const, children: [] })
           const row  = () => ({ type: 'tableRow'  as const, children: [cell(), cell(), cell()] })
           newNode = { type: 'table', align: ['left', 'left', 'left'], children: [row(), row(), row()] } as TableNode
+        } else if (targetType === 'code') {
+          newNode = { type: 'code', lang: 'plaintext', value: inlinesToMarkdown(kids) } as CodeNode
         } else if (targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha') {
           const ordered = targetType !== 'list-bullet'
           const lines = splitAtBreaks(kids)
@@ -623,16 +643,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
         // Si tableau/liste/math/blockquote/separator/heading/footnote est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
+        if ((targetType === 'table' || targetType === 'code' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
         console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
         updated.forEach((b, i) => console.log(`  [${i}] id=${b.id.slice(0,8)} type=${b.node.type}`))
         return updated
-      })
+      }, 'immediate')
       setTimeout(() => blockRefs.current.get(id)?.focus(), 0)
     },
-    [],
+    [applyBlocksMutation],
   )
 
   const handleSlashCommand = useCallback(
@@ -681,8 +701,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         children: [{ type: 'image' as const, url, alt, title: null }],
       }
       const newBlock: BlockState = { id: crypto.randomUUID(), node: imageNode }
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const focusedId = lastFocusedBlockIdRef.current
         let next: BlockState[]
         if (!focusedId) {
@@ -711,22 +730,21 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           next = [...next, freshParagraph()]
         }
         return next
-      })
+      }, 'immediate')
     },
-  }))
+  }), [applyBlocksMutation])
 
   // Bouton + dans la marge : insère un paragraphe vide après le bloc et ouvre le slash command
   const handleInsertAndSlash = useCallback((id: string) => {
     const newBlock = freshParagraph()
     pendingFocusRef.current = newBlock.id
     pendingSlashRef.current = newBlock.id
-    blocksDirtyRef.current = true
-    setBlocks((prev) => {
+    applyBlocksMutation((prev) => {
       const idx = prev.findIndex((b) => b.id === id)
       if (idx === -1) return [...prev, newBlock]
       return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)]
-    })
-  }, [])
+    }, 'immediate')
+  }, [applyBlocksMutation])
 
   // ─── Sélection de blocs ─────────────────────────────────────────────────────
   // Helper: returns block IDs in range [anchorId, targetId] (inclusive, in order)
@@ -804,6 +822,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       e.preventDefault()
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
       const h = historyRef.current
+      pushHistorySnapshot(blocksToMarkdown(blocksRef.current))
       if (h.pos > 0) {
         h.pos--
         isHistoryMovingRef.current = true
@@ -838,11 +857,10 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     // Supprimer les blocs sélectionnés
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
       e.preventDefault()
-      blocksDirtyRef.current = true
-      setBlocks((prev) => {
+      applyBlocksMutation((prev) => {
         const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
         return filtered.length > 0 ? filtered : [freshParagraph()]
-      })
+      }, 'immediate')
       setSelectedBlockIds(new Set())
       return
     }
@@ -850,7 +868,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }
-  }, [handleEnterAtEnd, selectedBlockIds])
+  }, [handleEnterAtEnd, pushHistorySnapshot, selectedBlockIds])
 
   const handleSelectedBlocksCopy = useCallback((clipboardData?: DataTransfer | null) => {
     if (selectedBlockIds.size === 0) return false
@@ -862,14 +880,13 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   const handleSelectedBlocksCut = useCallback((clipboardData?: DataTransfer | null) => {
     if (!handleSelectedBlocksCopy(clipboardData)) return false
-    blocksDirtyRef.current = true
-    setBlocks((prev) => {
+    applyBlocksMutation((prev) => {
       const filtered = prev.filter((b) => !selectedBlockIds.has(b.id))
       return filtered.length > 0 ? filtered : [freshParagraph()]
-    })
+    }, 'immediate')
     setSelectedBlockIds(new Set())
     return true
-  }, [handleSelectedBlocksCopy, selectedBlockIds])
+  }, [applyBlocksMutation, handleSelectedBlocksCopy, selectedBlockIds])
 
   const buildLinkTooltip = useCallback((href: string) => {
     const trimmedHref = href.trim()
@@ -1023,15 +1040,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           onDrop={(e) => {
             e.preventDefault()
             if (!dragReorderBlockId || dragReorderBlockId === block.id) return
-            blocksDirtyRef.current = true
-            setBlocks(prev => {
+            applyBlocksMutation((prev) => {
               const next = prev.filter(b => b.id !== dragReorderBlockId)
               const srcBlock = prev.find(b => b.id === dragReorderBlockId)!
               const targetIdx = next.findIndex(b => b.id === block.id)
               const insertAt = dragOverPos === 'before' ? targetIdx : targetIdx + 1
               next.splice(insertAt, 0, srcBlock)
               return next
-            })
+            }, 'immediate')
             setDragReorderBlockId(null)
             setDragOverBlockId(null)
           }}
@@ -1244,7 +1260,15 @@ function BlockDispatcher({
       )
 
     case 'code':
-      return <CodeBlock node={block.node as CodeNode} />
+      return (
+        <CodeBlock
+          ref={blockRef}
+          node={block.node as CodeNode}
+          onChange={(node) => onChange(node)}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
+        />
+      )
 
     case 'blockquote':
       return (

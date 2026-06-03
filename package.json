@@ -114,6 +114,14 @@
         "deb"
       ],
       "category": "Office"
-    }
+    },
+    "protocols": [
+      {
+        "name": "Holo Links",
+        "schemes": [
+          "holo"
+        ]
+      }
+    ]
   }
 }

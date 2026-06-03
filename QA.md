@@ -107,3 +107,59 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
 ✅ Dans les tableau si y'a plus que 3 colonnes les colonnes s'adapte a son contenu
 
 
+# Phase 11
+
+- ✅ Optimiser les annulations dans l'editeur : Je dois pouvoir vraiment annuler une vingtaine d'action. Vraiment faire une gestion d'historiques des actions
+- ✅ Quand je clique sur Créer un fichier a partir d'un modèle -> Le popup apparait -> Si il y'a qu'un seul modèle disponible -> l'autosélectionner
+- ✅ Quand je clique-droite sur un dossier pouvoir créer un fichier a partir d'un modèle est manquant dans le menu contextuel
+- ✅ Dans le composant liste le popup (Bold Italic,...) n'apparait pas quand je sélectionne du texte
+- ✅ Les URI ouvrent holo mais n'ouvre pas le fichier directement (peut-être une histoire de timeout, ou autre) holo://Notes3/Gros test.md
+- ✅ Dans linus les URI me disent qu'il n'y a pas d'application disponible
+- ✅ Dans le composant Footnote -> Je le crée -> j'édite son contenu -> je sors du focus -> Le champ n'est plus éditable (Je peux plus focus dedans et changer le contenu)
+- ✅ Recherche des tags ne fonctionne pas (Aucun fichier n'est suggérer) -> Bien revoir l'indexation des fichiers
+- ✅ Dans les activité (Panneau Inspecteur) les activité qui montrent un update du header markdown ne m'interesse pas (A filtrer parce que On voit que Fabian a update UpdatedAt:2026-06-02... parce qu'il a fait CTRL+S dans le fichier ou enregistrement automatique et c'est ni interessant ni pertinant)
+- ✅ Quand je déplace un fichier dans l'arboresence :
+    - Il faudrai mettre a jour les fichier qui on ce fichier en liens (mettre a jour le lien)
+    - Mettre a jour la liste des récent / favori (SpacePanel et Global)
+    - Réindexé la recherche (Actuellement le fichier apparait 2 fois dans la recherche, ancien emplacement, nouvelle emplacement et c'est un peu con)
+- ✅ Dans le composant Citation la première fois qu'on le focus et qu'on fait SHIFT+ENTER cela ne marche pas. Il faut que je retape une deuxième fois pour qu'un retour a ligne opère -> A Corrigé
+- ✅ J'insiste sur la qualité de l'indexation des fichiers stocké en local, incrémentiel. Et pour une question de debug -> Est-ce que tu peux me faire un bouton dans Settings -> Application -> Ouvrir le fichier d'indexation qui ouvre ce fichier afin que je puisse consulter sa structure
+
+# Phase 12 
+- ✅ NE MARCHE TOUJOURS PAS : Quand je clique sur Créer un fichier a partir d'un modèle -> Le popup apparait -> Si il y'a qu'un seul modèle disponible -> l'autosélectionner
+- ✅ TOUJOURS PAS PRESENT DANS LE MENU : Quand je clique-droite sur un dossier pouvoir créer un fichier a partir d'un modèle est manquant dans le menu contextuel
+- ✅ Erreur dans la console electron
+[dev:electron] Error occurred in handler for 'fs:write-file': Error: ENOENT: no such file or directory, open '/home/romane/Notes3/.holo/search-index.json'
+[dev:electron]     at async open (node:internal/fs/promises:637:25)
+[dev:electron]     at async Object.writeFile (node:internal/fs/promises:1239:14)
+[dev:electron]     at async file:///home/romane/Bureau/holo/electron/main.js:1654:3
+[dev:electron]     at async Session.<anonymous> (node:electron/js2c/browser_init:2:116791) {
+[dev:electron]   errno: -2,
+[dev:electron]   code: 'ENOENT',
+[dev:electron]   syscall: 'open',
+[dev:electron]   path: '/home/romane/Notes3/.holo/search-index.json'
+[dev:electron] }
+- ✅ Dans la recherche la couleur des tags n'est pas respecté comme dans l'éditeur
+- ✅ PAS ENCORE OK : Dans les activité (Panneau Inspecteur) les activité qui montrent un update du header markdown ne m'interesse pas (A filtrer parce que On voit que Fabian a update UpdatedAt:2026-06-02... parce qu'il a fait CTRL+S dans le fichier ou enregistrement automatique et c'est ni interessant ni pertinant)
+ -> Voici un exemple d'activité pas interessante on voit que l'updatedAt a été modifié (normal avec l'enregistrement automatique) Si tu pouvais montrer un preview sur le reste des mise a jour et si il y'en a pas l'activité n'est pas interessante
+<div class="min-w-0 rounded-holo-xl px-2.5 py-2 transition hover:bg-holo-glass-hover active:scale-[0.995]"><div class="flex min-w-0 items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex justify-between"><p class="line-clamp-2 text-sm font-medium leading-5 text-holo-text">Marcelo A.</p><span class="text-[11px] leading-4 text-white/60">il y a 57m</span></div></div><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-external-link mt-0.5 shrink-0 text-holo-text-faint opacity-0 transition group-hover/activity:text-holo-primary-soft group-hover/activity:opacity-100" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></div><div class="mt-2 flex items-center gap-1.5"><span class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none bg-emerald-400/10 text-emerald-300"><svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>2</span><span class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none bg-rose-400/10 text-rose-300"><svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-minus" aria-hidden="true"><path d="M5 12h14"></path></svg>2</span></div><div class="mt-2 space-y-1"><div class="flex min-w-0 items-center gap-1.5 rounded-holo-sm px-2 py-1 font-mono text-[10px] leading-4 bg-emerald-400/[0.055] text-emerald-200/85"><span class="shrink-0 select-none text-emerald-300/80">+</span><span class="min-w-0 flex-1 truncate">updated: 2026-06-03T14:51:07.138Z</span></div><div class="flex min-w-0 items-center gap-1.5 rounded-holo-sm px-2 py-1 font-mono text-[10px] leading-4 bg-rose-400/[0.055] text-rose-200/85"><span class="shrink-0 select-none text-rose-300/80">-</span><span class="min-w-0 flex-1 truncate">updated: 2026-06-03T14:50:48.198Z</span></div></div></div>
+- ✅ NE MARCHE TOUJOURS PAS : Dans le composant Citation la première fois qu'on le focus et qu'on fait SHIFT+ENTER cela ne marche pas. Il faut que je retape une deuxième fois pour qu'un retour a ligne opère -> A Corrigé
+- ✅ Dansil manque le composant/block pour le code (avec coloration du code / choix du language et un joli editeur) (je sais qu'il y a deja un package qu'on a installé dans le passé pour ça)
+- ✅ Au sujet de l'indexation :
+    - deja je vois qu'il est dans .holo -> cela veut dire dans le repo -> est-ce que c'est vraiment bien qu'il soit commit / merge -> Ne devrait il pas être dans les appData plutot?
+    - Le bouton pour ouvrir le fichier ne fonctionne pas
+    - Parcontre la recherche a l'aire beaucoup plus efficace
+
+# Phase 13
+- CTRL+A Dans un bloc de code (editeur) dois sélectionné tout le texte (exception a la sélection de tout les blocs)
+- Si un tableau a plus que 4 colonnes les colonnes doivent s'adapté au contenu
+- Quand je sauvegarde doit rafraichir les activité si repo git
+- Quand j'ouvre un fichier d'un autre espace j'ai cette erreur qui vient
+<span class="text-xs text-holo-danger" title="fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros test.md' est hors du dépôt à '/home/romane/Bureau/Dev/documentation'">Erreur : fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros </span>
+- NE MARCHE TOUJOURS PAS : Dans le composant Citation la première fois qu'on le focus et qu'on fait SHIFT+ENTER cela ne marche pas. Il faut que je retape une deuxième fois pour qu'un retour a ligne opère -> A Corrigé
+- Dans le popup création d'un fichier a partir d'un modèle changer l'ux 
+    - D'abord on sélectionn un modèle (on voit rien d'autre)
+    - Après le titre
+    - Après les variables
+- Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
+

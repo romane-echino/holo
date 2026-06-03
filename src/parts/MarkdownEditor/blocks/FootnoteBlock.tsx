@@ -9,7 +9,7 @@
  * - édition inline intégrée, sans fond lourd
  */
 
-import { forwardRef, useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Check, CircleCheck, CircleX, Info, TriangleAlert } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import { InlineEditor } from '../InlineEditor'
@@ -208,6 +208,7 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
   ) {
     const [isToneMenuOpen, setIsToneMenuOpen] = useState(false)
     const toneMenuRef = useRef<HTMLDivElement | null>(null)
+    const editorRef = useRef<InlineEditorHandle | null>(null)
 
     const firstPara = node.children[0] as { type: string; children?: InlineNode[] } | undefined
     const inlines: InlineNode[] = firstPara?.type === 'paragraph' && Array.isArray(firstPara.children) ? firstPara.children : []
@@ -229,6 +230,12 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
       return () => document.removeEventListener('mousedown', handlePointerDown)
     }, [isToneMenuOpen])
 
+    useImperativeHandle(ref, () => ({
+      focus: (cursor) => editorRef.current?.focus(cursor),
+      clear: () => editorRef.current?.clear(),
+      clearSlash: () => editorRef.current?.clearSlash() ?? [],
+    }), [])
+
     const handleSave = (newChildren: InlineNode[], toneKey: NoteToneKey = noteTone.key) => {
       if (!onChange) return
 
@@ -248,6 +255,13 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
         id={getFootnoteDomId(node.identifier)}
         title={`Note ${node.identifier}`}
         className="group/footnote relative my-4 overflow-visible rounded-holo-2xl border border-holo-border-soft bg-white/[0.018] shadow-[inset_0_1px_0_rgba(255,255,255,.025)] transition hover:border-holo-primary/18 hover:bg-white/[0.024]"
+        onMouseDown={(event) => {
+          const target = event.target as HTMLElement | null
+          if (!target) return
+          if (target.closest('button, a, input, [data-format-toolbar], [contenteditable="true"]')) return
+          event.preventDefault()
+          editorRef.current?.focus()
+        }}
       >
         <div className={cn('absolute inset-0 rounded-holo-2xl outline-2 opacity-40', noteTone.accentClassName)} />
 
@@ -312,7 +326,7 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
             <div className="rounded-holo-lg px-0.5 py-0.5 text-holo-text-soft transition group-hover/footnote:bg-white/[0.012]">
               <InlineEditor
                 key={`${node.identifier}:${inlineContentVersion}`}
-                ref={ref}
+                ref={editorRef}
                 initialContent={editorInlines}
                 onSave={handleSave}
                 onEnterAtEnd={onEnterAtEnd}

@@ -6,8 +6,9 @@ import type { OnboardingWelcomeValue, HoloSettingsValue } from "./parts/"
 import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
-import { getBaseName, buildShareableHoloLink } from './lib/appUtils'
+import { getBaseName, buildShareableHoloLink, flatTreeFiles } from './lib/appUtils'
 import { updateMarkdownBooleanHeaderField } from './lib/markdown'
+import { useSearchIndex } from './hooks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -25,13 +26,43 @@ function extractFmMeta(md: string): TreeFileMeta {
   const match = md.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
   const result: TreeFileMeta = {}
-  for (const line of match[1].split('\n')) {
+  const lines = match[1].split('\n')
+  let index = 0
+  while (index < lines.length) {
+    const line = lines[index]
     const colon = line.indexOf(':')
-    if (colon === -1) continue
+    if (colon === -1) {
+      index += 1
+      continue
+    }
     const key = line.slice(0, colon).trim()
-    if (key !== 'title' && key !== 'description' && key !== 'icon') continue
+    if (key === 'tags') {
+      const raw = line.slice(colon + 1).trim()
+      if (raw.startsWith('[')) {
+        const inner = raw.replace(/^\[|\]$/g, '')
+        result.tags = inner.split(',').map((value) => value.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+      } else if (!raw) {
+        const tags: string[] = []
+        index += 1
+        while (index < lines.length && /^\s*-\s+/.test(lines[index])) {
+          tags.push(lines[index].replace(/^\s*-\s+/, '').trim().replace(/^['"]|['"]$/g, ''))
+          index += 1
+        }
+        result.tags = tags
+        continue
+      } else {
+        result.tags = [raw.replace(/^['"]|['"]$/g, '')]
+      }
+      index += 1
+      continue
+    }
+    if (key !== 'title' && key !== 'description' && key !== 'icon') {
+      index += 1
+      continue
+    }
     const value = line.slice(colon + 1).trim().replace(/^['"']|['"']$/g, '')
     if (value) result[key as 'title' | 'description' | 'icon'] = value
+    index += 1
   }
   return result
 }
@@ -59,7 +90,7 @@ export default function App2() {
     shareGatewayBaseUrl,
   } = useConfig()
 
-  const { recentFolders, rootPath, recentFilePaths, fileMetaByPath, setFileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
+  const { tree, recentFolders, rootPath, recentFilePaths, fileMetaByPath, setFileMetaByPath, setRecentFilePaths, setRecentFolders } = useWorkspace()
 
   // ─── Favoris d'espaces ────────────────────────────────────────────────────
   const [favoriteFolders, setFavoriteFolders] = useState<string[]>([])
@@ -69,6 +100,15 @@ export default function App2() {
 
   // ─── Recherche modale ─────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false)
+  const indexedFilePaths = useMemo(
+    () => (tree ? flatTreeFiles(tree).filter((path) => path.toLowerCase().endsWith('.md')) : []),
+    [tree],
+  )
+  const { updateIndexEntry } = useSearchIndex({
+    rootPath,
+    allFilePaths: indexedFilePaths,
+    getHoloApi: () => window.holo ?? null,
+  })
 
   // ─── Onboarding ───────────────────────────────────────────────────────────
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
@@ -619,16 +659,28 @@ export default function App2() {
     // Mettre à jour le markdown live pour l'Inspector (TOC en temps réel)
     setLiveMarkdown(markdown)
     // Mettre à jour immédiatement les métadonnées live pour l'arborescence
-    setCurrentFileMeta({ path: file.path, ...extractFmMeta(markdown) })
+    const nextMeta = extractFmMeta(markdown)
+    setCurrentFileMeta({ path: file.path, ...nextMeta })
+    setFileMetaByPath((previous) => ({
+      ...previous,
+      [file.path]: {
+        title: nextMeta.title ?? '',
+        description: nextMeta.description ?? '',
+        isTemplate: previous[file.path]?.isTemplate ?? false,
+        tags: nextMeta.tags ?? [],
+        icon: nextMeta.icon,
+      },
+    }))
     try {
       await window.holo?.writeFile(file.path, markdown)
+      updateIndexEntry(file.path, markdown)
       setSaveStatus('saved')
       scheduleGitSave()
     } catch (err) {
       console.error('[App2] Impossible de sauvegarder le fichier :', err)
       setSaveStatus('error')
     }
-  }, [scheduleGitSave])
+  }, [scheduleGitSave, setFileMetaByPath, updateIndexEntry])
 
   // Ctrl+S → sauvegarde immédiate
   useEffect(() => {
@@ -682,6 +734,54 @@ export default function App2() {
     window.addEventListener('holo:close-file', handler)
     return () => window.removeEventListener('holo:close-file', handler)
   }, [setRecentFilePaths])
+
+  useEffect(() => {
+    const remapPath = (currentPath: string, from: string, to: string) => {
+      if (currentPath === from) return to
+      if (currentPath.startsWith(`${from}/`)) return `${to}${currentPath.slice(from.length)}`
+      return currentPath
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ from: string; to: string }>).detail
+      const from = detail?.from
+      const to = detail?.to
+      if (!from || !to) return
+
+      setRecentFilePaths((previous) => {
+        const next = Array.from(new Set(previous.map((path) => remapPath(path, from, to))))
+        void window.holo?.setHoloConfigValue('recent-file-paths', next)
+        return next
+      })
+
+      setFavoriteFilePaths((previous) => {
+        const next = Array.from(new Set(previous.map((path) => remapPath(path, from, to))))
+        void window.holo?.setHoloConfigValue('file-favorites', next)
+        return next
+      })
+
+      setFileMetaByPath((previous) => {
+        const nextEntries = Object.entries(previous).map(([path, meta]) => [remapPath(path, from, to), meta] as const)
+        return Object.fromEntries(nextEntries)
+      })
+
+      setCurrentFileMeta((previous) => {
+        if (!previous) return previous
+        const nextPath = remapPath(previous.path, from, to)
+        return nextPath === previous.path ? previous : { ...previous, path: nextPath }
+      })
+
+      setOpenedFile((previous) => {
+        if (!previous) return previous
+        const nextPath = remapPath(previous.path, from, to)
+        if (nextPath === previous.path) return previous
+        return { ...previous, path: nextPath, name: getBaseName(nextPath) }
+      })
+    }
+
+    window.addEventListener('holo:path-moved', handler)
+    return () => window.removeEventListener('holo:path-moved', handler)
+  }, [setFileMetaByPath, setRecentFilePaths])
 
   return (
     <div className="holo-window">

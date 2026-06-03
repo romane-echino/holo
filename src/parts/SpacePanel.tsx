@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
-import { getBaseName } from '../lib/appUtils'
+import { getBaseName, getRelativeLinkPath } from '../lib/appUtils'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useConfig } from '../contexts/ConfigContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
@@ -119,6 +119,98 @@ function parseFrontmatterQuick(content: string): TreeFileMeta {
     i++
   }
   return result
+}
+
+function parseMarkdownDestinationInfo(rawDestination: string): { destination: string; token: string } {
+  const trimmed = rawDestination.trim()
+  if (!trimmed) return { destination: '', token: '' }
+
+  if (trimmed.startsWith('<')) {
+    const closingIndex = trimmed.indexOf('>')
+    if (closingIndex > 0) {
+      const token = trimmed.slice(0, closingIndex + 1)
+      return { destination: trimmed.slice(1, closingIndex).trim(), token }
+    }
+  }
+
+  let token = ''
+  let destination = ''
+  let escaped = false
+  for (const character of trimmed) {
+    if (escaped) {
+      token += `\\${character}`
+      destination += character
+      escaped = false
+      continue
+    }
+
+    if (character === '\\') {
+      escaped = true
+      continue
+    }
+
+    if (/\s/.test(character)) break
+    token += character
+    destination += character
+  }
+
+  return { destination: destination.trim(), token: token.trim() }
+}
+
+function resolveMarkdownTargetPath(destination: string, currentFilePath: string, rootPath?: string): string | null {
+  const trimmed = destination.trim()
+  if (!trimmed || trimmed.startsWith('#') || /^(https?:|mailto:|holo:)/i.test(trimmed)) return null
+
+  const clean = trimmed.split('#')[0]?.split('?')[0]?.trim() ?? ''
+  if (!clean) return null
+
+  if (clean.startsWith('/')) {
+    if (!rootPath) return null
+    return `${rootPath.replace(/\\/g, '/').replace(/\/$/, '')}/${clean.replace(/^\/+/, '')}`
+  }
+
+  const currentParts = currentFilePath.replace(/\\/g, '/').split('/').slice(0, -1).filter(Boolean)
+  const targetParts = clean.replace(/\\/g, '/').split('/').filter(Boolean)
+  const resolvedParts = [...currentParts]
+
+  for (const part of targetParts) {
+    if (part === '.') continue
+    if (part === '..') {
+      resolvedParts.pop()
+      continue
+    }
+    resolvedParts.push(part)
+  }
+
+  return `${currentFilePath.startsWith('/') ? '/' : ''}${resolvedParts.join('/')}`
+}
+
+function formatMarkdownDestination(destination: string): string {
+  return /\s/.test(destination) ? `<${destination}>` : destination
+}
+
+function rewriteMarkdownLinksForMovedPath(markdown: string, currentFilePath: string, sourcePath: string, nextPath: string, rootPath?: string) {
+  let changed = false
+
+  const nextMarkdown = markdown.replace(/(!?\[[^\]]*\]\()([^)]+)(\))/g, (fullMatch, open, rawDestination, close) => {
+    const { destination, token } = parseMarkdownDestinationInfo(rawDestination)
+    if (!destination || !token) return fullMatch
+
+    const resolvedTarget = resolveMarkdownTargetPath(destination, currentFilePath, rootPath)
+    if (!resolvedTarget || resolvedTarget.replace(/\\/g, '/') !== sourcePath.replace(/\\/g, '/')) {
+      return fullMatch
+    }
+
+    const relativeDestination = getRelativeLinkPath(currentFilePath, nextPath, rootPath ?? null)
+    const formatted = formatMarkdownDestination(relativeDestination)
+    const nextRawDestination = rawDestination.replace(token, formatted)
+    if (nextRawDestination === rawDestination) return fullMatch
+
+    changed = true
+    return `${open}${nextRawDestination}${close}`
+  })
+
+  return { markdown: nextMarkdown, changed }
 }
 
 function collectMdPaths(nodes: SpaceFileNode[]): string[] {
@@ -429,7 +521,16 @@ export function SpacePanel({
           const meta = parseFrontmatterQuick(content)
           setFileMeta(prev => ({ ...prev, [path]: meta }))
           // Sync to WorkspaceContext so SearchModal and other consumers see updated metadata (incl. tags)
-          setFileMetaByPath(prev => ({ ...prev, [path]: { title: meta.title ?? '', description: meta.description ?? '', isTemplate: meta.isTemplate ?? false } }))
+          setFileMetaByPath(prev => ({
+            ...prev,
+            [path]: {
+              title: meta.title ?? '',
+              description: meta.description ?? '',
+              isTemplate: meta.isTemplate ?? false,
+              tags: meta.tags ?? [],
+              icon: meta.icon,
+            },
+          }))
         })
         .catch(() => {
           setFileMeta(prev => ({ ...prev, [path]: {} }))
@@ -551,16 +652,51 @@ export function SpacePanel({
     () => Object.entries(fileMetaByPath).filter(([, m]) => m.isTemplate).map(([path, m]) => ({ path, title: m.title || getBaseName(path) })),
     [fileMetaByPath],
   )
-  const openTplDialog = useCallback(() => {
+  const loadTemplateSelection = useCallback((templatePath: string, templateTitle?: string) => {
+    setTplSelected(templatePath)
+    setTplContent(null)
+    setTplVars([])
+    setTplVarValues({})
+    setTplLoading(true)
+    setTplName(templateTitle ? `${templateTitle} - ` : '')
+    window.holo?.readFile(templatePath)
+      .then((content) => {
+        const vars = [...new Set((content.match(/\\?\$([A-Z][A-Z0-9_]*)/g) ?? []).map((match) => match.replace(/^\\?\$/, '')))]
+        setTplContent(content)
+        setTplVars(vars)
+        setTplVarValues(Object.fromEntries(vars.map((value) => [value, ''])))
+      })
+      .catch(() => {
+        setTplContent(null)
+        setTplVars([])
+        setTplVarValues({})
+      })
+      .finally(() => {
+        setTplLoading(false)
+        setTimeout(() => {
+          const el = tplNameRef.current
+          if (el) {
+            el.focus()
+            el.setSelectionRange(el.value.length, el.value.length)
+          }
+        }, 50)
+      })
+  }, [])
+  const openTplDialog = useCallback((parentPath?: string) => {
+    const nextParent = (parentPath ?? selectedFolderPath) || undefined
     setTplSelected(null)
     setTplName('')
-    setTplParent((selectedFolderPath) || undefined)
+    setTplParent(nextParent)
     setTplContent(null)
     setTplVars([])
     setTplVarValues({})
     setMenuAnchorEl(null)
     setTplOpen(true)
-  }, [selectedFolderPath])
+    if (templateFiles.length === 1) {
+      const [singleTemplate] = templateFiles
+      loadTemplateSelection(singleTemplate.path, singleTemplate.title)
+    }
+  }, [loadTemplateSelection, selectedFolderPath, templateFiles])
   const handleTplConfirm = useCallback(() => {
     if (!tplSelected || !tplName.trim() || !tplContent) return
     const name = tplName.trim().includes('.') ? tplName.trim() : tplName.trim() + '.md'
@@ -920,25 +1056,7 @@ export function SpacePanel({
             <div className="mb-3 max-h-[180px] overflow-y-auto rounded-holo-lg border border-holo-border-soft holo-scrollbar">
               {templateFiles.map((t) => (
                 <button key={t.path} type="button"
-                  onClick={() => {
-                    setTplSelected(t.path)
-                    setTplContent(null)
-                    setTplVars([])
-                    setTplVarValues({})
-                    setTplLoading(true)
-                    setTplName(t.title ? t.title + ' - ' : '')
-                    window.holo?.readFile(t.path).then(content => {
-                      const vars = [...new Set((content.match(/\\?\$([A-Z][A-Z0-9_]*)/g) ?? []).map(m => m.replace(/^\\?\$/, '')))]
-                      setTplContent(content)
-                      setTplVars(vars)
-                      setTplVarValues(Object.fromEntries(vars.map(v => [v, ''])))
-                      setTplLoading(false)
-                      setTimeout(() => {
-                        const el = tplNameRef.current
-                        if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
-                      }, 50)
-                    }).catch(() => setTplLoading(false))
-                  }}
+                  onClick={() => loadTemplateSelection(t.path, t.title)}
                   className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-holo-glass-hover',
                     tplSelected === t.path ? 'bg-holo-primary-surface text-holo-primary-soft ring-inset ring-1 ring-holo-primary/20' : 'text-holo-text-muted')}>
                   <Layers size={12} className={cn('shrink-0', tplSelected === t.path ? 'text-violet-400' : 'text-holo-text-faint')} />
@@ -1004,7 +1122,7 @@ export function SpacePanel({
                 if (content == null) return
                 const next = updateMarkdownBooleanHeaderField(content, 'template', !cur)
                 await window.holo?.writeFile(ctxMenu.node.path, next)
-                setFileMetaByPath(prev => ({ ...prev, [ctxMenu.node.path]: { ...(prev[ctxMenu.node.path] ?? { title: '', description: '', isTemplate: false }), isTemplate: !cur } }))
+                setFileMetaByPath(prev => ({ ...prev, [ctxMenu.node.path]: { ...(prev[ctxMenu.node.path] ?? { title: '', description: '', isTemplate: false, tags: [] }), isTemplate: !cur } }))
               } catch (err) { console.error('[SpacePanel] toggleTemplate:', err) }
               setCtxMenu(null)
             },
@@ -1023,6 +1141,9 @@ export function SpacePanel({
           }] : []),
           ...(ctxMenu.node.type === 'folder' ? [
             { type: 'item' as const, label: 'Nouveau fichier ici', icon: FilePlus, onClick: () => openAddDialog('file', ctxMenu.node.path) },
+            ...(templateFiles.length > 0
+              ? [{ type: 'item' as const, label: 'Nouveau fichier depuis un modèle', icon: Layers, onClick: () => openTplDialog(ctxMenu.node.path) }]
+              : []),
             { type: 'item' as const, label: 'Nouveau dossier ici', icon: FolderPlus, onClick: () => openAddDialog('folder', ctxMenu.node.path) },
           ] : []),
           { type: 'separator' },
@@ -1246,14 +1367,33 @@ export function SpaceRoute({
 
   const handleMoveItem = useCallback(async (sourcePath: string, targetFolderPath: string) => {
     try {
+      const nextPath = `${targetFolderPath.replace(/\/$/, '')}/${getBaseName(sourcePath)}`
       await window.holo?.movePath(sourcePath, targetFolderPath)
+
+      if (rootPath && sourcePath.toLowerCase().endsWith('.md')) {
+        const markdownPaths = await window.holo?.scanMdFiles(rootPath).catch(() => [])
+        for (const markdownPath of markdownPaths ?? []) {
+          try {
+            const content = await window.holo?.readFile(markdownPath)
+            if (typeof content !== 'string' || !content.includes('](')) continue
+            const rewritten = rewriteMarkdownLinksForMovedPath(content, markdownPath, sourcePath, nextPath, rootPath)
+            if (rewritten.changed) {
+              await window.holo?.writeFile(markdownPath, rewritten.markdown)
+            }
+          } catch (error) {
+            console.error('[SpaceRoute] Impossible de mettre a jour les liens de', markdownPath, error)
+          }
+        }
+      }
+
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      window.dispatchEvent(new CustomEvent('holo:path-moved', { detail: { from: sourcePath, to: nextPath } }))
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de déplacer :', err)
     }
-  }, [setTree])
+  }, [rootPath, setTree])
 
   const handleRenameItem = useCallback(async (path: string, newName: string) => {
     try {

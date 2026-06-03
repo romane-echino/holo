@@ -23,6 +23,36 @@ type SearchMatch = {
   tags?: string[]
 }
 
+const TAG_PALETTE = [
+  { bg: 'rgba(99, 102, 241, 0.15)', text: 'rgba(199, 210, 254, 0.95)', border: 'rgba(99, 102, 241, 0.3)' },
+  { bg: 'rgba(6, 182, 212, 0.15)', text: 'rgba(103, 232, 249, 0.95)', border: 'rgba(6, 182, 212, 0.3)' },
+  { bg: 'rgba(16, 185, 129, 0.15)', text: 'rgba(110, 231, 183, 0.95)', border: 'rgba(16, 185, 129, 0.3)' },
+  { bg: 'rgba(245, 158, 11, 0.15)', text: 'rgba(253, 211, 77, 0.95)', border: 'rgba(245, 158, 11, 0.3)' },
+  { bg: 'rgba(249, 115, 22, 0.15)', text: 'rgba(253, 186, 116, 0.95)', border: 'rgba(249, 115, 22, 0.3)' },
+  { bg: 'rgba(236, 72, 153, 0.15)', text: 'rgba(249, 168, 212, 0.95)', border: 'rgba(236, 72, 153, 0.3)' },
+  { bg: 'rgba(239, 68, 68, 0.15)', text: 'rgba(252, 165, 165, 0.95)', border: 'rgba(239, 68, 68, 0.3)' },
+] as const
+
+function tagColor(tag: string) {
+  const key = tag.slice(0, 2).toLowerCase()
+  let hash = 0
+  for (let index = 0; index < key.length; index += 1) hash = (hash * 31 + key.charCodeAt(index)) & 0xffff
+  return TAG_PALETTE[hash % TAG_PALETTE.length]
+}
+
+function TagChip({ tag }: { tag: string }) {
+  const color = tagColor(tag)
+
+  return (
+    <span
+      style={{ background: color.bg, color: color.text, borderColor: color.border }}
+      className="rounded-full border px-1.5 py-px text-[9px] font-medium"
+    >
+      #{tag}
+    </span>
+  )
+}
+
 function MatchBadge({ kind }: { kind: SearchMatch['matchKind'] }) {
   const labels: Record<SearchMatch['matchKind'], string> = {
     filename: 'fichier',
@@ -323,14 +353,18 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
                       <span className="truncate">{r.subtitle}</span>
                     </div>
                     {r.matchText && r.matchKind !== 'filename' && r.matchKind !== 'title' && (
-                      <div className="mt-0.5 truncate text-[11px] italic text-holo-text-faint/70">{r.matchText}</div>
+                      r.matchKind === 'tag'
+                        ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <TagChip tag={r.matchText.replace(/^#/, '')} />
+                          </div>
+                        )
+                        : <div className="mt-0.5 truncate text-[11px] italic text-holo-text-faint/70">{r.matchText}</div>
                     )}
                     {r.tags && r.tags.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {r.tags.map((tag) => (
-                          <span key={tag} className="rounded-full bg-emerald-500/10 px-1.5 py-px text-[9px] font-medium text-emerald-400/80">
-                            #{tag}
-                          </span>
+                          <TagChip key={tag} tag={tag} />
                         ))}
                       </div>
                     )}

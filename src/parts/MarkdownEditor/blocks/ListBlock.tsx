@@ -24,10 +24,32 @@ import {
 } from 'react'
 import { Check } from 'lucide-react'
 import { cn } from '../../../utils/global'
+import { FormatToolbar } from '../FormatToolbar'
+import type { FormatToolbarState } from '../FormatToolbar'
 import { domToInlines } from '../lib/domToInlines'
 import { inlinesToHtml } from '../lib/inlinesToHtml'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
 import type { BlockNode, InlineNode, ListItemNode, ListNode, ParagraphNode } from '../lib/types'
+
+function isInsideTag(range: Range, boundary: HTMLElement, tag: string): boolean {
+  let node: Node | null = range.commonAncestorContainer
+  while (node && node !== boundary) {
+    if ((node as Element).tagName?.toLowerCase() === tag) return true
+    node = node.parentNode
+  }
+  return false
+}
+
+function getLinkHref(range: Range, boundary: HTMLElement): string | null {
+  let node: Node | null = range.commonAncestorContainer
+  while (node && node !== boundary) {
+    if ((node as Element).tagName?.toLowerCase() === 'a') {
+      return (node as HTMLAnchorElement).getAttribute('href')
+    }
+    node = node.parentNode
+  }
+  return null
+}
 
 // ─── Types internes ──────────────────────────────────────────────────────────
 
@@ -371,6 +393,7 @@ function ListItemRow({
 }) {
   const divRef = useRef<HTMLDivElement>(null)
   const savedRef = useRef(false)
+  const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
 
   // Initialiser le contenu une seule fois au mount
   useEffect(() => {
@@ -378,6 +401,110 @@ function ListItemRow({
       divRef.current.innerHTML = inlinesToHtml(item.inlines)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      if (document.activeElement?.closest('[data-format-toolbar]')) return
+
+      const sel = window.getSelection()
+      const el = divRef.current
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !el) {
+        setToolbar(null)
+        return
+      }
+
+      const range = sel.getRangeAt(0)
+      if (!el.contains(range.commonAncestorContainer)) {
+        setToolbar(null)
+        return
+      }
+
+      const rect = range.getBoundingClientRect()
+      if (!rect.width && !rect.height) {
+        setToolbar(null)
+        return
+      }
+
+      setToolbar({
+        rect,
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        strike: document.queryCommandState('strikeThrough'),
+        code: isInsideTag(range, el, 'code'),
+        underline: isInsideTag(range, el, 'u'),
+        link: getLinkHref(range, el),
+      })
+    }
+
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [])
+
+  const toggleCode = useCallback(() => {
+    const sel = window.getSelection()
+    const el = divRef.current
+    if (!sel?.rangeCount || !el) return
+    const range = sel.getRangeAt(0)
+    if (range.collapsed) return
+
+    let node: Node | null = range.commonAncestorContainer
+    while (node && node !== el) {
+      if ((node as Element).tagName?.toLowerCase() === 'code') {
+        const frag = document.createDocumentFragment()
+        while ((node as Element).firstChild) frag.appendChild((node as Element).firstChild!)
+        node.parentNode?.replaceChild(frag, node)
+        savedRef.current = false
+        return
+      }
+      node = node.parentNode
+    }
+
+    const text = range.toString()
+    range.deleteContents()
+    const code = document.createElement('code')
+    code.textContent = text
+    range.insertNode(code)
+    range.setStartAfter(code)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    savedRef.current = false
+  }, [])
+
+  const toggleUnderline = useCallback(() => {
+    const sel = window.getSelection()
+    const el = divRef.current
+    if (!sel?.rangeCount || !el) return
+    const range = sel.getRangeAt(0)
+    if (range.collapsed) return
+
+    let node: Node | null = range.commonAncestorContainer
+    while (node && node !== el) {
+      if ((node as Element).tagName?.toLowerCase() === 'u') {
+        const frag = document.createDocumentFragment()
+        while ((node as Element).firstChild) frag.appendChild((node as Element).firstChild!)
+        node.parentNode?.replaceChild(frag, node)
+        savedRef.current = false
+        return
+      }
+      node = node.parentNode
+    }
+
+    try {
+      const frag = range.extractContents()
+      const underline = document.createElement('u')
+      underline.appendChild(frag)
+      range.insertNode(underline)
+      const after = document.createRange()
+      after.setStartAfter(underline)
+      after.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(after)
+      savedRef.current = false
+    } catch {
+      // Ignore DOM range errors and leave selection unchanged.
+    }
+  }, [])
 
   const getCursorX = (): number => {
     const sel = window.getSelection()
@@ -522,6 +649,7 @@ function ListItemRow({
         suppressContentEditableWarning
         data-list-text
         className={cn('min-h-[1.5em] flex-1 outline-none transition-opacity', item.checked && 'opacity-40 line-through')}
+        onFocus={() => { savedRef.current = false }}
         onKeyDown={handleKeyDown}
         onBlur={() => {
           const el = divRef.current
@@ -529,6 +657,11 @@ function ListItemRow({
             savedRef.current = true
             onSave(domToInlines(el))
           }
+          setTimeout(() => {
+            if (!document.activeElement?.closest('[data-format-toolbar]')) {
+              setToolbar(null)
+            }
+          }, 0)
         }}
         onInput={() => { savedRef.current = false }}
         onPaste={(e) => {
@@ -537,6 +670,19 @@ function ListItemRow({
           if (text) document.execCommand('insertText', false, text)
         }}
       />
+
+      {toolbar && (
+        <FormatToolbar
+          state={toolbar}
+          onBold={() => document.execCommand('bold')}
+          onItalic={() => document.execCommand('italic')}
+          onStrike={() => document.execCommand('strikeThrough')}
+          onCode={toggleCode}
+          onUnderline={toggleUnderline}
+          onLink={(url) => document.execCommand('createLink', false, url)}
+          onUnlink={() => document.execCommand('unlink')}
+        />
+      )}
     </div>
   )
 }

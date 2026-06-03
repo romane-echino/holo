@@ -17,6 +17,8 @@ export type FileMeta = {
   title: string
   description: string
   isTemplate: boolean
+  tags?: string[]
+  icon?: string
 }
 
 export type SearchIndexEntry = {

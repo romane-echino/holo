@@ -523,12 +523,19 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       const sel = window.getSelection()
       const el = divRef.current
       if (!sel?.rangeCount || !el) return
+      const hadVisibleContent = domToInlines(el).length > 0
       const range = sel.getRangeAt(0)
       range.deleteContents()
       const br = document.createElement('br')
       range.insertNode(br)
+      let caretAnchor: Node = br
+      if (!hadVisibleContent) {
+        const extraBr = document.createElement('br')
+        br.parentNode?.insertBefore(extraBr, br.nextSibling)
+        caretAnchor = extraBr
+      }
       const after = document.createRange()
-      after.setStartAfter(br)
+      after.setStartAfter(caretAnchor)
       after.collapse(true)
       sel.removeAllRanges()
       sel.addRange(after)
