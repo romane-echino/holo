@@ -367,9 +367,13 @@
 
   .holo-markdown a {
     color: var(--color-holo-primary-soft);
-    cursor: pointer;
+    cursor: text;
     text-decoration: none;
     transition: opacity 120ms ease;
+  }
+
+  .holo-markdown[data-link-activation-modifier="true"] a {
+    cursor: pointer;
   }
 
   .holo-markdown a:hover {

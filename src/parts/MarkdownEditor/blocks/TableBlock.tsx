@@ -1022,8 +1022,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                               if (!e.shiftKey) {
                                 dragSelectRef.current = { anchor: { rowIdx, colIdx }, active: false }
                                 if (hasSelection && clickedSelectedCell) {
-                                  e.preventDefault()
-                                  focusSelectionLayer()
+                                  clearSelection()
                                   return
                                 }
                                 if (hasSelection) clearSelection()

@@ -246,6 +246,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
+  const [isLinkActivationModifierPressed, setIsLinkActivationModifierPressed] = useState(false)
+  const [hoveredLinkTooltip, setHoveredLinkTooltip] = useState<{ href: string; x: number; y: number } | null>(null)
   const dragAnchorRef = useRef<string | null>(null)
   const { rootPath } = useWorkspace()
   const currentFilePath = useEditorFilePath()
@@ -311,6 +313,26 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
     }
   }, [markdown])
+
+  useEffect(() => {
+    const handleModifierChange = (event: KeyboardEvent | MouseEvent) => {
+      setIsLinkActivationModifierPressed(Boolean(event.ctrlKey || event.metaKey))
+    }
+
+    const resetModifierState = () => setIsLinkActivationModifierPressed(false)
+
+    window.addEventListener('keydown', handleModifierChange, true)
+    window.addEventListener('keyup', handleModifierChange, true)
+    window.addEventListener('mousemove', handleModifierChange, true)
+    window.addEventListener('blur', resetModifierState)
+
+    return () => {
+      window.removeEventListener('keydown', handleModifierChange, true)
+      window.removeEventListener('keyup', handleModifierChange, true)
+      window.removeEventListener('mousemove', handleModifierChange, true)
+      window.removeEventListener('blur', resetModifierState)
+    }
+  }, [])
 
   // Émet les changements internes au parent après le rendu (jamais pendant)
   useEffect(() => {
@@ -784,6 +806,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       }
       return
     }
+    if (e.key === 'Enter' && selectedBlockIds.size === 1) {
+      const [selectedBlockId] = [...selectedBlockIds]
+      const selectedBlock = blocksRef.current.find((block) => block.id === selectedBlockId)
+      if (selectedBlock?.node.type === 'table') {
+        e.preventDefault()
+        handleEnterAtEnd(selectedBlockId)
+        setSelectedBlockIds(new Set())
+        return
+      }
+    }
     // Supprimer les blocs sélectionnés
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
       e.preventDefault()
@@ -799,7 +831,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }
-  }, [selectedBlockIds])
+  }, [handleEnterAtEnd, selectedBlockIds])
 
   const handleSelectedBlocksCopy = useCallback((clipboardData?: DataTransfer | null) => {
     if (selectedBlockIds.size === 0) return false
@@ -862,11 +894,35 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   const handleContainerMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
-    if (!anchor) return
+    if (!anchor) {
+      setHoveredLinkTooltip(null)
+      return
+    }
     const href = anchor.getAttribute('href')?.trim() ?? ''
     if (!href) return
-    anchor.title = buildLinkTooltip(href)
+    anchor.removeAttribute('title')
+    setHoveredLinkTooltip({ href, x: e.clientX, y: e.clientY })
   }, [buildLinkTooltip])
+
+  const handleContainerMouseLeave = useCallback(() => {
+    setHoveredLinkTooltip(null)
+  }, [])
+
+  const handleContainerMouseMoveWithTooltip = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    handleContainerMouseMove(e)
+
+    const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
+    if (!anchor) {
+      if (hoveredLinkTooltip) setHoveredLinkTooltip(null)
+      return
+    }
+
+    const href = anchor.getAttribute('href')?.trim() ?? ''
+    if (!href) return
+
+    anchor.removeAttribute('title')
+    setHoveredLinkTooltip({ href, x: e.clientX, y: e.clientY })
+  }, [handleContainerMouseMove, hoveredLinkTooltip])
 
   const handleContainerClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
     const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
@@ -875,7 +931,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     const href = anchor.getAttribute('href')?.trim() ?? ''
     if (!href) return
 
-    anchor.title = buildLinkTooltip(href)
+  anchor.removeAttribute('title')
 
     if (!(e.ctrlKey || e.metaKey)) return
 
@@ -899,12 +955,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       data-testid="block-editor"
       tabIndex={-1}
       className={cn('holo-markdown outline-none', className)}
+      data-link-activation-modifier={isLinkActivationModifierPressed ? 'true' : 'false'}
       style={fontScale !== undefined ? { '--editor-fs-scale': fontScale } as React.CSSProperties : undefined}
       onKeyDown={handleContainerKeyDown}
       onMouseDown={handleContainerMouseDown}
-      onMouseMove={handleContainerMouseMove}
+      onMouseMove={handleContainerMouseMoveWithTooltip}
       onMouseUp={handleContainerMouseUp}
       onMouseOver={handleContainerMouseOver}
+      onMouseLeave={handleContainerMouseLeave}
       onClick={(e) => { void handleContainerClick(e) }}
       onDragStart={(e) => { if (!(e.target as HTMLElement).closest('[data-drag-handle]')) e.preventDefault() }}
       onCopyCapture={(e) => {
@@ -1032,6 +1090,15 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           onSelect={handleSlashSelect}
           onClose={handleSlashCancel}
         />
+      )}
+      {hoveredLinkTooltip && (
+        <div
+          className="pointer-events-none fixed z-[120] max-w-[420px] rounded-holo-md border border-holo-border-soft bg-holo-bg-elevated px-3 py-2 text-xs shadow-holo-md"
+          style={{ left: Math.max(12, Math.min(hoveredLinkTooltip.x + 14, window.innerWidth - 432)), top: hoveredLinkTooltip.y + 18 }}
+        >
+          <div className="break-all text-holo-text">{hoveredLinkTooltip.href}</div>
+          <div className="mt-1 text-holo-text-faint">{buildLinkTooltip(hoveredLinkTooltip.href).split('\n')[1] ?? ''}</div>
+        </div>
       )}
     </div>
   )

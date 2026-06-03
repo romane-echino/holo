@@ -19,6 +19,31 @@ function slugifyHeading(text: string): string {
   return 'heading-' + text.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '')
 }
 
+function findScrollParent(element: HTMLElement | null): HTMLElement | null {
+  let current = element?.parentElement ?? null
+  while (current) {
+    const style = window.getComputedStyle(current)
+    const isScrollable = /(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight
+    if (isScrollable) return current
+    current = current.parentElement
+  }
+  return null
+}
+
+function scrollHeadingWithOffset(target: HTMLElement, offset = 64) {
+  const scrollParent = findScrollParent(target)
+  if (!scrollParent) {
+    const top = window.scrollY + target.getBoundingClientRect().top - offset
+    window.scrollTo({ top, behavior: 'smooth' })
+    return
+  }
+
+  const targetRect = target.getBoundingClientRect()
+  const parentRect = scrollParent.getBoundingClientRect()
+  const top = scrollParent.scrollTop + targetRect.top - parentRect.top - offset
+  scrollParent.scrollTo({ top, behavior: 'smooth' })
+}
+
 function extractFootnotes(markdown: string): { label: string; content: string }[] {
   const footnotes: { label: string; content: string }[] = []
   // Matches: [^label]: content (single-line)
@@ -193,7 +218,7 @@ export function Inspector({ markdown, filePath }: InspectorProps) {
                   className="flex items-baseline gap-2 w-full text-left"
                   onClick={() => {
                     const el = document.getElementById(slugifyHeading(h.text))
-                    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    if (el) scrollHeadingWithOffset(el, 64)
                   }}
                   title={h.text}
                 >
