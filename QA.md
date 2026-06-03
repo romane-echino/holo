@@ -75,26 +75,35 @@ Si dans un tableau j'ai une séléction de cellule et que je clique sur une cell
 
 
 # Phase 9
-Refonte activité dans l'inspecteur :
+✅Refonte activité dans l'inspecteur :
     - voir les derniers commit ne sers pas a grand chose.
     - Est-ce que c'est possible de voir les ajouts de lignes ex
         - Romane, il y a 5 minutes, +5 ligne -10 lignes
         avec un petit aperçu des lignes ajoutée (avec un max char parce que ça sert a rien de tout afficher)
     - Faire que la frame inspecteur soit en hauteur 50/50 entre la partie du haut (table de matière/Liens/...) et partie basse activité
     - Que si je clique sur l'activité ouvre le repo git au bon commit
-Dans la table de matière
+✅ Dans la table de matière
     1. l'indentation n'est pas très jolie
     2. j'ai trouvé un bug quand plusieurs titre on le meme nom (j'ai 3x le titre bonjour) et la table des matière au clique scroll toujours sur le premier
-Dans l'onglet lien de l'inspecteur
+✅Dans l'onglet lien de l'inspecteur
  quand je clique sur un lien relatif ça ne marche pas
  Y'a les images c'est super mais ça serait cool d'avoir un thumbnail et quand on clique dessus d'avoir un aperçu
  Globalement les liens dans ce panneau ne sont pas jolie
     On comprend pas qu'on peut clique dessus
     Y'a pas d'icone pour différencier les type de liens
-Dans l'onglet "Notes" du meme panneau les notes devrait être cliquable et ça scroll dessus.
-Le composant Note mériterais d'être améliorer pour faire des notes avec des type (Info, Warning, Error, Success). On pourrait stocké dans le markdown un emoji pour la persistance. Voir l'identifiant de la note dans l'editeur n'est pas interessant
+✅ Dans l'onglet "Notes" du meme panneau les notes devrait être cliquable et ça scroll dessus.
+✅ Le composant Note mériterais d'être améliorer pour faire des notes avec des type (Info, Warning, Error, Success). On pourrait stocké dans le markdown un emoji pour la persistance. Voir l'identifiant de la note dans l'editeur n'est pas interessant
 
 Sur windows, dans space panel, les onglet favoris et récents ne fonctionne pas
 Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt.js:500 [App2] Impossible de sauvegarder le fichier : Error: Error invoking remote method 'fs:write-file': Error: Chemin hors du dossier ouvert.
-Si je clique sur le grip a coté d'un bloc sans drag -> sélectionne le bloc
-Dans les tableau le colonnes doivent avoir une largeur max raisonnalbe et mettre le contenu a la ligne
+✅  Si je clique sur le grip a coté d'un bloc sans drag -> sélectionne le bloc
+✅ Dans les tableau le colonnes doivent avoir une largeur max raisonnalbe et mettre le contenu a la ligne
+
+# Phase 10
+✅ Dans l'inspecteur, onglet liens, les liens relatif on encore un soucis et j'imagine que c'est a cause du nom de fichier [liens relatifs](<Test Romane.md>) l'espace ou qqch du genre
+    <div class="mt-1 truncate text-xs text-holo-text-faint">&lt;Test</div>
+✅ Dans l'inspecteur, onglet liens, les images non-externe (sauvegardé dans /images ne s'affiche ni dans le thumbnail ni dans le preview au clic)
+✅ Pour le composant "Note" il faudrai faire une meilleure UI belle pour des info-bulles, avec si on clique sur l'icone un drop down pour changer le type (avec la persistance markdown avec un emoji) avec le support de Info (par défaut), Succès, Avertissement, Erreur comme type
+✅ Dans les tableau si y'a plus que 3 colonnes les colonnes s'adapte a son contenu
+
+

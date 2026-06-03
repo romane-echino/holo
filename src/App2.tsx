@@ -797,7 +797,12 @@ export default function App2() {
 
         {/* Inspecteur — colonne droite, grands écrans */}
         <div className="hidden 3xl:block border-l border-holo-border-soft">
-          <Inspector markdown={liveMarkdown ?? openedFile?.content} filePath={openedFile?.path} />
+          <Inspector
+            markdown={liveMarkdown ?? openedFile?.content}
+            filePath={openedFile?.path}
+            rootPath={rootPath ?? undefined}
+            onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
+          />
         </div>
 
       </main>
@@ -828,7 +833,12 @@ export default function App2() {
               <X size={14} />
             </button>
           </div>
-          <Inspector markdown={liveMarkdown ?? openedFile?.content} filePath={openedFile?.path} />
+          <Inspector
+            markdown={liveMarkdown ?? openedFile?.content}
+            filePath={openedFile?.path}
+            rootPath={rootPath ?? undefined}
+            onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
+          />
         </div>
       </div>
         </>

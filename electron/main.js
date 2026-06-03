@@ -163,14 +163,17 @@ function isPathInsideRoot(targetPath) {
     return false
   }
 
-  const relative = path.relative(currentRootPath, targetPath)
+  const normalizedRootPath = path.resolve(currentRootPath)
+  const normalizedTargetPath = path.resolve(String(targetPath ?? ''))
+  const relative = path.relative(normalizedRootPath, normalizedTargetPath)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
 function isPathInsideAnyKnownRoot(targetPath) {
   if (isPathInsideRoot(targetPath)) return true
+  const normalizedTargetPath = path.resolve(String(targetPath ?? ''))
   for (const root of knownRootPaths) {
-    const relative = path.relative(root, targetPath)
+    const relative = path.relative(path.resolve(root), normalizedTargetPath)
     if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return true
   }
   return false
@@ -834,6 +837,90 @@ function parseNumstatOutput(output) {
       }
     })
     .filter((entry) => entry.filePath.length > 0)
+}
+
+function normalizeRemoteToWebUrl(rawRemote) {
+  const remote = String(rawRemote ?? '').trim()
+  if (!remote) return null
+
+  const sshMatch = remote.match(/^git@([^:]+):(.+?)(?:\.git)?$/i)
+  if (sshMatch) {
+    return `https://${sshMatch[1]}/${sshMatch[2]}`
+  }
+
+  if (/^ssh:\/\//i.test(remote)) {
+    try {
+      const parsed = new URL(remote)
+      const pathname = parsed.pathname.replace(/^\/+/, '').replace(/\.git$/i, '')
+
+      if (parsed.hostname === 'ssh.dev.azure.com' && pathname.startsWith('v3/')) {
+        const [, organization, project, repository] = pathname.split('/')
+        if (organization && project && repository) {
+          return `https://dev.azure.com/${organization}/${project}/_git/${repository}`
+        }
+      }
+
+      return `https://${parsed.hostname}/${pathname}`
+    } catch {
+      return null
+    }
+  }
+
+  if (/^https?:\/\//i.test(remote)) {
+    try {
+      const parsed = new URL(remote)
+      parsed.username = ''
+      parsed.password = ''
+      return `${parsed.origin}${parsed.pathname.replace(/\.git$/i, '')}`
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
+function buildCommitUrl(remoteWebUrl, hash) {
+  if (!remoteWebUrl || !hash) return null
+
+  const normalized = remoteWebUrl.replace(/\/+$/, '')
+
+  if (/bitbucket/i.test(normalized)) {
+    return `${normalized}/commits/${hash}`
+  }
+
+  return `${normalized}/commit/${hash}`
+}
+
+function collectDiffPreviewLines(output, maxPerKind = 2, maxChars = 140) {
+  const additionsPreview = []
+  const deletionsPreview = []
+
+  for (const line of String(output ?? '').split('\n')) {
+    if (!line) continue
+    if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('@@') || line.startsWith('+++') || line.startsWith('---')) {
+      continue
+    }
+
+    if (line.startsWith('+') && additionsPreview.length < maxPerKind) {
+      const preview = line.slice(1).trim().replace(/\s+/g, ' ').slice(0, maxChars)
+      if (preview) additionsPreview.push(preview)
+      continue
+    }
+
+    if (line.startsWith('-') && deletionsPreview.length < maxPerKind) {
+      const preview = line.slice(1).trim().replace(/\s+/g, ' ').slice(0, maxChars)
+      if (preview) deletionsPreview.push(preview)
+    }
+  }
+
+  return { additionsPreview, deletionsPreview }
+}
+
+async function getPrimaryRemoteWebUrl(cwd) {
+  const remoteResult = await runGit(['remote', 'get-url', 'origin'], cwd)
+  if (!remoteResult.ok || !remoteResult.stdout) return null
+  return normalizeRemoteToWebUrl(remoteResult.stdout)
 }
 
 async function createAutoCommitMessage(cwd) {
@@ -1788,6 +1875,54 @@ ipcMain.handle('git:get-file-log', async (_event, filePath, maxCount = 10) => {
       subject: subject ?? '',
     }
   })
+})
+
+ipcMain.handle('git:get-file-activity', async (_event, filePath, maxCount = 10) => {
+  const cwd = currentRootPath
+  if (!cwd) return []
+
+  const isRepo = await isGitRepository(cwd)
+  if (!isRepo) return []
+
+  const resolvedFilePath = path.resolve(String(filePath ?? ''))
+  const relativeFilePath = path.relative(cwd, resolvedFilePath)
+  if (!relativeFilePath || relativeFilePath.startsWith('..') || path.isAbsolute(relativeFilePath)) return []
+
+  const logResult = await runGit(
+    ['log', '--follow', '-n', String(maxCount), '--pretty=format:%H\x1f%an\x1f%ae\x1f%at\x1f%s', '--', relativeFilePath],
+    cwd,
+  )
+
+  if (!logResult.ok || !logResult.stdout) return []
+
+  const remoteWebUrl = await getPrimaryRemoteWebUrl(cwd)
+  const commits = logResult.stdout.split('\n').filter(Boolean).map((line) => {
+    const [hash, authorName, authorEmail, timestamp, subject] = line.split('\x1f')
+    return {
+      hash: hash ?? '',
+      shortHash: (hash ?? '').slice(0, 7),
+      authorName: authorName ?? '',
+      authorEmail: authorEmail ?? '',
+      timestamp: timestamp ? new Date(Number(timestamp) * 1000).toISOString() : '',
+      subject: subject ?? '',
+    }
+  })
+
+  return Promise.all(commits.map(async (commit) => {
+    const numstatResult = await runGit(['show', '--format=', '--numstat', commit.hash, '--', relativeFilePath], cwd)
+    const diffResult = await runGit(['show', '--format=', '--unified=0', commit.hash, '--', relativeFilePath], cwd)
+    const stats = parseNumstatOutput(numstatResult.stdout).find(Boolean) ?? { added: 0, deleted: 0 }
+    const previews = collectDiffPreviewLines(diffResult.stdout)
+
+    return {
+      ...commit,
+      added: stats.added,
+      deleted: stats.deleted,
+      additionsPreview: previews.additionsPreview,
+      deletionsPreview: previews.deletionsPreview,
+      commitUrl: buildCommitUrl(remoteWebUrl, commit.hash),
+    }
+  }))
 })
 
 ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail) => {

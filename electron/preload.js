@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('holo', {
   readRepoConfig: () => ipcRenderer.invoke('holo:read-repo-config'),
   writeRepoConfig: (config) => ipcRenderer.invoke('holo:write-repo-config', config),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
+  gitGetFileActivity: (filePath, maxCount = 10) => ipcRenderer.invoke('git:get-file-activity', filePath, maxCount),
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitSync: () => ipcRenderer.invoke('git:sync'),

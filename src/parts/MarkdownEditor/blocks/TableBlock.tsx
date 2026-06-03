@@ -51,6 +51,8 @@ type CellCoord = {
   colIdx: number
 }
 
+const MAX_TABLE_COLUMN_WIDTH = 360
+
 let _tc = 0
 let _tr = 0
 const newColId = () => `tc${++_tc}`
@@ -185,7 +187,7 @@ function estimateColumnWidth(title: string, cells: InlineNode[][], totalColumns:
   const lengths = [title.trim().length, ...cells.map((cell) => cellText({ children: cell }).trim().length)]
   const longest = Math.max(0, ...lengths)
   const minWidth = totalColumns <= 2 ? 180 : totalColumns === 3 ? 104 : 72
-  const maxWidth = totalColumns <= 2 ? 420 : totalColumns === 3 ? 220 : 180
+  const maxWidth = Math.min(MAX_TABLE_COLUMN_WIDTH, totalColumns <= 2 ? 360 : totalColumns === 3 ? 240 : 200)
   const estimated = 56 + longest * 8
   return Math.max(minWidth, Math.min(maxWidth, estimated))
 }
@@ -746,7 +748,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
             }
           }}
         >
-          <table className="w-full min-w-max border-separate border-spacing-0 overflow-hidden rounded-holo-xl">
+          <table className={cn('min-w-max border-separate border-spacing-0 overflow-hidden rounded-holo-xl', table.columns.length <= 3 ? 'w-full' : 'w-auto')}>
             <thead>
               <tr>
                 <th className="w-[42px] min-w-[42px] border-b border-r border-holo-border-soft bg-white/[0.028] p-0 first:rounded-tl-holo-xl">
@@ -770,6 +772,13 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                   const isLastCol = colIdx === table.columns.length - 1
 
                   return (
+                    (() => {
+                      const constrainedWidth = Math.min(col.width, MAX_TABLE_COLUMN_WIDTH)
+                      const columnStyle = col.manualWidth
+                        ? { width: constrainedWidth, minWidth: constrainedWidth, maxWidth: MAX_TABLE_COLUMN_WIDTH }
+                        : { minWidth: constrainedWidth, maxWidth: MAX_TABLE_COLUMN_WIDTH }
+
+                      return (
                     <th
                       key={col.id}
                       className={cn(
@@ -778,7 +787,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                         isLastCol && 'rounded-tr-holo-xl',
                         alignClass(col.align),
                       )}
-                      style={col.manualWidth ? { width: col.width, minWidth: col.width } : { minWidth: col.width }}
+                      style={columnStyle}
                     >
                       <div className="flex min-h-11 items-center gap-2 px-3 pr-9">
                         <input
@@ -816,6 +825,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             'hover:bg-white/[0.025] focus:border-holo-border-soft focus:bg-white/[0.035] focus:px-2 focus:text-holo-text',
                             alignClass(col.align),
                           )}
+                          title={col.title}
                           placeholder="Colonne"
                         />
 
@@ -930,6 +940,8 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                         </button>
                       )}
                     </th>
+                      )
+                    })()
                   )
                 })}
 
@@ -1011,7 +1023,9 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             isCellSelected(rowIdx, colIdx) && 'bg-holo-primary/12 ring-1 ring-inset ring-holo-primary/35',
                             isActive && !isCellSelected(rowIdx, colIdx) && 'bg-holo-primary-surface/25',
                           )}
-                          style={col.manualWidth ? { width: col.width, minWidth: col.width } : { minWidth: col.width }}
+                          style={col.manualWidth
+                            ? { width: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH), minWidth: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH), maxWidth: MAX_TABLE_COLUMN_WIDTH }
+                            : { minWidth: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH), maxWidth: MAX_TABLE_COLUMN_WIDTH }}
                         >
                           <div
                             onFocus={() => setActiveCell({ rowId: row.id, colId: col.id })}
@@ -1101,7 +1115,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                               blockType="table-cell"
                               placeholder="Saisir…"
                               className={cn(
-                                'min-h-11 w-full px-3 py-3 leading-6 text-holo-text-soft outline-none',
+                                'min-h-11 w-full max-w-full break-words whitespace-normal px-3 py-3 leading-6 text-holo-text-soft outline-none',
                                 'hover:bg-white/[0.012] focus-within:bg-white/[0.02]',
                                 alignClass(col.align),
                               )}

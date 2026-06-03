@@ -41,6 +41,14 @@ type HoloGitFileCommit = {
   subject: string
 }
 
+type HoloGitFileActivity = HoloGitFileCommit & {
+  added: number
+  deleted: number
+  additionsPreview: string[]
+  deletionsPreview: string[]
+  commitUrl: string | null
+}
+
 type HoloGitSyncResult = {
   ok: true
   committed: boolean
@@ -159,6 +167,7 @@ interface HoloApi {
   writeSpaceConfig: (spacePath: string, config: Record<string, unknown>) => Promise<{ ok: true }>
   gitGetState: (fetchRemote?: boolean) => Promise<HoloGitState>
   gitGetFolderStatuses: (folderPaths: string[]) => Promise<Record<string, 'local' | 'git-sync' | 'git-readonly'>>
+  gitGetFileActivity: (filePath: string, maxCount?: number) => Promise<HoloGitFileActivity[]>
   gitGetFileLog: (filePath: string, maxCount?: number) => Promise<HoloGitFileCommit[]>
   gitAutoSave: (filePath: string, authorName?: string, authorEmail?: string) => Promise<{ ok: boolean; committed: boolean; reason?: string; error?: string }>
   gitPickCloneDirectory: () => Promise<string | null>

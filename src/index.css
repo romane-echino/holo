@@ -330,6 +330,7 @@
 
   .holo-markdown p,
   .holo-markdown [data-block-type="paragraph"],
+  .holo-markdown [data-block-type="footnoteDefinition"],
   .holo-markdown li,
   .holo-markdown [data-list-text] {
     font-size: calc(1.04rem * var(--editor-fs-scale, 1));

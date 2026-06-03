@@ -10,7 +10,7 @@
  * Les autres types sont rendus en fallback non-éditable.
  */
 
-import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef, useMemo } from 'react'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -70,6 +70,10 @@ let _counter = 0
 const newId = () => `b${++_counter}`
 let _clipboardTableCounter = 0
 const newClipboardTableId = () => `clipboard-table-${++_clipboardTableCounter}`
+
+function slugifyHeadingText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') || 'section'
+}
 
 function markdownToBlocks(markdown: string): BlockState[] {
   if (!markdown.trim()) return [freshParagraph()]
@@ -251,6 +255,21 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const dragAnchorRef = useRef<string | null>(null)
   const { rootPath } = useWorkspace()
   const currentFilePath = useEditorFilePath()
+  const headingDomIdByBlockId = useMemo(() => {
+    const counters = new Map<string, number>()
+    const domIds = new Map<string, string>()
+
+    for (const block of blocks) {
+      if (block.node.type !== 'heading') continue
+      const text = (block.node as HeadingNode).children.map((node: InlineNode) => ('value' in node ? (node as { value?: string }).value ?? '' : '')).join('')
+      const slug = slugifyHeadingText(text)
+      const occurrence = (counters.get(slug) ?? 0) + 1
+      counters.set(slug, occurrence)
+      domIds.set(block.id, `heading-${slug}${occurrence > 1 ? `-${occurrence}` : ''}`)
+    }
+
+    return domIds
+  }, [blocks])
 
   // ─── Historique undo/redo ────────────────────────────────────────────────────
   // Chaque entrée est la sérialisation markdown de l'état des blocs.
@@ -980,7 +999,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         <div
           key={block.id}
           data-block-id={block.id}
-          id={block.node.type === 'heading' ? 'heading-' + (block.node as HeadingNode).children.map((n: InlineNode) => ('value' in n ? (n as any).value : '')).join('').toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') : undefined}
+          id={block.node.type === 'heading' ? headingDomIdByBlockId.get(block.id) : undefined}
           draggable
           onDragStart={(e) => {
             if (!(e.target as HTMLElement).closest('[data-drag-handle]')) { e.preventDefault(); return }
@@ -1046,6 +1065,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
               className="flex size-5 cursor-grab items-center justify-center rounded text-holo-text-faint transition hover:text-holo-text active:cursor-grabbing"
               title="Glisser pour réordonner"
               onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setSelectedBlockIds(new Set([block.id]))
+                containerRef.current?.focus({ preventScroll: true })
+              }}
             >
               <GripVertical size={12} />
             </div>
@@ -1243,9 +1268,10 @@ function BlockDispatcher({
       return (
         <div
           onClick={onSelect}
-          className={cn('cursor-pointer rounded py-1 transition', isSelected && 'ring-2 ring-holo-primary/40')}
+          className={cn('cursor-pointer rounded transition', isSelected && 'ring-2 ring-holo-primary/40')}
+          style={{ paddingTop: 'calc(3rem * var(--editor-fs-scale, 1))', paddingBottom: 'calc(3rem * var(--editor-fs-scale, 1))' }}
         >
-          <hr className="border-holo-border-soft" />
+          <hr className="my-0 border-holo-border-soft" />
         </div>
       )
 

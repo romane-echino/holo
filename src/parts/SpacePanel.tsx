@@ -73,6 +73,10 @@ const tabClassName =
 
 export type TreeFileMeta = { title?: string; description?: string; icon?: string; tags?: string[]; isTemplate?: boolean }
 
+function normalizePathForUi(pathValue: string | null | undefined): string {
+  return String(pathValue ?? '').replace(/\\/g, '/')
+}
+
 function parseFrontmatterQuick(content: string): TreeFileMeta {
   const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
@@ -1323,15 +1327,22 @@ export function SpaceRoute({
   const recentItems = useMemo(
     () =>
       recentFilePaths
-        .filter((p) => folderPath !== null && p.startsWith(folderPath + '/'))
+        .filter((p) => {
+          if (folderPath === null) return false
+          const normalizedPath = normalizePathForUi(p)
+          const normalizedFolder = normalizePathForUi(folderPath)
+          return normalizedPath.startsWith(`${normalizedFolder}/`)
+        })
         .slice(0, 20)
         .map((p) => {
           const meta = fileMetaByPath[p]
+          const normalizedPath = normalizePathForUi(p)
+          const normalizedFolder = normalizePathForUi(folderPath)
           return {
             id: p,
             title: meta?.title || getBaseName(p),
             path: p,
-            subtitle: folderPath ? p.slice(folderPath.length + 1) : p,
+            subtitle: folderPath ? normalizedPath.slice(normalizedFolder.length + 1) : p,
           } satisfies SpacePanelItem
         }),
     [recentFilePaths, folderPath, fileMetaByPath],
@@ -1340,14 +1351,21 @@ export function SpaceRoute({
   const favoriteItems = useMemo(
     () =>
       (favoriteFilePaths ?? [])
-        .filter((p) => folderPath === null || p.startsWith(folderPath + '/'))
+        .filter((p) => {
+          if (folderPath === null) return true
+          const normalizedPath = normalizePathForUi(p)
+          const normalizedFolder = normalizePathForUi(folderPath)
+          return normalizedPath.startsWith(`${normalizedFolder}/`)
+        })
         .map((p) => {
           const meta = fileMetaByPath[p]
+          const normalizedPath = normalizePathForUi(p)
+          const normalizedFolder = normalizePathForUi(folderPath)
           return {
             id: p,
             title: meta?.title || getBaseName(p),
             path: p,
-            subtitle: folderPath ? p.slice(folderPath.length + 1) : p,
+            subtitle: folderPath ? normalizedPath.slice(normalizedFolder.length + 1) : p,
           } satisfies SpacePanelItem
         }),
     [favoriteFilePaths, folderPath, fileMetaByPath],

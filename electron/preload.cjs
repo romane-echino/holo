@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('holo', {
   writeSpaceConfig: (spacePath, config) => ipcRenderer.invoke('holo:write-space-config', spacePath, config),
   gitGetState: (fetchRemote = false) => ipcRenderer.invoke('git:get-state', fetchRemote),
   gitGetFolderStatuses: (folderPaths) => ipcRenderer.invoke('git:get-folder-statuses', folderPaths),
+  gitGetFileActivity: (filePath, maxCount = 10) => ipcRenderer.invoke('git:get-file-activity', filePath, maxCount),
   gitGetFileLog: (filePath, maxCount = 10) => ipcRenderer.invoke('git:get-file-log', filePath, maxCount),
   gitAutoSave: (filePath, authorName, authorEmail) => ipcRenderer.invoke('git:auto-save', filePath, authorName, authorEmail),
   gitPickCloneDirectory: () => ipcRenderer.invoke('git:pick-clone-directory'),

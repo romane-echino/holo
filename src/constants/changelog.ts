@@ -2,6 +2,24 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.5.0',
+    releasedAt: '2026-06-03',
+    items: [
+      'Inspecteur : refonte du panneau Activite avec resume des ajouts/suppressions et apercu de diff par commit.',
+      'Inspecteur : clic sur une activite pour ouvrir le bon commit sur le remote quand il est disponible.',
+      'Table des matieres : indentation amelioree et correctif des titres dupliques qui scrollaient toujours vers la premiere occurrence.',
+      'Inspecteur > Liens : ouverture des liens relatifs, cartes plus lisibles, miniatures d images et apercu au clic.',
+      'Inspecteur > Liens : correction des chemins markdown avec espaces et du chargement des images locales via le loader desktop.',
+      'Inspecteur > Notes : notes cliquables avec scroll vers la note correspondante et masquage des emojis de persistance.',
+      'Notes : nouveau rendu callout avec types Info, Succes, Attention et Erreur, changement de type depuis un menu dedie et persistance markdown par emoji.',
+      'Notes : le texte suit maintenant le curseur global de taille et les emojis techniques sont masques pendant l edition.',
+      'Tableaux : largeur maximale plus raisonnable, retour a la ligne dans les cellules et meilleur comportement quand il y a plus de trois colonnes.',
+      'Edition : cliquer sur le grip d un bloc sans glisser selectionne maintenant correctement le bloc.',
+      'Desktop Windows : correctifs de normalisation de chemins pour la sauvegarde et pour les onglets Favoris / Recents du Space Panel.',
+      'Separateurs : les marges verticales suivent maintenant le curseur global de taille du texte.',
+    ],
+  },
+  {
     version: '0.4.0',
     releasedAt: '2026-06-01',
     items: [
