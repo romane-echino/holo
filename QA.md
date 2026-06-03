@@ -150,6 +150,9 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
     - Le bouton pour ouvrir le fichier ne fonctionne pas
     - Parcontre la recherche a l'aire beaucoup plus efficace
 
+# Phase 12.1
+- Amélioration du fichier d'indexation déplacement du repo jusqu'a AppData pour avoir un fichier centralisé pour tout les repo
+
 # Phase 13
 - CTRL+A Dans un bloc de code (editeur) dois sélectionné tout le texte (exception a la sélection de tout les blocs)
 - Si un tableau a plus que 4 colonnes les colonnes doivent s'adapté au contenu
@@ -162,4 +165,43 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
     - Après le titre
     - Après les variables
 - Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
+- Dans la frame onboarding les données Nom, prénom, email ne se sauvegarder pas, du coup la frame aparait a chaque lancement
+
+
+# Phase 14
+Amélioration des tables
+- Pouvoir Trier la colonne A-z Z-a (Et ça adapte les donnée des autre colonnes)
+- Ajouter des metadonnée YAML invisible au rendu pour stocker des personnalisation de la table
+    - Type de colonnes
+        - Texte (par défaut)
+        - Nombre
+        - Monétaire
+        - Checkbox
+    - Couleur de colonne 
+        - Texte (choix de couleur adapté au design)
+        
+# Phase 15
+Nouveau composants :
+ - Support des gif (importation, affichage)
+ - Support des video youtube
+ - Exposant et indice comme formatage de texte
+ - Bloc HTML (comme code mais avec rendu)
+ - Mentions (listing automatique des paticipants du repo et pouvoir faire @) avec possibilité de recherche @romane dans le panneau de recherche
+ - Mermaid (avec design css adapté au look de holo)
+ - Amélioration des Footnote (Fonctionne plus comme un tooltip en terme rendu) -> Selection d'un mot ajout d'un footnote 
+    Here is a simple footnote[^1].
+    [^1]: My reference.
+ - Amélioration des bloc de citation -> Ajout des alert github ([!NOTE] [!TIP] [!IMPORTANT] [!WARNING] [!CAUTION])
+    > [!NOTE]
+    > Useful information that users should know, even when skimming content.
+ - Collapsible secion github
+    <details>
+    <summary>Click me</summary>
+    
+    Content
+    </details>
+- Détection automatique des couleurs dans les bloc de code inline (petit point de couleur pour représenter la couleur)
+    `#RRGGBB`
+    `rgb(R,G,B)`
+    `hsl(H,S,L)`
 
