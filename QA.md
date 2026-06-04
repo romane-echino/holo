@@ -162,4 +162,4 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
     - Après le titre
     - Après les variables
 - Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
-
+- Il faut déplacer le fichier d'indexation dans appdata et pas par repo comme ça la recherche a un fichier d'indexation de tout les espace pour pouvoir faire une recherche effeicace inter-espace
