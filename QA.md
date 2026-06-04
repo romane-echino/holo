@@ -150,16 +150,77 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
     - Le bouton pour ouvrir le fichier ne fonctionne pas
     - Parcontre la recherche a l'aire beaucoup plus efficace
 
+# Phase 12.1
+- ✅Amélioration du fichier d'indexation déplacement du repo jusqu'a AppData pour avoir un fichier centralisé pour tout les repo
+- ✅ Il faut déplacer le fichier d'indexation dans appdata et pas par repo comme ça la recherche a un fichier d'indexation de tout les espace pour pouvoir faire une recherche effeicace inter-espace
+
+# Phase 12.2
+- ✅ Dans une liste a puce si BACKSPACE en debut de phrase transform la phrase en bloc paragraphe (normal)
+- ✅ CTRL-Z y'a une bizarerie quand j'annule on perd le focus sur editorFrame ou je sais pas ou il va mais je peux pas represser CTRL+Z Directement
+- ✅ Composant de code : L'aperçu a droite ne sers pas a grand chose au moment de l'édition. Ne serait il pas possible d'avoir un editeur de code propre avec numero de ligne etc.. (standard quoi)
+- ✅ Les liens de partage "holo://Notes3/Gros test.md" Ouvre l'app mais pas le bon document ni espace
+- ✅ J'ai eu un problème lors du déplacement d'un fichier dans un dossier. Les liens relatifs pointant sur ce fichier n'ont pas été mis a jour. Les favoris et récent ne se sont pas mis a jours egalement (Peux-être c'est juste sur Windows et aussi la personne a peut-être un fichier d'indexation pas propre)
+- ✅ Quand je drag un fichier dans l'arboresence de SpacePanel peut tu faire une zone (Racine de l'espace) pour que l'ux de déplacer un fichier a la racine soit plus propre
+- ✅ Quand je crée un lien relatif sur un fichier j'aimerais voir le titre du document aussi en plus du nom de fichier
+- ✅ Composante note : Je peux pas mettre mon curseur ou je veux dans le composant, ni selectionner de text (c'est pas standard comme les autres)
+- ✅ Composant citation : SHIFT+ENTER nécessite toujours d'être tapé 2x pour fonctionner -> NE MARCHE TOUJOURS PAS : Dans le composant Citation la première fois qu'on le focus et qu'on fait SHIFT+ENTER cela ne marche pas. Il faut que je retape une deuxième fois pour qu'un retour a ligne opère -> A Corrigé
+- ✅ Quand je sélectionne un Séparateur et que je fais ENTER créer une ligne vide en dessous
+- ✅ CTRL-Z m'a parfois fait scroller tout en haut de la page pour aucune raison
+- ✅ Dans l'arboresence il faut qu'on voye nettement le fichier ouvert (icone file quand pas ouvert, icone file-user quand ouvert (lucide)) avec une couleur de texte ou qqch comme ça (pareil pour les dossier folder /folder-open)
+- ✅ Si j'ouvre un fichier (via un lien par exemple) -> ouvrir l'arboresence et développer les dossiers pour le voir dans l'arbo
+
 # Phase 13
 - CTRL+A Dans un bloc de code (editeur) dois sélectionné tout le texte (exception a la sélection de tout les blocs)
-- Si un tableau a plus que 4 colonnes les colonnes doivent s'adapté au contenu
+- Si un tableau a plus que 3 colonnes les colonnes doivent s'adapté au contenu
 - Quand je sauvegarde doit rafraichir les activité si repo git
 - Quand j'ouvre un fichier d'un autre espace j'ai cette erreur qui vient
 <span class="text-xs text-holo-danger" title="fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros test.md' est hors du dépôt à '/home/romane/Bureau/Dev/documentation'">Erreur : fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros </span>
-- NE MARCHE TOUJOURS PAS : Dans le composant Citation la première fois qu'on le focus et qu'on fait SHIFT+ENTER cela ne marche pas. Il faut que je retape une deuxième fois pour qu'un retour a ligne opère -> A Corrigé
 - Dans le popup création d'un fichier a partir d'un modèle changer l'ux 
     - D'abord on sélectionn un modèle (on voit rien d'autre)
     - Après le titre
     - Après les variables
 - Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
-- Il faut déplacer le fichier d'indexation dans appdata et pas par repo comme ça la recherche a un fichier d'indexation de tout les espace pour pouvoir faire une recherche effeicace inter-espace
+- Dans la frame onboarding les données Nom, prénom, email ne se sauvegarder pas, du coup la frame aparait a chaque lancement
+
+# Phase 13.1
+Solidification de l'historique UNDO/REDO
+- Vraiment faire un système solide pour détecter les changement du markdown et pouvoir annuler / refaire une 20aine d'actions 
+
+
+# Phase 14
+Amélioration des tables
+- Pouvoir Trier la colonne A-z Z-a (Et ça adapte les donnée des autre colonnes)
+- Ajouter des metadonnée YAML invisible au rendu pour stocker des personnalisation de la table
+    - Type de colonnes
+        - Texte (par défaut)
+        - Nombre
+        - Monétaire
+        - Checkbox
+    - Couleur de colonne 
+        - Texte (choix de couleur adapté au design)
+        
+# Phase 15
+Nouveau composants :
+ - Support des gif (importation, affichage)
+ - Support des video youtube
+ - Exposant et indice comme formatage de texte
+ - Bloc HTML (comme code mais avec rendu)
+ - Mentions (listing automatique des paticipants du repo et pouvoir faire @) avec possibilité de recherche @romane dans le panneau de recherche
+ - Mermaid (avec design css adapté au look de holo)
+ - Amélioration des Footnote (Fonctionne plus comme un tooltip en terme rendu) -> Selection d'un mot ajout d'un footnote 
+    Here is a simple footnote[^1].
+    [^1]: My reference.
+ - Amélioration des bloc de citation -> Ajout des alert github ([!NOTE] [!TIP] [!IMPORTANT] [!WARNING] [!CAUTION])
+    > [!NOTE]
+    > Useful information that users should know, even when skimming content.
+ - Collapsible secion github
+    <details>
+    <summary>Click me</summary>
+    
+    Content
+    </details>
+- Détection automatique des couleurs dans les bloc de code inline (petit point de couleur pour représenter la couleur)
+    `#RRGGBB`
+    `rgb(R,G,B)`
+    `hsl(H,S,L)`
+

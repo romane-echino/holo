@@ -255,15 +255,8 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
         id={getFootnoteDomId(node.identifier)}
         title={`Note ${node.identifier}`}
         className="group/footnote relative my-4 overflow-visible rounded-holo-2xl border border-holo-border-soft bg-white/[0.018] shadow-[inset_0_1px_0_rgba(255,255,255,.025)] transition hover:border-holo-primary/18 hover:bg-white/[0.024]"
-        onMouseDown={(event) => {
-          const target = event.target as HTMLElement | null
-          if (!target) return
-          if (target.closest('button, a, input, [data-format-toolbar], [contenteditable="true"]')) return
-          event.preventDefault()
-          editorRef.current?.focus()
-        }}
       >
-        <div className={cn('absolute inset-0 rounded-holo-2xl outline-2 opacity-40', noteTone.accentClassName)} />
+        <div className={cn('pointer-events-none absolute inset-0 rounded-holo-2xl outline-2 opacity-40', noteTone.accentClassName)} />
 
         <div className="flex gap-3 px-3.5 py-3.5">
           <div ref={toneMenuRef} className="relative shrink-0">
@@ -323,7 +316,16 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
               </span>
             </div>
 
-            <div className="rounded-holo-lg px-0.5 py-0.5 text-holo-text-soft transition group-hover/footnote:bg-white/[0.012]">
+            <div
+              className="rounded-holo-lg px-0.5 py-0.5 text-holo-text-soft transition group-hover/footnote:bg-white/[0.012]"
+              onMouseDown={(event) => {
+                const target = event.target as HTMLElement | null
+                if (!target || target.closest('button, a, input, [data-format-toolbar]')) return
+                if (target.closest('[contenteditable="true"]')) return
+                event.preventDefault()
+                editorRef.current?.focus()
+              }}
+            >
               <InlineEditor
                 key={`${node.identifier}:${inlineContentVersion}`}
                 ref={editorRef}

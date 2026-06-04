@@ -279,6 +279,17 @@ export const AppModals: React.FC<AppModalsProps> = ({
                   placeholder="Rechercher un fichier .md"
                   value={linkDialog.pageQuery ?? ''}
                   onChange={(e) => onSetLinkDialog({ ...linkDialog, pageQuery: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      onSetLinkDialog(null)
+                      onClearLinkSavedRange()
+                      return
+                    }
+                    if (e.key === 'Enter' && linkPageSuggestions.length === 1) {
+                      e.preventDefault()
+                      onLinkSuggestionClick(linkPageSuggestions[0])
+                    }
+                  }}
                 />
                 {linkPageSuggestions.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto rounded border border-white/10 bg-white/5 p-1">

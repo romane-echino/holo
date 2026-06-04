@@ -195,7 +195,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     focus(cursor?: InitialCursor) {
       const el = divRef.current
       if (!el) return
-      el.focus()
+      el.focus({ preventScroll: true })
       savedRef.current = false
       positionCursor(el, cursor)
     },
@@ -524,21 +524,26 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       const el = divRef.current
       if (!sel?.rangeCount || !el) return
       const hadVisibleContent = domToInlines(el).length > 0
+      const needsTrailingBreak = isAtEnd()
       const range = sel.getRangeAt(0)
       range.deleteContents()
       const br = document.createElement('br')
       range.insertNode(br)
-      let caretAnchor: Node = br
-      if (!hadVisibleContent) {
+      if (!hadVisibleContent || needsTrailingBreak) {
         const extraBr = document.createElement('br')
         br.parentNode?.insertBefore(extraBr, br.nextSibling)
-        caretAnchor = extraBr
+        const after = document.createRange()
+        after.setStartBefore(extraBr)
+        after.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(after)
+      } else {
+        const after = document.createRange()
+        after.setStartAfter(br)
+        after.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(after)
       }
-      const after = document.createRange()
-      after.setStartAfter(caretAnchor)
-      after.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(after)
       syncEmpty(el)
       savedRef.current = false
       return

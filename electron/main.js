@@ -26,12 +26,40 @@ if (!hasSingleInstanceLock) {
 }
 
 function getRecentFoldersFilePath() {
+  return path.join(getHoloDataDir(), 'recent-folders.json')
+}
+
+function getLegacyRecentFoldersFilePath() {
   return path.join(app.getPath('userData'), 'recent-folders.json')
+}
+
+function getHoloDataDir() {
+  return path.join(app.getPath('appData'), 'holo')
+}
+
+function getLegacyHoloConfigPath() {
+  return path.join(app.getPath('userData'), 'holo-config.json')
+}
+
+function getLegacySearchIndexPath() {
+  return path.join(app.getPath('userData'), 'search-index.json')
+}
+
+async function readUtf8WithLegacyFallback(preferredPath, legacyPath) {
+  try {
+    return await fs.readFile(preferredPath, 'utf8')
+  } catch (error) {
+    if (error?.code !== 'ENOENT' || !legacyPath || legacyPath === preferredPath) {
+      throw error
+    }
+
+    return await fs.readFile(legacyPath, 'utf8')
+  }
 }
 
 async function readRecentFoldersRaw() {
   try {
-    const raw = await fs.readFile(getRecentFoldersFilePath(), 'utf8')
+    const raw = await readUtf8WithLegacyFallback(getRecentFoldersFilePath(), getLegacyRecentFoldersFilePath())
     const parsed = JSON.parse(raw)
 
     if (!Array.isArray(parsed)) {
@@ -108,13 +136,17 @@ async function removeRecentFolder(folderPath) {
 }
 
 function getHoloConfigPath() {
-  const dir = app.getPath('userData')
+  const dir = getHoloDataDir()
   return path.join(dir, 'holo-config.json')
+}
+
+function getSearchIndexPath() {
+  return path.join(getHoloDataDir(), 'search-index.json')
 }
 
 async function readHoloConfig() {
   try {
-    const raw = await fs.readFile(getHoloConfigPath(), 'utf8')
+    const raw = await readUtf8WithLegacyFallback(getHoloConfigPath(), getLegacyHoloConfigPath())
     const parsed = JSON.parse(raw)
     return typeof parsed === 'object' && parsed !== null ? parsed : {}
   } catch {
@@ -1384,6 +1416,30 @@ ipcMain.handle('shell:show-item-in-folder', async (_event, folderPath) => {
   return { ok: true }
 })
 
+ipcMain.handle('shell:open-path', async (_event, targetPath) => {
+  const errorMessage = await shell.openPath(path.resolve(targetPath))
+  if (errorMessage) {
+    throw new Error(errorMessage)
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('search-index:get-path', async () => getSearchIndexPath())
+
+ipcMain.handle('search-index:read', async () => {
+  try {
+    return await readUtf8WithLegacyFallback(getSearchIndexPath(), getLegacySearchIndexPath())
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('search-index:write', async (_event, content) => {
+  await fs.mkdir(path.dirname(getSearchIndexPath()), { recursive: true })
+  await fs.writeFile(getSearchIndexPath(), String(content ?? ''), 'utf8')
+  return { ok: true }
+})
+
 ipcMain.handle('fs:open-recent-folder', async (_event, folderPath) => {
   const targetPath = path.resolve(folderPath)
   const stats = await fs.stat(targetPath).catch(() => null)
@@ -1645,7 +1701,9 @@ ipcMain.handle('fs:read-file-optional', async (_event, filePath) => {
 })
 
 ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
-  assertPathInsideRoot(targetPath)
+  if (!isPathInsideAnyKnownRoot(targetPath)) {
+    throw new Error('Chemin hors du dossier ouvert.')
+  }
   const stats = await fs.stat(targetPath)
 
   return {

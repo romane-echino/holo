@@ -23,10 +23,14 @@ export type FileMeta = {
 
 export type SearchIndexEntry = {
   path: string
+  spaceRoot: string
   name: string
   title: string
   description: string
   tags: string[]
+  headings: string[]
+  content: string
+  linkedPaths: string[]
   mtime: string
 }
 

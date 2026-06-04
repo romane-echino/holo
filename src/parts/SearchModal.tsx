@@ -10,7 +10,7 @@ import { Search, X, File, Archive } from 'lucide-react'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { getBaseName } from '../lib/appUtils'
 import { cn } from '../utils/global'
-import type { TreeFileMeta } from './SpacePanel'
+import type { SearchIndexEntry } from '../types/app'
 
 type SearchMatch = {
   path: string
@@ -81,79 +81,35 @@ type SearchModalProps = {
   open: boolean
   onClose: () => void
   onSelectFile?: (path: string) => void
+  indexedEntries?: Map<string, SearchIndexEntry>
+  isIndexBuilding?: boolean
+  indexBuildProgress?: { processed: number, total: number }
 }
 
-export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
-  const { fileMetaByPath, recentFilePaths, rootPath, tree, recentFolders } = useWorkspace()
+export function SearchModal({ open, onClose, onSelectFile, indexedEntries, isIndexBuilding = false, indexBuildProgress }: SearchModalProps) {
+  const { rootPath, recentFolders } = useWorkspace()
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [archivedPaths, setArchivedPaths] = useState<string[]>([])
-  const [allSpacePaths, setAllSpacePaths] = useState<string[]>([])
-  // Cache de contenu brut pour la recherche heading/contenu
-  const [fileContents, setFileContents] = useState<Record<string, string>>({})
-  const loadingContentRef = useRef<Set<string>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Charger les fichiers archivés + tous les espaces à l'ouverture
+  // Charger les fichiers archivés à l'ouverture
   useEffect(() => {
     if (!open) return
     window.holo?.listArchivedFiles().then(files => {
       setArchivedPaths(files.map(f => f.archivedPath))
     }).catch(() => {})
-    // Scanner tous les espaces récents (pas seulement l'espace courant)
-    const otherFolders = recentFolders.filter(f => f !== rootPath)
-    if (otherFolders.length === 0) { setAllSpacePaths([]); return }
-    Promise.all(otherFolders.map(f => window.holo?.scanMdFiles(f) ?? Promise.resolve([]))).then(results => {
-      setAllSpacePaths(results.flat())
-    }).catch(() => {})
-  }, [open, recentFolders, rootPath])
+  }, [open])
 
   // Reset à l'ouverture
   useEffect(() => {
     if (open) {
       setQuery('')
       setActiveIndex(0)
-      setFileContents({})
-      loadingContentRef.current.clear()
       setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [open])
-
-  // Collecte tous les chemins connus
-  const knownPaths = useMemo(() => {
-    const paths = new Set<string>()
-    for (const p of Object.keys(fileMetaByPath)) paths.add(p)
-    for (const p of recentFilePaths) paths.add(p)
-    for (const p of archivedPaths) paths.add(p)
-    for (const p of allSpacePaths) paths.add(p)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function walk(node: any) {
-      if (!node) return
-      if (node.type === 'file') paths.add(node.path)
-      if (node.children) for (const c of node.children) walk(c)
-    }
-    walk(tree)
-    return [...paths].filter((p) => p.endsWith('.md'))
-  }, [fileMetaByPath, recentFilePaths, archivedPaths, allSpacePaths, tree])
-
-  // Chargement asynchrone du contenu des fichiers pour la recherche heading/contenu
-  useEffect(() => {
-    const q = query.trim().toLowerCase()
-    if (!q || q.length < 2 || q.startsWith('#') || !window.holo) return
-    const toLoad = knownPaths.filter(p => !fileContents[p] && !loadingContentRef.current.has(p))
-    if (!toLoad.length) return
-    // Charger par lots de 30 pour ne pas surcharger
-    for (const path of toLoad.slice(0, 30)) {
-      loadingContentRef.current.add(path)
-      window.holo.readFile(path)
-        .then(content => {
-          loadingContentRef.current.delete(path)
-          setFileContents(prev => ({ ...prev, [path]: content }))
-        })
-        .catch(() => { loadingContentRef.current.delete(path) })
-    }
-  }, [query, knownPaths])
 
   const results = useMemo((): SearchMatch[] => {
     const q = query.trim().toLowerCase()
@@ -162,18 +118,17 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     const isTagSearch = q.startsWith('#')
     const tagQuery = isTagSearch ? q.slice(1) : null
     const matches: SearchMatch[] = []
+    const liveEntries = indexedEntries ? Array.from(indexedEntries.values()) : []
 
-    for (const path of knownPaths) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const meta = fileMetaByPath[path] as (TreeFileMeta & { tags?: string[] }) | undefined
+    for (const entry of liveEntries) {
+      const path = entry.path
       const basename = getBaseName(path)
       const filenameNoExt = basename.replace(/\.md$/i, '')
-      const title = meta?.title || filenameNoExt
-      const description = meta?.description || ''
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tags: string[] = (meta as any)?.tags ?? []
+      const title = entry.title || filenameNoExt
+      const description = entry.description || ''
+      const tags = entry.tags ?? []
 
-      const spaceFolder = recentFolders.find(f => path.startsWith(f + '/'))
+      const spaceFolder = entry.spaceRoot || recentFolders.find(f => path.startsWith(f + '/'))
       const spaceName = spaceFolder ? getBaseName(spaceFolder) : undefined
       const spaceRelative = spaceFolder
         ? path.slice(spaceFolder.length + 1)
@@ -183,57 +138,59 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
 
       if (isTagSearch && tagQuery) {
         const tagHit = tags.find((t) => t.toLowerCase().includes(tagQuery))
-        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon, tags })
+        if (tagHit) matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, tags })
         continue
       }
 
       if (filenameNoExt.toLowerCase().includes(q)) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'filename', icon: (meta as any)?.icon, tags })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'filename', tags })
         continue
       }
       if (title.toLowerCase().includes(q) && title !== filenameNoExt) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'title', icon: (meta as any)?.icon, tags })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'title', tags })
         continue
       }
       const tagHit = tags.find((t) => t.toLowerCase().includes(q))
       if (tagHit) {
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon, tags })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'tag', matchText: tagHit, tags })
         continue
       }
       if (description.toLowerCase().includes(q)) {
         const idx = description.toLowerCase().indexOf(q)
         const excerpt = description.slice(Math.max(0, idx - 20), idx + 60)
-        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon, tags })
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'description', matchText: excerpt, tags })
         continue
       }
 
-      // Recherche dans le contenu (headings puis texte brut)
-      const rawContent = fileContents[path]
-      if (rawContent) {
-        // Cherche dans les titres Markdown (# ## ###…)
-        const headingMatches = [...rawContent.matchAll(/^#{1,6}\s+(.+)$/gm)]
-        const headingHit = headingMatches.find(m => m[1].toLowerCase().includes(q))
-        if (headingHit) {
-          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'heading', matchText: headingHit[1].trim(), icon: (meta as any)?.icon, tags })
-          continue
-        }
-        // Cherche dans le contenu texte (hors frontmatter)
-        const bodyStart = rawContent.indexOf('\n---\n', rawContent.startsWith('---') ? 3 : 0)
-        const body = bodyStart !== -1 ? rawContent.slice(bodyStart + 5) : rawContent
-        const bodyLower = body.toLowerCase()
-        const contentIdx = bodyLower.indexOf(q)
-        if (contentIdx !== -1) {
-          const start = Math.max(0, contentIdx - 30)
-          const end = Math.min(body.length, contentIdx + 80)
-          const excerpt = (start > 0 ? '…' : '') + body.slice(start, end).replace(/\n/g, ' ').trim() + (end < body.length ? '…' : '')
-          matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'content', matchText: excerpt, icon: (meta as any)?.icon, tags })
-        }
+      const headingHit = entry.headings.find((heading) => heading.toLowerCase().includes(q))
+      if (headingHit) {
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'heading', matchText: headingHit, tags })
+        continue
       }
+
+      const contentIdx = entry.content.toLowerCase().indexOf(q)
+      if (contentIdx !== -1) {
+        const start = Math.max(0, contentIdx - 30)
+        const end = Math.min(entry.content.length, contentIdx + 80)
+        const excerpt = (start > 0 ? '…' : '') + entry.content.slice(start, end).trim() + (end < entry.content.length ? '…' : '')
+        matches.push({ path, title, subtitle: spaceRelative, spaceName, matchKind: 'content', matchText: excerpt, tags })
+      }
+    }
+
+    for (const archivedPath of archivedPaths) {
+      const archiveName = getBaseName(archivedPath).replace(/\.md$/i, '')
+      if (!archiveName.toLowerCase().includes(q)) continue
+      matches.push({
+        path: archivedPath,
+        title: archiveName,
+        subtitle: archivedPath,
+        matchKind: 'filename',
+      })
     }
 
     const order: Record<SearchMatch['matchKind'], number> = { filename: 0, title: 1, tag: 2, description: 3, heading: 4, content: 5 }
     return matches.sort((a, b) => order[a.matchKind] - order[b.matchKind]).slice(0, 50)
-  }, [query, knownPaths, fileMetaByPath, fileContents, rootPath])
+  }, [archivedPaths, indexedEntries, query, recentFolders, rootPath])
 
   // Réinitialise le curseur quand les résultats changent
   useEffect(() => { setActiveIndex(0) }, [results])
@@ -269,6 +226,10 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
     onClose()
   }
 
+  const progressTotal = indexBuildProgress?.total ?? 0
+  const progressProcessed = indexBuildProgress?.processed ?? 0
+  const progressPercent = progressTotal > 0 ? Math.min(100, Math.round((progressProcessed / progressTotal) * 100)) : 0
+
   if (!open) return null
 
   return (
@@ -303,6 +264,20 @@ export function SearchModal({ open, onClose, onSelectFile }: SearchModalProps) {
 
         {/* Résultats */}
         <div ref={listRef} className="overflow-y-auto holo-scrollbar">
+          {isIndexBuilding && (
+            <div className="border-b border-holo-border-soft px-4 py-2">
+              <div className="flex items-center justify-between gap-3 text-[11px] text-holo-text-faint">
+                <span>Indexation inter-espace en cours…</span>
+                <span>{progressTotal > 0 ? `${progressProcessed}/${progressTotal} · ${progressPercent}%` : 'Préparation…'}</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+                <div
+                  className="h-full rounded-full bg-holo-primary transition-[width] duration-200 ease-out"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
           {!query.trim() || query.trim().length < 2 ? (
             <div className="px-4 py-6 text-sm text-holo-text-faint space-y-1">
               <p>Tapez au moins 2 caractères pour lancer la recherche.</p>

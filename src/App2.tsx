@@ -7,8 +7,9 @@ import type { HoloDocument } from './parts/RecentPanel'
 import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
 import { getBaseName, buildShareableHoloLink, flatTreeFiles } from './lib/appUtils'
+import { remapTrackedPath } from './lib/markdownLinks'
 import { updateMarkdownBooleanHeaderField } from './lib/markdown'
-import { useSearchIndex } from './hooks'
+import { useSearchIndex, useStartupNavigation, useWorkspaceFolders } from './hooks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -97,17 +98,21 @@ export default function App2() {
 
   // ─── Favoris de fichiers ──────────────────────────────────────────────────
   const [favoriteFilePaths, setFavoriteFilePaths] = useState<string[]>([])
+  const [operationFeedback, setOperationFeedback] = useState<string | null>(null)
 
   // ─── Recherche modale ─────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false)
+  const getHoloApi = useCallback(() => window.holo ?? null, [])
+  const { openRecentFolder } = useWorkspaceFolders({ getHoloApi })
   const indexedFilePaths = useMemo(
     () => (tree ? flatTreeFiles(tree).filter((path) => path.toLowerCase().endsWith('.md')) : []),
     [tree],
   )
-  const { updateIndexEntry } = useSearchIndex({
+  const { indexEntries, isIndexBuilding, indexBuildProgress, updateIndexEntry } = useSearchIndex({
     rootPath,
     allFilePaths: indexedFilePaths,
-    getHoloApi: () => window.holo ?? null,
+    scopeRoots: recentFolders,
+    getHoloApi,
   })
 
   // ─── Onboarding ───────────────────────────────────────────────────────────
@@ -516,6 +521,13 @@ export default function App2() {
     }
   }, [setRecentFilePaths])
 
+  useStartupNavigation({
+    openRecentFolder,
+    openFile: async (path: string) => {
+      await handleSelectFile({ id: path, path, name: getBaseName(path), type: 'file' })
+    },
+  })
+
   // ─── Données pour le panel Récents ────────────────────────────────────────
   const recentDocuments = useMemo<HoloDocument[]>(
     () => recentFilePaths.map(filePath => {
@@ -737,9 +749,7 @@ export default function App2() {
 
   useEffect(() => {
     const remapPath = (currentPath: string, from: string, to: string) => {
-      if (currentPath === from) return to
-      if (currentPath.startsWith(`${from}/`)) return `${to}${currentPath.slice(from.length)}`
-      return currentPath
+      return remapTrackedPath(currentPath, from, to)
     }
 
     const handler = (event: Event) => {
@@ -782,6 +792,26 @@ export default function App2() {
     window.addEventListener('holo:path-moved', handler)
     return () => window.removeEventListener('holo:path-moved', handler)
   }, [setFileMetaByPath, setRecentFilePaths])
+
+  useEffect(() => {
+    let clearTimer: ReturnType<typeof setTimeout> | null = null
+
+    const handler = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message
+      if (!message) return
+      setOperationFeedback(message)
+      if (clearTimer) clearTimeout(clearTimer)
+      clearTimer = setTimeout(() => {
+        setOperationFeedback((current) => current === message ? null : current)
+      }, 4000)
+    }
+
+    window.addEventListener('holo:operation-feedback', handler)
+    return () => {
+      if (clearTimer) clearTimeout(clearTimer)
+      window.removeEventListener('holo:operation-feedback', handler)
+    }
+  }, [])
 
   return (
     <div className="holo-window">
@@ -954,6 +984,15 @@ export default function App2() {
         />
       )}
 
+      {operationFeedback && (
+        <div className={cn(
+          'fixed right-5 z-[149] w-[320px] rounded-[1.1rem] border border-holo-border-soft bg-holo-bg/95 px-4 py-3 text-sm text-holo-text shadow-[0_20px_60px_rgba(0,0,0,.45)] backdrop-blur-2xl transition-all',
+          updateAvailable ? 'bottom-[7.5rem]' : 'bottom-5',
+        )}>
+          {operationFeedback}
+        </div>
+      )}
+
       {/* Modal identifiants espace */}
       {pendingCredentials && (
         <SpaceCredentialsModal
@@ -1035,6 +1074,9 @@ export default function App2() {
       <SearchModal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
+        indexedEntries={indexEntries}
+        isIndexBuilding={isIndexBuilding}
+        indexBuildProgress={indexBuildProgress}
         onSelectFile={(filePath) => {
           const spacePath = recentFolders.find(f => filePath.startsWith(f + '/'))
           if (spacePath) navigate(`/space/${encodeURIComponent(spacePath)}`)

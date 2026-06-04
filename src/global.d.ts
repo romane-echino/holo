@@ -134,6 +134,10 @@ interface HoloApi {
   getRecentFolderIcon: (folderPath: string) => Promise<string | null>
   removeRecentFolder: (folderPath: string) => Promise<string[]>
   showItemInFolder: (folderPath: string) => Promise<{ ok: true }>
+  openPath: (targetPath: string) => Promise<{ ok: true }>
+  getSearchIndexPath: () => Promise<string>
+  readSearchIndex: () => Promise<string | null>
+  writeSearchIndex: (content: string) => Promise<{ ok: true }>
   openRecentFolder: (folderPath: string) => Promise<OpenFolderResult>
   refreshTree: () => Promise<OpenFolderResult>
   readFile: (filePath: string) => Promise<string>

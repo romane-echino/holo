@@ -24,7 +24,12 @@ export const CodeBlock = forwardRef<InlineEditorHandle, CodeBlockProps>(
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(node.value)
   const [draftLang, setDraftLang] = useState(node.lang ?? 'plaintext')
+  const editorRootRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const lineNumbers = useMemo(() => {
+    const lineCount = Math.max(1, draft.split('\n').length)
+    return Array.from({ length: lineCount }, (_value, index) => index + 1)
+  }, [draft])
 
   useImperativeHandle(ref, () => ({
     focus: () => {
@@ -76,9 +81,17 @@ export const CodeBlock = forwardRef<InlineEditorHandle, CodeBlockProps>(
     }
   }
 
+  const handleTextareaBlur = (event: React.FocusEvent<HTMLTextAreaElement>) => {
+    const nextFocused = event.relatedTarget as Node | null
+    if (nextFocused && editorRootRef.current?.contains(nextFocused)) {
+      return
+    }
+    commit()
+  }
+
     if (editing) {
       return (
-        <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
+        <div ref={editorRootRef} className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
           <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
             <select
               value={draftLang}
@@ -110,39 +123,45 @@ export const CodeBlock = forwardRef<InlineEditorHandle, CodeBlockProps>(
             </div>
           </div>
 
-          <div className="grid gap-0 border-b border-holo-border-soft/50 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onBlur={commit}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  setDraft(node.value)
-                  setDraftLang(node.lang ?? 'plaintext')
-                  setEditing(false)
-                }
-                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault()
-                  commit()
-                  onEnterAtEnd?.()
-                }
-                if (event.key === 'Backspace' && draft === '') {
-                  event.preventDefault()
-                  onBackspaceAtStart?.()
-                }
-              }}
-              placeholder="console.log('Hello, Holo')"
-              className="min-h-[180px] w-full resize-y border-0 bg-transparent p-4 font-mono text-sm text-holo-text focus:outline-none holo-scrollbar"
-              spellCheck={false}
-            />
-            <div className="min-h-[180px] bg-black/20 p-4">
-              <pre className="h-full overflow-auto font-mono text-sm leading-relaxed text-holo-text holo-scrollbar">
-                {highlightedHtml
-                  ? <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
-                  : <code className="text-holo-text-faint">Aperçu du code…</code>}
-              </pre>
+          <div className="border-b border-holo-border-soft/50 bg-black/10">
+            <div className="flex min-h-[220px] items-stretch">
+              <div className="flex shrink-0 select-none flex-col border-r border-holo-border-soft/40 bg-black/20 px-3 py-4 text-right font-mono text-xs leading-6 text-holo-text-faint/70">
+                {lineNumbers.map((lineNumber) => (
+                  <span key={lineNumber}>{lineNumber}</span>
+                ))}
+              </div>
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onBlur={handleTextareaBlur}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    event.currentTarget.select()
+                    return
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setDraft(node.value)
+                    setDraftLang(node.lang ?? 'plaintext')
+                    setEditing(false)
+                  }
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault()
+                    commit()
+                    onEnterAtEnd?.()
+                  }
+                  if (event.key === 'Backspace' && draft === '') {
+                    event.preventDefault()
+                    onBackspaceAtStart?.()
+                  }
+                }}
+                placeholder="console.log('Hello, Holo')"
+                className="min-h-[220px] w-full resize-y border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-holo-text focus:outline-none holo-scrollbar"
+                spellCheck={false}
+              />
             </div>
           </div>
         </div>

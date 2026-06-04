@@ -684,18 +684,16 @@ export function HoloSettingsDialog({
                     <div>
                       <p className="text-sm font-medium text-holo-text">Index de recherche</p>
                       <p className="mt-1 text-xs text-holo-text-faint">
-                        Ouvre le dossier contenant <span className="font-mono">.holo/search-index.json</span> pour inspecter l'index local.
+                        Ouvre le dossier contenant <span className="font-mono">search-index.json</span> dans AppData pour inspecter l'index central inter-espaces.
                       </p>
                     </div>
 
                     <button
                       type="button"
-                      disabled={!currentSpace}
                       onClick={() => {
-                        if (!currentSpace) return
-                        void window.holo?.showItemInFolder(`${currentSpace}/.holo/search-index.json`)
+                        void window.holo?.getSearchIndexPath().then((indexPath) => window.holo?.openPath(indexPath))
                       }}
-                      className="rounded-holo-md border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-xs font-medium text-holo-text transition hover:bg-holo-glass-hover disabled:cursor-not-allowed disabled:opacity-40"
+                      className="rounded-holo-md border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-xs font-medium text-holo-text transition hover:bg-holo-glass-hover"
                     >
                       Ouvrir le fichier d'indexation
                     </button>

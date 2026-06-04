@@ -52,7 +52,7 @@ export function FormatToolbar({
   const savedRangeRef = useRef<Range | null>(null)
 
   // Recherche de pages de l'espace courant
-  const { tree, rootPath } = useWorkspace()
+  const { tree, rootPath, fileMetaByPath } = useWorkspace()
   const currentFilePath = useEditorFilePath()
 
   const allMdFiles = useMemo(() => {
@@ -107,6 +107,12 @@ export function FormatToolbar({
     setLinkMode(false)
   }
 
+  const pickPageSuggestion = (filePath: string) => {
+    const relativePath = getRelativeLinkPath(currentFilePath, filePath, rootPath ?? null)
+    setLinkUrl(relativePath)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
   const cancelLink = (e?: React.SyntheticEvent) => {
     e?.preventDefault()
     // Restaurer la sélection pour que la toolbar reste visible
@@ -142,7 +148,18 @@ export function FormatToolbar({
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); applyLink() }
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (pageSuggestions.length === 1) {
+                    const onlySuggestion = pageSuggestions[0]
+                    const relativePath = getRelativeLinkPath(currentFilePath, onlySuggestion, rootPath ?? null)
+                    if (linkUrl.trim() !== relativePath) {
+                      pickPageSuggestion(onlySuggestion)
+                      return
+                    }
+                  }
+                  applyLink()
+                }
                 if (e.key === 'Escape') { e.preventDefault(); cancelLink(e) }
               }}
               placeholder="https://… ou nom de page"
@@ -166,20 +183,28 @@ export function FormatToolbar({
               {pageSuggestions.map((filePath) => {
                 const rel = getRelativeLinkPath(currentFilePath, filePath, rootPath ?? null)
                 const label = getBaseName(filePath).replace(/\.md$/i, '')
+                const title = fileMetaByPath[filePath]?.title?.trim()
+                const secondaryLabel = title && title !== label ? title : null
                 return (
                   <button
                     key={filePath}
                     type="button"
                     onMouseDown={(e) => {
                       e.preventDefault()
-                      setLinkUrl(rel)
-                      setTimeout(() => inputRef.current?.focus(), 0)
+                      pickPageSuggestion(filePath)
                     }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-holo-glass-hover"
                   >
                     <FileText size={11} className="shrink-0 text-holo-text-faint" />
-                    <span className="flex-1 truncate text-xs text-holo-text">{label}</span>
-                    <span className="truncate text-[10px] text-holo-text-faint">{rel}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-xs text-holo-text">{label}</span>
+                        {secondaryLabel && (
+                          <span className="truncate text-[10px] text-holo-text-faint/80">{secondaryLabel}</span>
+                        )}
+                      </div>
+                      <div className="truncate text-[10px] text-holo-text-faint">{rel}</div>
+                    </div>
                   </button>
                 )
               })}

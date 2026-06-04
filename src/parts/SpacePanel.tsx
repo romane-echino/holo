@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
-import { getBaseName, getRelativeLinkPath } from '../lib/appUtils'
+import { getBaseName, getParentPath, isSameOrChildPath } from '../lib/appUtils'
+import { pathReferencesMovedTarget, remapTrackedPath, rewriteMarkdownLinksForMovedPath, rewriteMarkdownLinksForRelocatedSource } from '../lib/markdownLinks'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useConfig } from '../contexts/ConfigContext'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
-import type { TreeNode } from '../types/app'
-import { Folder, FolderOpen, FileText, File, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch, Archive, Layers } from 'lucide-react'
+import type { SearchIndexEntry, TreeNode } from '../types/app'
+import { Folder, FolderOpen, FileText, File, FileUser, ChevronRight, Plus, Search, X, Pencil, Trash2, FilePlus, FolderPlus, ChevronDown, MoreHorizontal, Star, RefreshCw, Unlink, GitBranch, Archive, Layers } from 'lucide-react'
 import { updateMarkdownBooleanHeaderField } from '../lib/markdown'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
@@ -121,96 +122,43 @@ function parseFrontmatterQuick(content: string): TreeFileMeta {
   return result
 }
 
-function parseMarkdownDestinationInfo(rawDestination: string): { destination: string; token: string } {
-  const trimmed = rawDestination.trim()
-  if (!trimmed) return { destination: '', token: '' }
-
-  if (trimmed.startsWith('<')) {
-    const closingIndex = trimmed.indexOf('>')
-    if (closingIndex > 0) {
-      const token = trimmed.slice(0, closingIndex + 1)
-      return { destination: trimmed.slice(1, closingIndex).trim(), token }
-    }
-  }
-
-  let token = ''
-  let destination = ''
-  let escaped = false
-  for (const character of trimmed) {
-    if (escaped) {
-      token += `\\${character}`
-      destination += character
-      escaped = false
-      continue
-    }
-
-    if (character === '\\') {
-      escaped = true
-      continue
-    }
-
-    if (/\s/.test(character)) break
-    token += character
-    destination += character
-  }
-
-  return { destination: destination.trim(), token: token.trim() }
+type SearchIndexDisk = {
+  entries?: Record<string, SearchIndexEntry>
 }
 
-function resolveMarkdownTargetPath(destination: string, currentFilePath: string, rootPath?: string): string | null {
-  const trimmed = destination.trim()
-  if (!trimmed || trimmed.startsWith('#') || /^(https?:|mailto:|holo:)/i.test(trimmed)) return null
+async function getIndexedReferencingMarkdownPaths(sourcePath: string, rootPath?: string) {
+  const raw = await window.holo?.readSearchIndex().catch(() => null)
+  if (!raw) return null
 
-  const clean = trimmed.split('#')[0]?.split('?')[0]?.trim() ?? ''
-  if (!clean) return null
-
-  if (clean.startsWith('/')) {
-    if (!rootPath) return null
-    return `${rootPath.replace(/\\/g, '/').replace(/\/$/, '')}/${clean.replace(/^\/+/, '')}`
+  try {
+    const parsed = JSON.parse(raw) as SearchIndexDisk
+    const entries = parsed.entries ? Object.values(parsed.entries) : []
+    const matchingPaths = entries
+      .filter((entry) => (!rootPath || entry.path === rootPath || entry.path.startsWith(`${rootPath}/`)))
+      .filter((entry) => entry.linkedPaths?.some((linkedPath) => pathReferencesMovedTarget(linkedPath, sourcePath)))
+      .map((entry) => entry.path)
+    return Array.from(new Set(matchingPaths))
+  } catch {
+    return null
   }
-
-  const currentParts = currentFilePath.replace(/\\/g, '/').split('/').slice(0, -1).filter(Boolean)
-  const targetParts = clean.replace(/\\/g, '/').split('/').filter(Boolean)
-  const resolvedParts = [...currentParts]
-
-  for (const part of targetParts) {
-    if (part === '.') continue
-    if (part === '..') {
-      resolvedParts.pop()
-      continue
-    }
-    resolvedParts.push(part)
-  }
-
-  return `${currentFilePath.startsWith('/') ? '/' : ''}${resolvedParts.join('/')}`
 }
 
-function formatMarkdownDestination(destination: string): string {
-  return /\s/.test(destination) ? `<${destination}>` : destination
-}
+async function getIndexedMovedMarkdownPaths(sourcePath: string, rootPath?: string) {
+  const raw = await window.holo?.readSearchIndex().catch(() => null)
+  if (!raw) return null
 
-function rewriteMarkdownLinksForMovedPath(markdown: string, currentFilePath: string, sourcePath: string, nextPath: string, rootPath?: string) {
-  let changed = false
-
-  const nextMarkdown = markdown.replace(/(!?\[[^\]]*\]\()([^)]+)(\))/g, (fullMatch, open, rawDestination, close) => {
-    const { destination, token } = parseMarkdownDestinationInfo(rawDestination)
-    if (!destination || !token) return fullMatch
-
-    const resolvedTarget = resolveMarkdownTargetPath(destination, currentFilePath, rootPath)
-    if (!resolvedTarget || resolvedTarget.replace(/\\/g, '/') !== sourcePath.replace(/\\/g, '/')) {
-      return fullMatch
-    }
-
-    const relativeDestination = getRelativeLinkPath(currentFilePath, nextPath, rootPath ?? null)
-    const formatted = formatMarkdownDestination(relativeDestination)
-    const nextRawDestination = rawDestination.replace(token, formatted)
-    if (nextRawDestination === rawDestination) return fullMatch
-
-    changed = true
-    return `${open}${nextRawDestination}${close}`
-  })
-
-  return { markdown: nextMarkdown, changed }
+  try {
+    const parsed = JSON.parse(raw) as SearchIndexDisk
+    const entries = parsed.entries ? Object.values(parsed.entries) : []
+    const matchingPaths = entries
+      .filter((entry) => entry.path.toLowerCase().endsWith('.md'))
+      .filter((entry) => (!rootPath || entry.path === rootPath || entry.path.startsWith(`${rootPath}/`)))
+      .filter((entry) => pathReferencesMovedTarget(entry.path, sourcePath))
+      .map((entry) => entry.path)
+    return Array.from(new Set(matchingPaths))
+  } catch {
+    return null
+  }
 }
 
 function collectMdPaths(nodes: SpaceFileNode[]): string[] {
@@ -234,12 +182,6 @@ function getAllFolders(nodes: SpaceFileNode[], depth = 0): { path: string; label
   return result
 }
 
-function getFileIcon(node: SpaceFileNode): LucideIcon {
-  if (node.type === 'folder') return Folder
-  if (node.extension === 'md') return FileText
-  return File
-}
-
 // Props DnD passés à chaque TreeNode
 type DragProps = {
   dragOverPath: string | null
@@ -254,6 +196,7 @@ function TreeNode({
   node,
   level,
   activePath,
+  selectedFilePath,
   expanded,
   onToggle,
   onSelectFile,
@@ -267,6 +210,7 @@ function TreeNode({
   node: SpaceFileNode
   level: number
   activePath?: string
+  selectedFilePath?: string
   expanded: Set<string>
   onToggle: (path: string) => void
   onSelectFile?: (node: SpaceFileNode) => void
@@ -280,8 +224,9 @@ function TreeNode({
   const isFolder = node.type === 'folder'
   const isExpanded = expanded.has(node.path)
   const isSelected = activePath === node.path
+  const isOpenedFile = !isFolder && selectedFilePath === node.path
   const hasChildren = Boolean(node.children?.length)
-  const FileIcon = getFileIcon(node)
+  const FileIcon = isFolder ? (isExpanded ? FolderOpen : Folder) : (isOpenedFile ? FileUser : File)
   const isDragOver = drag?.dragOverPath === node.path && isFolder
   const isFav = !isFolder && (favoriteFilePaths?.includes(node.path) ?? false)
   const { fileMetaByPath: workspaceFileMeta } = useWorkspace()
@@ -319,6 +264,7 @@ function TreeNode({
           isSelected
             ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-holo-primary/20'
             : 'text-holo-text-muted',
+          isOpenedFile && 'bg-white/[0.045] text-holo-text ring-1 ring-white/[0.06]',
           isDragOver && 'ring-1 ring-holo-primary/50 bg-holo-primary-surface/60 text-holo-primary-soft',
         )}
         style={{ paddingLeft: `${10 + level * 14}px` }}
@@ -333,17 +279,25 @@ function TreeNode({
           )}
         </span>
 
-        <span className="flex size-5 shrink-0 items-center justify-center text-holo-text-faint group-hover:text-holo-text-muted">
+        <span className={cn(
+          'flex size-5 shrink-0 items-center justify-center text-holo-text-faint group-hover:text-holo-text-muted',
+          isOpenedFile && 'text-holo-primary',
+          isFolder && isExpanded && 'text-holo-primary-soft/80',
+        )}
+          style={isOpenedFile ? { color: 'var(--color-holo-primary)' } : undefined}
+        >
           {displayIcon
-            ? <span className="text-sm leading-none">{displayIcon}</span>
-            : <FileIcon size={14} />
+            ? <span className={cn('text-sm leading-none', isOpenedFile && 'text-holo-primary drop-shadow-[0_0_10px_rgba(123,97,255,0.28)]')}>{displayIcon}</span>
+            : <FileIcon size={14} className={cn(isOpenedFile && 'text-holo-primary')} />
           }
         </span>
 
         <div className="min-w-0 flex-1">
-          <div className="truncate leading-none">{displayTitle}</div>
+          <div className={cn('truncate leading-none', isOpenedFile && 'font-semibold text-holo-primary-soft')}>{displayTitle}</div>
           {displayDesc && (
-            <div className="mt-0.5 truncate text-[11px] leading-4 text-holo-text-faint/70">{displayDesc}</div>
+            <div className={cn('mt-0.5 truncate text-[11px] leading-4 text-holo-text-faint/70', isOpenedFile && 'text-holo-primary-soft/70')}>
+              {displayDesc}
+            </div>
           )}
         </div>
 
@@ -363,6 +317,7 @@ function TreeNode({
               node={child}
               level={level + 1}
               activePath={activePath}
+              selectedFilePath={selectedFilePath}
               expanded={expanded}
               onToggle={onToggle}
               onSelectFile={onSelectFile}
@@ -472,6 +427,26 @@ export function SpacePanel({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
   const [selectedFolderPath, setSelectedFolderPath] = useState('')
 
+  useEffect(() => {
+    if (!rootPath || !selectedPath || !selectedPath.startsWith(`${rootPath}/`)) return
+    setTab('browse')
+    setSelectedFolderPath('')
+    setExpanded((previous) => {
+      const next = new Set(previous)
+      let current = selectedPath.slice(0, selectedPath.lastIndexOf('/'))
+      while (current && current.length >= rootPath.length) {
+        next.add(current)
+        if (current === rootPath) break
+        current = current.slice(0, current.lastIndexOf('/'))
+      }
+      return next
+    })
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(selectedPath)}"]`)
+      target?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [rootPath, selectedPath])
+
   // Réagit au clic sur un dossier dans le breadcrumb de l'éditeur
   useEffect(() => {
     const handler = (e: Event) => {
@@ -544,12 +519,18 @@ export function SpacePanel({
   // ─── Drag-and-drop ──────────────────────────────────────────────────────────
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [dragOverRoot, setDragOverRoot] = useState(false)
+  const [dragSourcePath, setDragSourcePath] = useState<string | null>(null)
   const dragSourceRef = useRef<string | null>(null)
 
   const handleDragStart = useCallback((path: string, e: React.DragEvent) => {
     dragSourceRef.current = path
     e.dataTransfer.setData('text/plain', path)
     e.dataTransfer.effectAllowed = 'move'
+    requestAnimationFrame(() => {
+      if (dragSourceRef.current === path) {
+        setDragSourcePath(path)
+      }
+    })
   }, [])
 
   const handleDragOverFolder = useCallback((folderPath: string, e: React.DragEvent) => {
@@ -557,7 +538,7 @@ export function SpacePanel({
     e.stopPropagation()
     const source = dragSourceRef.current
     // Interdit de déposer un dossier dans lui-même ou dans un de ses enfants
-    if (source && (folderPath === source || folderPath.startsWith(source + '/'))) return
+    if (source && isSameOrChildPath(source, folderPath)) return
     e.dataTransfer.dropEffect = 'move'
     setDragOverRoot(false)
     setDragOverPath(folderPath)
@@ -573,11 +554,13 @@ export function SpacePanel({
     e.preventDefault()
     e.stopPropagation()
     setDragOverPath(null)
+    setDragOverRoot(false)
     const sourcePath = e.dataTransfer.getData('text/plain') || dragSourceRef.current
     dragSourceRef.current = null
-    if (!sourcePath || sourcePath === folderPath || folderPath.startsWith(sourcePath + '/')) return
+    setDragSourcePath(null)
+    if (!sourcePath || sourcePath === folderPath || isSameOrChildPath(sourcePath, folderPath)) return
     // Évite de déplacer vers le dossier parent actuel (opération inutile)
-    const currentParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+    const currentParent = getParentPath(sourcePath)
     if (currentParent === folderPath) return
     onMoveItem?.(sourcePath, folderPath)
   }, [onMoveItem])
@@ -587,8 +570,8 @@ export function SpacePanel({
     e.preventDefault()
     const source = dragSourceRef.current
     if (!source || !rootPath) return
-    if (source === rootPath || rootPath.startsWith(source + '/')) return
-    const currentParent = source.substring(0, source.lastIndexOf('/'))
+    if (isSameOrChildPath(source, rootPath)) return
+    const currentParent = getParentPath(source)
     if (currentParent === rootPath) return  // déjà à la racine
     e.dataTransfer.dropEffect = 'move'
     setDragOverRoot(true)
@@ -605,15 +588,17 @@ export function SpacePanel({
     setDragOverRoot(false)
     const sourcePath = e.dataTransfer.getData('text/plain') || dragSourceRef.current
     dragSourceRef.current = null
+    setDragSourcePath(null)
     if (!sourcePath || !rootPath) return
-    const currentParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+    const currentParent = getParentPath(sourcePath)
     if (currentParent === rootPath) return
-    if (sourcePath === rootPath || rootPath.startsWith(sourcePath + '/')) return
+    if (isSameOrChildPath(sourcePath, rootPath)) return
     onMoveItem?.(sourcePath, rootPath)
   }, [rootPath, onMoveItem])
 
   const handleDragEnd = useCallback(() => {
     dragSourceRef.current = null
+    setDragSourcePath(null)
     setDragOverPath(null)
     setDragOverRoot(false)
   }, [])
@@ -877,12 +862,26 @@ export function SpacePanel({
               onDragLeave={rootPath ? handleDragLeaveRoot : undefined}
               onDrop={rootPath ? handleDropRoot : undefined}
             >
+              {dragSourcePath && (
+                <div
+                  className={cn(
+                    'mb-2 flex items-center gap-2 rounded-holo-lg border border-dashed px-3 py-2 text-xs transition',
+                    dragOverRoot
+                      ? 'border-holo-primary/60 bg-holo-primary-surface/30 text-holo-primary-soft'
+                      : 'border-holo-border-soft text-holo-text-faint',
+                  )}
+                >
+                  <FolderOpen size={12} className="shrink-0" />
+                  <span>Racine de l'espace</span>
+                </div>
+              )}
               {filteredFiles.map((node) => (
                 <TreeNode
                   key={node.path}
                   node={node}
                   level={0}
                   activePath={selectedFolderPath || selectedPath}
+                  selectedFilePath={selectedPath}
                   expanded={expanded}
                   onToggle={handleToggle}
                   onSelectFile={onSelectFile}
@@ -1367,11 +1366,15 @@ export function SpaceRoute({
 
   const handleMoveItem = useCallback(async (sourcePath: string, targetFolderPath: string) => {
     try {
-      const nextPath = `${targetFolderPath.replace(/\/$/, '')}/${getBaseName(sourcePath)}`
-      await window.holo?.movePath(sourcePath, targetFolderPath)
+      const indexedReferencingPaths = rootPath ? await getIndexedReferencingMarkdownPaths(sourcePath, rootPath) : null
+      const indexedMovedMarkdownPaths = rootPath ? await getIndexedMovedMarkdownPaths(sourcePath, rootPath) : null
+      const moved = await window.holo?.movePath(sourcePath, targetFolderPath)
+      const nextPath = moved?.newPath ?? `${targetFolderPath.replace(/\/$/, '')}/${getBaseName(sourcePath)}`
+      const updatedMarkdownPaths = new Set<string>()
 
-      if (rootPath && sourcePath.toLowerCase().endsWith('.md')) {
-        const markdownPaths = await window.holo?.scanMdFiles(rootPath).catch(() => [])
+      if (rootPath) {
+        const markdownPaths = indexedReferencingPaths
+          ?? await window.holo?.scanMdFiles(rootPath).catch(() => [])
         for (const markdownPath of markdownPaths ?? []) {
           try {
             const content = await window.holo?.readFile(markdownPath)
@@ -1379,9 +1382,29 @@ export function SpaceRoute({
             const rewritten = rewriteMarkdownLinksForMovedPath(content, markdownPath, sourcePath, nextPath, rootPath)
             if (rewritten.changed) {
               await window.holo?.writeFile(markdownPath, rewritten.markdown)
+              window.dispatchEvent(new CustomEvent('holo:index-entry-updated', { detail: { path: markdownPath, content: rewritten.markdown } }))
+              updatedMarkdownPaths.add(markdownPath)
             }
           } catch (error) {
             console.error('[SpaceRoute] Impossible de mettre a jour les liens de', markdownPath, error)
+          }
+        }
+
+        const movedMarkdownPaths = indexedMovedMarkdownPaths
+          ?? await window.holo?.scanMdFiles(nextPath).catch(() => [])
+        for (const previousMarkdownPath of movedMarkdownPaths ?? []) {
+          const nextMarkdownPath = remapTrackedPath(previousMarkdownPath, sourcePath, nextPath)
+          try {
+            const content = await window.holo?.readFile(nextMarkdownPath)
+            if (typeof content !== 'string' || !content.includes('](')) continue
+            const rewritten = rewriteMarkdownLinksForRelocatedSource(content, previousMarkdownPath, nextMarkdownPath, rootPath)
+            if (rewritten.changed) {
+              await window.holo?.writeFile(nextMarkdownPath, rewritten.markdown)
+              window.dispatchEvent(new CustomEvent('holo:index-entry-updated', { detail: { path: nextMarkdownPath, content: rewritten.markdown } }))
+              updatedMarkdownPaths.add(nextMarkdownPath)
+            }
+          } catch (error) {
+            console.error('[SpaceRoute] Impossible de recalculer les liens de', nextMarkdownPath, error)
           }
         }
       }
@@ -1389,6 +1412,14 @@ export function SpaceRoute({
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
       window.dispatchEvent(new CustomEvent('holo:path-moved', { detail: { from: sourcePath, to: nextPath } }))
+      if (updatedMarkdownPaths.size > 0) {
+        const count = updatedMarkdownPaths.size
+        window.dispatchEvent(new CustomEvent('holo:operation-feedback', {
+          detail: {
+            message: `${count} fichier${count > 1 ? 's' : ''} Markdown mis a jour apres le deplacement.`,
+          },
+        }))
+      }
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de déplacer :', err)
@@ -1397,14 +1428,65 @@ export function SpaceRoute({
 
   const handleRenameItem = useCallback(async (path: string, newName: string) => {
     try {
-      await window.holo?.renamePath(path, newName)
+      const indexedReferencingPaths = rootPath ? await getIndexedReferencingMarkdownPaths(path, rootPath) : null
+      const indexedMovedMarkdownPaths = rootPath ? await getIndexedMovedMarkdownPaths(path, rootPath) : null
+      const renamed = await window.holo?.renamePath(path, newName)
+      const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+      const nextPath = renamed?.newPath ?? `${parentPath}/${newName}`
+      const updatedMarkdownPaths = new Set<string>()
+
+      if (rootPath) {
+        const markdownPaths = indexedReferencingPaths
+          ?? await window.holo?.scanMdFiles(rootPath).catch(() => [])
+        for (const markdownPath of markdownPaths ?? []) {
+          try {
+            const content = await window.holo?.readFile(markdownPath)
+            if (typeof content !== 'string' || !content.includes('](')) continue
+            const rewritten = rewriteMarkdownLinksForMovedPath(content, markdownPath, path, nextPath, rootPath)
+            if (rewritten.changed) {
+              await window.holo?.writeFile(markdownPath, rewritten.markdown)
+              window.dispatchEvent(new CustomEvent('holo:index-entry-updated', { detail: { path: markdownPath, content: rewritten.markdown } }))
+              updatedMarkdownPaths.add(markdownPath)
+            }
+          } catch (error) {
+            console.error('[SpaceRoute] Impossible de mettre a jour les liens de', markdownPath, error)
+          }
+        }
+
+        const movedMarkdownPaths = indexedMovedMarkdownPaths ?? (path.toLowerCase().endsWith('.md') ? [path] : [])
+        for (const previousMarkdownPath of movedMarkdownPaths ?? []) {
+          const nextMarkdownPath = remapTrackedPath(previousMarkdownPath, path, nextPath)
+          try {
+            const content = await window.holo?.readFile(nextMarkdownPath)
+            if (typeof content !== 'string' || !content.includes('](')) continue
+            const rewritten = rewriteMarkdownLinksForRelocatedSource(content, previousMarkdownPath, nextMarkdownPath, rootPath)
+            if (rewritten.changed) {
+              await window.holo?.writeFile(nextMarkdownPath, rewritten.markdown)
+              window.dispatchEvent(new CustomEvent('holo:index-entry-updated', { detail: { path: nextMarkdownPath, content: rewritten.markdown } }))
+              updatedMarkdownPaths.add(nextMarkdownPath)
+            }
+          } catch (error) {
+            console.error('[SpaceRoute] Impossible de recalculer les liens de', nextMarkdownPath, error)
+          }
+        }
+      }
+
       const result = await window.holo?.refreshTree()
       if (result) setTree(result.tree)
+      window.dispatchEvent(new CustomEvent('holo:path-moved', { detail: { from: path, to: nextPath } }))
+      if (updatedMarkdownPaths.size > 0) {
+        const count = updatedMarkdownPaths.size
+        window.dispatchEvent(new CustomEvent('holo:operation-feedback', {
+          detail: {
+            message: `${count} fichier${count > 1 ? 's' : ''} Markdown mis a jour apres le renommage.`,
+          },
+        }))
+      }
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de renommer :', err)
     }
-  }, [setTree])
+  }, [rootPath, setTree])
 
   const handleDeleteItem = useCallback(async (path: string) => {
     try {

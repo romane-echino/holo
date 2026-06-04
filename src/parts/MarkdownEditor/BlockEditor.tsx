@@ -20,7 +20,7 @@ import { GripVertical } from 'lucide-react'
 import { ParagraphBlock } from './blocks/ParagraphBlock'
 import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
-import { ListBlock } from './blocks/ListBlock'
+import { ListBlock, listBlockItemsToNode } from './blocks/ListBlock'
 import { CodeBlock } from './blocks/CodeBlock'
 import { BlockquoteBlock } from './blocks/BlockquoteBlock'
 import { ImageBlock } from './blocks/ImageBlock'
@@ -579,6 +579,69 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     [],
   )
 
+  const handleLiftListItemAtStart = useCallback(
+    (id: string, itemId: string, items: import('./blocks/ListBlock').ListBlockItem[], baseNode: ListNode) => {
+      applyBlocksMutation((prev) => {
+        const blockIndex = prev.findIndex((block) => block.id === id)
+        if (blockIndex === -1) return prev
+
+        const itemIndex = items.findIndex((item) => item.id === itemId)
+        if (itemIndex === -1) return prev
+
+        const currentItem = items[itemIndex]
+        if (currentItem.depth > 0) return prev
+
+        let descendantsEnd = itemIndex + 1
+        while (descendantsEnd < items.length && items[descendantsEnd].depth > currentItem.depth) {
+          descendantsEnd += 1
+        }
+
+        const beforeItems = items.slice(0, itemIndex)
+        const descendantItems = items
+          .slice(itemIndex + 1, descendantsEnd)
+          .map((item) => ({ ...item, depth: Math.max(0, item.depth - 1) }))
+        const afterItems = [...descendantItems, ...items.slice(descendantsEnd)]
+
+        const replacement: BlockState[] = []
+        if (beforeItems.length > 0) {
+          replacement.push({
+            id: crypto.randomUUID(),
+            node: listBlockItemsToNode(beforeItems, baseNode),
+          })
+        }
+
+        replacement.push({
+          id,
+          node: { type: 'paragraph', children: currentItem.inlines } as ParagraphNode,
+        })
+
+        if (afterItems.length > 0) {
+          replacement.push({
+            id: crypto.randomUUID(),
+            node: listBlockItemsToNode(afterItems, baseNode),
+          })
+        }
+
+        pendingFocusRef.current = id
+        return [...prev.slice(0, blockIndex), ...replacement, ...prev.slice(blockIndex + 1)]
+      }, 'immediate')
+
+      setTimeout(() => blockRefs.current.get(id)?.focus(), 0)
+    },
+    [applyBlocksMutation],
+  )
+
+  const restoreFocusAfterHistoryMove = useCallback((nextBlocks: BlockState[]) => {
+    if (nextBlocks.length === 0) return
+    const focusedId = lastFocusedBlockIdRef.current
+    const currentBlocks = blocksRef.current
+    const focusedIndex = focusedId ? currentBlocks.findIndex((block) => block.id === focusedId) : -1
+    const fallbackIndex = focusedIndex >= 0 ? focusedIndex : 0
+    const targetIndex = Math.min(fallbackIndex, nextBlocks.length - 1)
+    pendingFocusRef.current = nextBlocks[targetIndex].id
+    setSelectedBlockIds(new Set())
+  }, [])
+
   // Conversion de type (raccourci markdown ou slash command)
   const handleConvert = useCallback(
     (id: string, targetType: string, children?: InlineNode[]) => {
@@ -825,9 +888,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       pushHistorySnapshot(blocksToMarkdown(blocksRef.current))
       if (h.pos > 0) {
         h.pos--
+        const nextBlocks = markdownToBlocks(h.stack[h.pos])
+        restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
         blocksDirtyRef.current = true
-        setBlocks(markdownToBlocks(h.stack[h.pos]))
+        setBlocks(nextBlocks)
       }
       return
     }
@@ -838,16 +903,18 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       const h = historyRef.current
       if (h.pos < h.stack.length - 1) {
         h.pos++
+        const nextBlocks = markdownToBlocks(h.stack[h.pos])
+        restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
         blocksDirtyRef.current = true
-        setBlocks(markdownToBlocks(h.stack[h.pos]))
+        setBlocks(nextBlocks)
       }
       return
     }
     if (e.key === 'Enter' && selectedBlockIds.size === 1) {
       const [selectedBlockId] = [...selectedBlockIds]
       const selectedBlock = blocksRef.current.find((block) => block.id === selectedBlockId)
-      if (selectedBlock?.node.type === 'table') {
+      if (selectedBlock?.node.type === 'table' || selectedBlock?.node.type === 'thematicBreak') {
         e.preventDefault()
         handleEnterAtEnd(selectedBlockId)
         setSelectedBlockIds(new Set())
@@ -868,7 +935,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }
-  }, [handleEnterAtEnd, pushHistorySnapshot, selectedBlockIds])
+  }, [handleEnterAtEnd, pushHistorySnapshot, restoreFocusAfterHistoryMove, selectedBlockIds])
 
   const handleSelectedBlocksCopy = useCallback((clipboardData?: DataTransfer | null) => {
     if (selectedBlockIds.size === 0) return false
@@ -1119,6 +1186,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             onArrowUp={(x) => handleArrowUp(block.id, x)}
             onArrowDown={(x) => handleArrowDown(block.id, x)}
             onConvert={(type, children) => handleConvert(block.id, type, children)}
+            onLiftListItemAtStart={(itemId, items, node) => handleLiftListItemAtStart(block.id, itemId, items, node)}
             onSlashCommand={() => handleSlashCommand(block.id)}
             onSplit={(after) => handleSplit(block.id, after)}
             onSmartPaste={(before, after, md) => handleSmartPaste(block.id, before, after, md)}
@@ -1163,6 +1231,7 @@ function BlockDispatcher({
   onArrowUp,
   onArrowDown,
   onConvert,
+  onLiftListItemAtStart,
   onSlashCommand,
   onSplit,
   onSmartPaste,
@@ -1181,6 +1250,7 @@ function BlockDispatcher({
   onArrowUp: (x: number) => void
   onArrowDown: (x: number) => void
   onConvert: (type: string, children: InlineNode[]) => void
+  onLiftListItemAtStart: (itemId: string, items: import('./blocks/ListBlock').ListBlockItem[], node: ListNode) => void
   onSlashCommand: () => void
   onSplit: (after: InlineNode[]) => void
   onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
@@ -1256,6 +1326,7 @@ function BlockDispatcher({
           onArrowDown={onArrowDown}
           onEnterAtEnd={onEnterAtEnd}
           onBackspaceAtStart={onBackspaceAtStart}
+          onLiftItemAtStart={onLiftListItemAtStart}
         />
       )
 

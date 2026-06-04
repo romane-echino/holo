@@ -53,7 +53,7 @@ function getLinkHref(range: Range, boundary: HTMLElement): string | null {
 
 // ─── Types internes ──────────────────────────────────────────────────────────
 
-interface Item {
+export interface ListBlockItem {
   id: string
   inlines: InlineNode[]
   checked: boolean | null
@@ -65,17 +65,17 @@ const newItemId = () => `li${++_li}`
 
 // ─── Conversion node ↔ items ─────────────────────────────────────────────────
 
-function nodeToItems(node: ListNode, depth = 0): Item[] {
+function nodeToItems(node: ListNode, depth = 0): ListBlockItem[] {
   return node.children.flatMap((item) => {
     const para = item.children.find((c): c is ParagraphNode => c.type === 'paragraph')
     const sublist = item.children.find((c): c is ListNode => c.type === 'list')
-    const result: Item[] = [{ id: newItemId(), inlines: para?.children ?? [], checked: item.checked, depth }]
+    const result: ListBlockItem[] = [{ id: newItemId(), inlines: para?.children ?? [], checked: item.checked, depth }]
     if (sublist) result.push(...nodeToItems(sublist, depth + 1))
     return result
   })
 }
 
-function itemsToNode(items: Item[], base: ListNode): ListNode {
+export function listBlockItemsToNode(items: ListBlockItem[], base: ListNode): ListNode {
   function buildLevel(start: number, depth: number): { listItems: ListItemNode[]; nextIdx: number } {
     const listItems: ListItemNode[] = []
     let i = start
@@ -105,7 +105,7 @@ function itemsToNode(items: Item[], base: ListNode): ListNode {
 
 // ─── Calcul des marqueurs imbriqués (1.1, a.1, a.1.1…) ──────────────────────
 
-function computeLabels(items: Item[], listStyle: string): string[] {
+function computeLabels(items: ListBlockItem[], listStyle: string): string[] {
   // counters[depth] = compteur courant pour ce niveau
   const counters: number[] = []
   return items.map(item => {
@@ -135,13 +135,14 @@ export interface ListBlockProps {
   onArrowDown?: (cursorX: number) => void
   onEnterAtEnd?: () => void
   onBackspaceAtStart?: () => void
+  onLiftItemAtStart?: (id: string, items: ListBlockItem[], node: ListNode) => void
 }
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
 export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
-  function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart }, ref) {
-    const [items, setItems] = useState<Item[]>(() => nodeToItems(node))
+  function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart, onLiftItemAtStart }, ref) {
+    const [items, setItems] = useState<ListBlockItem[]>(() => nodeToItems(node))
     const listStyle = (node.data?.listStyle as string | undefined) ?? (node.ordered ? 'ordered' : 'bullet')
     const labels = computeLabels(items, listStyle)
     // Ref toujours synchronisé avec items pour éviter les closures périmées dans les handlers
@@ -188,7 +189,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
     // ── Emit ─────────────────────────────────────────────────────────────────
 
     const emit = useCallback(
-      (next: Item[]) => onChange(itemsToNode(next, node)),
+      (next: ListBlockItem[]) => onChange(listBlockItemsToNode(next, node)),
       [onChange, node],
     )
 
@@ -223,7 +224,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
         // Mettre à jour l'item courant ET créer le nouvel item en un seul setItems
         // (évite le batching React qui écrase les inlines si onSave et onEnter sont séparés)
         const isChecklist = prev.some((i) => i.checked !== null)
-        const newItem: Item = {
+        const newItem: ListBlockItem = {
           id: newItemId(),
           inlines: afterInlines,
           checked: isChecklist ? false : null,
@@ -324,6 +325,16 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       [emit, focusItem, onBackspaceAtStart],
     )
 
+    const handleItemLift = useCallback(
+      (id: string, inlines: InlineNode[]) => {
+        const next = itemsRef.current.map((item) => (item.id === id ? { ...item, inlines } : item))
+        setItems(next)
+        emit(next)
+        onLiftItemAtStart?.(id, next, node)
+      },
+      [emit, node, onLiftItemAtStart],
+    )
+
     // ── Rendu ─────────────────────────────────────────────────────────────────
 
     return (
@@ -345,6 +356,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
             onEnter={(before, after, empty) => handleItemEnter(item.id, before, after, empty)}
             onTab={(shift, inlines) => handleItemTab(item.id, shift, inlines)}
             onBackspaceAtStart={() => handleItemBackspace(item.id)}
+            onLiftItemAtStart={(inlines) => handleItemLift(item.id, inlines)}
             onArrowUp={(x) => {
               if (idx === 0) onArrowUp?.(x)
               else focusItem(items[idx - 1].id, 'end')
@@ -374,10 +386,11 @@ function ListItemRow({
   onEnter,
   onTab,
   onBackspaceAtStart,
+  onLiftItemAtStart,
   onArrowUp,
   onArrowDown,
 }: {
-  item: Item
+  item: ListBlockItem
   idx: number
   label: string
   ordered: boolean
@@ -388,6 +401,7 @@ function ListItemRow({
   onEnter: (beforeInlines: InlineNode[], afterInlines: InlineNode[], isEmpty: boolean) => void
   onTab: (shift: boolean, currentInlines: InlineNode[]) => void
   onBackspaceAtStart: () => void
+  onLiftItemAtStart: (currentInlines: InlineNode[]) => void
   onArrowUp: (x: number) => void
   onArrowDown: (x: number) => void
 }) {
@@ -594,9 +608,21 @@ function ListItemRow({
       onEnter(beforeInlines, afterInlines, isEmpty)
       return
     }
-    if (e.key === 'Backspace' && isAtStart() && !el.textContent?.trim()) {
+    if (e.key === 'Backspace' && isAtStart()) {
+      const isEmpty = !el.textContent?.trim()
+      if (isEmpty) {
+        e.preventDefault()
+        onBackspaceAtStart()
+        return
+      }
       e.preventDefault()
-      onBackspaceAtStart()
+      savedRef.current = true
+      const currentInlines = domToInlines(el)
+      if (item.depth > 0) {
+        onTab(true, currentInlines)
+      } else {
+        onLiftItemAtStart(currentInlines)
+      }
       return
     }
     // Formatage inline

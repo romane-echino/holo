@@ -141,7 +141,7 @@ function App() {
 
   const allFilePaths = useMemo(() => (tree ? flatTreeFiles(tree) : []), [tree])
   const { myFilePaths } = useMyFilePaths({ allFilePaths, getHoloApi })
-  const { indexEntries, updateIndexEntry } = useSearchIndex({ rootPath, allFilePaths, getHoloApi })
+  const { indexEntries, updateIndexEntry } = useSearchIndex({ rootPath, allFilePaths, scopeRoots: rootPath ? [rootPath] : [], getHoloApi })
   const { visibleRecentFilePaths, linkPageSuggestions } = useNavigationSuggestions({ allFilePaths })
 
   useCompactToc({
