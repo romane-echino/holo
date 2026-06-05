@@ -40,6 +40,18 @@ async function installMentionApiMock(page: Page) {
   })
 }
 
+async function installMentionApiFailureMock(page: Page) {
+  await page.addInitScript(() => {
+    const existing = (window as Window & { holo?: Record<string, unknown> }).holo ?? {}
+    ;(window as Window & { holo?: Record<string, unknown> }).holo = {
+      ...existing,
+      gitGetContributors: async () => {
+        throw new Error('contributors unavailable')
+      },
+    }
+  })
+}
+
 async function waitForMd(page: Page, predicate: (md: string) => boolean, timeout = 5000): Promise<string> {
   let md = ''
   await expect(async () => {
@@ -248,6 +260,26 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
     await expectContextIntact(page)
   })
 
+  test('le popup de type citation se ferme au blur et garde un z-index eleve', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Citation')
+
+    const blockquote = page.locator('blockquote').first()
+    const typeButton = blockquote.getByRole('button', { name: /Type de citation/i })
+    await typeButton.click()
+
+    const popupOption = page.getByRole('button', { name: 'Définir le type Citation simple' })
+    await expect(popupOption).toBeVisible({ timeout: 3_000 })
+    const popup = popupOption.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
+    await expect(popup).toHaveCSS('z-index', '9999')
+
+    await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
+    await expect(popupOption).toBeHidden({ timeout: 3_000 })
+  })
+
   test('blockquote pré-existant dans le markdown est éditable', async ({ page }) => {
     await gotoEditor(page, [
       'Alpha-premier',
@@ -351,7 +383,7 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
       s.includes('> Texte de citation') && !s.includes('[!WARNING]'),
       6000,
     )
-    expect(plainMd).toContain('Alpha-premier')
+    expect(plainMd).toContain('Gamma-dernier')
   })
 })
 
@@ -620,11 +652,11 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await input.fill('https://youtu.be/dQw4w9WgXcQ')
     await page.getByRole('button', { name: 'Valider' }).click()
 
-    await expect(page.locator('iframe[src*="youtube.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1)
+      await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (s) =>
       s.includes('<iframe')
-      && s.includes('youtube.com/embed/dQw4w9WgXcQ')
+      && s.includes('youtube-nocookie.com/embed/dQw4w9WgXcQ')
       && s.includes('Gamma-dernier'),
       6000,
     )
@@ -635,7 +667,7 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await gotoEditor(page, [
       'Alpha-premier',
       '',
-      '<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Vidéo YouTube" allowfullscreen></iframe>',
+        '<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" title="Vidéo YouTube" allowfullscreen></iframe>',
       '',
       'Gamma-dernier',
     ].join('\n'))
@@ -648,11 +680,40 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
   await page.getByRole('button', { name: 'Valider' }).click()
 
     const md = await waitForMd(page, (s) =>
-      s.includes('youtube.com/embed/M7lc1UVf-VE')
+      s.includes('youtube-nocookie.com/embed/M7lc1UVf-VE')
       && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
+  })
+
+  test('Ctrl+A dans l input YouTube sélectionne seulement l URL et pas tous les blocs', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+        '<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" title="Vidéo YouTube" allowfullscreen></iframe>',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Modifier la vidéo YouTube' }).click()
+
+    const input = page.locator('input[type="url"]').first()
+    await expect(input).toBeVisible()
+    await input.press('Control+A')
+    await input.type('https://www.youtube.com/watch?v=eNhx-ehhumg')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/eNhx-ehhumg"]')).toHaveCount(1)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('Alpha-premier')
+      && s.includes('Gamma-dernier')
+      && s.includes('youtube-nocookie.com/embed/eNhx-ehhumg'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+    expect(md).toContain('Gamma-dernier')
   })
 
   test('un lien watch youtube valide produit un embed compatible sans erreur 153', async ({ page }) => {
@@ -667,10 +728,10 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
   await input.fill('https://www.youtube.com/watch?v=eNhx-ehhumg')
   await page.getByRole('button', { name: 'Valider' }).click()
 
-    await expect(page.locator('iframe[src*="youtube.com/embed/eNhx-ehhumg"]')).toHaveCount(1)
+    await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/eNhx-ehhumg"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (s) =>
-      s.includes('youtube.com/embed/eNhx-ehhumg') && s.includes('Gamma-dernier'),
+      s.includes('youtube-nocookie.com/embed/eNhx-ehhumg') && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
@@ -688,10 +749,10 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await input.fill('https://www.youtube.com/watch?v=L5mJQ0kyHbM')
     await page.getByRole('button', { name: 'Valider' }).click()
 
-    await expect(page.locator('iframe[src*="youtube.com/embed/L5mJQ0kyHbM"]')).toHaveCount(1)
+    await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/L5mJQ0kyHbM"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (s) =>
-      s.includes('youtube.com/embed/L5mJQ0kyHbM') && s.includes('Gamma-dernier'),
+      s.includes('youtube-nocookie.com/embed/L5mJQ0kyHbM') && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
@@ -720,6 +781,26 @@ test.describe('Mentions — autocomplete repo', () => {
       6000,
     )
     expect(md).toContain('@romane')
+  })
+
+  test('si le chargement des contributeurs échoue la saisie reste possible sans popup', async ({ page }) => {
+    await installMentionApiFailureMock(page)
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await milieu.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' @ro')
+
+    await expect(page.getByTestId('mention-popup')).toHaveCount(0)
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('Beta-milieu @ro')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
   })
 })
 
@@ -761,7 +842,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
     await expect(fnEditor).toBeVisible({ timeout: 3_000 })
     await fnEditor.click()
     await page.keyboard.type('Premier')
-    await page.waitForTimeout(700)
+    await waitForMd(page, (s) => /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Premier/m.test(s), 5000)
     await expect(fnEditor).toBeFocused()
     await page.keyboard.type(' second')
     await page.keyboard.press('Tab')
@@ -948,7 +1029,7 @@ test.describe('Tableau — stabilité de focus', () => {
     await expect(firstTextCell).toBeVisible({ timeout: 3_000 })
     await firstTextCell.click()
     await page.keyboard.type('Alpha')
-    await page.waitForTimeout(700)
+    await waitForMd(page, (s) => s.includes('| Alpha |') && s.includes('Gamma-dernier'), 5000)
     await expect(firstTextCell).toBeFocused()
     await page.keyboard.type(' beta')
     await page.keyboard.press('Tab')
@@ -1011,6 +1092,27 @@ test.describe('Image block — sélection et suppression', () => {
     expect(md).not.toContain('Logo test')
     expect(md).toContain('Alpha-premier')
     expect(md).toContain('Gamma-dernier')
+  })
+
+  test('Enter après sélection d image insère un paragraphe juste après', async ({ page }) => {
+    await gotoEditor(page, IMAGE_MD)
+
+    const figure = page.locator('figure').first()
+    await expect(figure).toBeVisible({ timeout: 3_000 })
+    await figure.click()
+    await expect(figure).toHaveClass(/ring-2/, { timeout: 2_000 })
+
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Apres image')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('![Logo test]')
+      && s.includes('Apres image')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Apres image')
   })
 
   test('clic sur un paragraphe après l\'image désélectionne l\'image', async ({ page }) => {
@@ -1108,6 +1210,7 @@ test.describe('CodeBlock — édition WYSIWYG', () => {
     await expect(editor).toBeVisible()
     await editor.click()
     await page.keyboard.press('Control+A')
+    await page.keyboard.press('Backspace')
     await page.keyboard.type('const replaced = true')
     await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
 

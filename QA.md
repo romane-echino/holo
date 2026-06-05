@@ -253,6 +253,28 @@ Nouveau composants :
 # Phase 18
 - ✅ Batterie de test playwright
 
+# Phase 18.1
+- ✅ Déplacement de modèle vers un autre dossier puis revenir sur le même dossier casse le faite que le fichier sois un modèle (playwright si possible)
+- ✅ Déplacer un modèle dans un autre dossier provoque qu'il est référencé 2x quand je créé un fichier a partir d'un modèle
+- ✅ Quand je crée un nouveau fichier (ou a partir d'un modèle) je mouse down dans l'input et je drag-select a gauche pour sélectionner le texte-> si je mouse up en dehors du popup je popup disparait -> pénible
+- ✅ On ne peut plus créer à partir d'un modèle (playwright)
+- ✅ Ctrl + z scroll chelou (svp playwright sur undo /redo)
+- ✅ Ctrl+A bloc de code sélectionn tout les bloc -> j'aimerais que ça sélectionne que le code
+- ✅ Selection bloc + entrer = nouvelle ligne en dessous ()
+- ✅ Au moment de la saisie d'un lien youtube dans le composant correspondant si je fais CTRL+A dans l'input ça me sélectionne tout les blocs
+- Youtube marche pas erreur 153 ( en prod sur windows constaté)
+- PopUp citation overlap -> Quand je perd le focus de la citation faudrai que le popup se ferme + le popup devrait avoir un z-index 9999
+- J'arrive pas a créer de Note de bas de page dans les listes
+- Faire disparaitre le menu format (FormatToolbar) si ESC + si on scroll
+- identifiant footnote plutot en numéro (1,2,3,...) + Le design des Note de bas de page est a revoir complet -> l'idée c'est que ce soit un tooltip editable
+- Notes dans l'inspecteur on voit pas ID
+- Les dates dans les tableau sont un peu moche a cause d'un overlap entre le placeholder et le texte par défaut
+ 
+ 
+
+ 
+
+
 # Phase 19
 - Documentation global sur toutes les fonctionnalités du projet
 

@@ -1129,7 +1129,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // Ctrl+A → sélectionne tous les blocs | Ctrl+C → copie le markdown des blocs sélectionnés
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null
-    const isFormFieldTarget = Boolean(target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT'))
+    const isFormFieldTarget = Boolean(target && (
+      target.tagName === 'TEXTAREA'
+      || target.tagName === 'INPUT'
+      || target.closest('.cm-editor')
+    ))
 
     // CTRL+Z → undo
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -1179,13 +1183,10 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     }
     if (e.key === 'Enter' && selectedBlockIds.size === 1) {
       const [selectedBlockId] = [...selectedBlockIds]
-      const selectedBlock = blocksRef.current.find((block) => block.id === selectedBlockId)
-      if (selectedBlock?.node.type === 'table' || selectedBlock?.node.type === 'thematicBreak') {
-        e.preventDefault()
-        handleEnterAtEnd(selectedBlockId)
-        setSelectedBlockIds(new Set())
-        return
-      }
+      e.preventDefault()
+      handleEnterAtEnd(selectedBlockId)
+      setSelectedBlockIds(new Set())
+      return
     }
     // Supprimer les blocs sélectionnés
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedBlockIds.size > 0) {
@@ -1198,6 +1199,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       return
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      if (isFormFieldTarget && selectedBlockIds.size === 0) return
       e.preventDefault()
       setSelectedBlockIds(new Set(blocksRef.current.map((b) => b.id)))
     }

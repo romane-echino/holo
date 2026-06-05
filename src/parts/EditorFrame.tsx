@@ -32,9 +32,39 @@ type EditorFrameProps = {
   onToggleTemplate?: () => void
 }
 
+type ScrollTarget = Window | HTMLElement
+
 function filenameFromPath(filepath: string) {
   const normalized = filepath.replace(/\\/g, '/')
   return normalized.split('/').filter(Boolean).at(-1) ?? filepath
+}
+
+function findScrollTarget(element: HTMLElement | null): ScrollTarget | null {
+  let scrollEl: HTMLElement | null = element?.parentElement ?? null
+
+  while (scrollEl) {
+    const { overflow, overflowY } = getComputedStyle(scrollEl)
+    if (/auto|scroll/.test(overflow + overflowY)) {
+      return scrollEl
+    }
+    scrollEl = scrollEl.parentElement
+  }
+
+  return typeof window !== 'undefined' ? window : null
+}
+
+function readScrollTop(target: ScrollTarget | null) {
+  if (!target) return 0
+  return target instanceof Window ? target.scrollY : target.scrollTop
+}
+
+function writeScrollTop(target: ScrollTarget | null, value: number) {
+  if (!target) return
+  if (target instanceof Window) {
+    target.scrollTo({ top: value })
+    return
+  }
+  target.scrollTop = value
 }
 
 function extensionFromMimeType(mimeType: string | undefined) {
@@ -728,6 +758,8 @@ export function EditorFrame({
 
     if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
       event.preventDefault()
+      const scrollTarget = findScrollTarget(sectionRef.current)
+      const scrollTop = readScrollTop(scrollTarget)
       if (documentHistoryTimerRef.current) {
         clearTimeout(documentHistoryTimerRef.current)
         documentHistoryTimerRef.current = null
@@ -737,12 +769,15 @@ export function EditorFrame({
       if (history.pos > 0) {
         history.pos -= 1
         applyDocumentSnapshot(history.stack[history.pos])
+        requestAnimationFrame(() => writeScrollTop(scrollTarget, scrollTop))
       }
       return
     }
 
     if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey) || event.key === 'Z')) {
       event.preventDefault()
+      const scrollTarget = findScrollTarget(sectionRef.current)
+      const scrollTop = readScrollTop(scrollTarget)
       if (documentHistoryTimerRef.current) {
         clearTimeout(documentHistoryTimerRef.current)
         documentHistoryTimerRef.current = null
@@ -751,6 +786,7 @@ export function EditorFrame({
       if (history.pos < history.stack.length - 1) {
         history.pos += 1
         applyDocumentSnapshot(history.stack[history.pos])
+        requestAnimationFrame(() => writeScrollTop(scrollTarget, scrollTop))
       }
     }
   }, [applyDocumentSnapshot, getCurrentDocumentSnapshot, pushDocumentHistorySnapshot])
@@ -775,20 +811,10 @@ export function EditorFrame({
   }, [iconPickerOpen])
 
   useEffect(() => {
-    const el = sectionRef.current
-    if (!el) return
+    const target = findScrollTarget(sectionRef.current)
+    if (!target) return
 
-    let scrollEl: HTMLElement | null = el.parentElement
-    while (scrollEl) {
-      const { overflow, overflowY } = getComputedStyle(scrollEl)
-      if (/auto|scroll/.test(overflow + overflowY)) break
-      scrollEl = scrollEl.parentElement
-    }
-
-    if (!scrollEl) return
-
-    const target = scrollEl
-    const handleScroll = () => setShowStickyHeader(target.scrollTop > 48)
+    const handleScroll = () => setShowStickyHeader(readScrollTop(target) > 48)
 
     handleScroll()
     target.addEventListener('scroll', handleScroll, { passive: true })

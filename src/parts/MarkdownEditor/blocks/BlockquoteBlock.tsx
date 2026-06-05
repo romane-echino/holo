@@ -120,6 +120,11 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
           className,
         )}
         data-blockquote-alert={alert?.type}
+        onBlurCapture={(event) => {
+          const nextFocused = event.relatedTarget as Node | null
+          if (nextFocused && event.currentTarget.contains(nextFocused)) return
+          setIsTypeMenuOpen(false)
+        }}
         onMouseDown={(event) => {
           const target = event.target as HTMLElement | null
           if (!target) return
@@ -166,7 +171,7 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
           </button>
 
           {isTypeMenuOpen && (
-            <div className="absolute right-0 top-10 z-20 w-[8.5rem] rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl">
+            <div className="absolute right-0 top-10 z-[9999] w-[8.5rem] rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl">
               <div className="grid grid-cols-3 justify-items-center gap-1">
               {alertOptions.map((option) => {
                 const isActive = (alert?.type ?? null) === option.value

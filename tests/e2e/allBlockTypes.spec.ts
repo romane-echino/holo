@@ -764,6 +764,7 @@ test.describe('Document complet — tous les types de blocs', () => {
     await page.keyboard.type('### ')
     const newH3 = page.locator('[data-block-type="heading-3"][contenteditable]').last()
     await expect(newH3).toBeVisible()
+    await newH3.click()
     await page.keyboard.type('Annexe')
     await page.keyboard.press('Enter') // Enter dans un heading crée un paragraphe et sauvegarde
     await page.waitForTimeout(100)

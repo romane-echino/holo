@@ -45,6 +45,19 @@ async function installImageApiMock(page: Page) {
   })
 }
 
+async function installImageApiFailureMock(page: Page) {
+  await page.addInitScript(() => {
+    ;(window as Window & { holo?: unknown }).holo = {
+      saveImage: async () => {
+        throw new Error('Save image failed')
+      },
+      loadImage: async () => {
+        throw new Error('Image not found')
+      },
+    }
+  })
+}
+
 async function installRemoteGifFetchMock(page: Page, url = 'https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif') {
   await page.addInitScript((payload) => {
     const gifUrl = payload.url
@@ -119,8 +132,11 @@ test.describe('EditorFrame — document history', () => {
       '',
     ].join('\n'))
 
-    const titleField = page.getByPlaceholder('Untitled')
-    const descriptionField = page.getByPlaceholder('Ajouter une description…')
+    const titleField = page.locator('textarea[placeholder="Untitled"]').last()
+    const descriptionField = page.locator('textarea[placeholder="Ajouter une description…"]').last()
+
+    await expect(titleField).toBeVisible()
+    await expect(descriptionField).toBeVisible()
 
     await titleField.fill('Titre modifie')
     await page.waitForTimeout(320)
@@ -143,6 +159,41 @@ test.describe('EditorFrame — document history', () => {
     await pressRedo(page)
     const finalMd = await waitForMd(page, (md) => md.includes('title: Titre modifie') && md.includes('description: Description modifiee'))
     expect(finalMd).toContain('Corps initial.')
+  })
+
+  test('undo/redo dans les metadonnees ne provoque pas de saut de scroll', async ({ page }) => {
+    await gotoEditorFrame(page, [
+      '---',
+      'title: Titre initial',
+      'description: Description initiale',
+      'author: Playwright',
+      'created: 2026-06-05T00:00:00.000Z',
+      'updated: 2026-06-05T00:00:00.000Z',
+      '---',
+      '',
+      ...Array.from({ length: 120 }, (_, index) => `Paragraphe ${index + 1}`),
+      '',
+    ].join('\n'))
+
+    const descriptionField = page.locator('textarea[placeholder="Ajouter une description…"]').last()
+    await expect(descriptionField).toBeVisible()
+
+    await descriptionField.fill('Description modifiee')
+    await page.waitForTimeout(320)
+    await waitForMd(page, (md) => md.includes('description: Description modifiee'))
+
+    await page.evaluate(() => window.scrollTo(0, 900))
+    const beforeUndoScroll = await page.evaluate(() => window.scrollY)
+
+    await pressUndo(page)
+    await waitForMd(page, (md) => md.includes('description: Description initiale'))
+    await expect.poll(async () => Math.abs((await page.evaluate(() => window.scrollY)) - beforeUndoScroll)).toBeLessThan(3)
+
+    const beforeRedoScroll = await page.evaluate(() => window.scrollY)
+
+    await pressRedo(page)
+    await waitForMd(page, (md) => md.includes('description: Description modifiee'))
+    await expect.poll(async () => Math.abs((await page.evaluate(() => window.scrollY)) - beforeRedoScroll)).toBeLessThan(3)
   })
 
   test('paste un GIF local et le rend dans le document', async ({ page }) => {
@@ -179,5 +230,17 @@ test.describe('EditorFrame — document history', () => {
 
     const md = await waitForMd(page, (value) => value.includes('images/Rotating_earth_\\(large\\).gif'), 6000)
     expect(md).toContain('![Rotating\\_earth\\_(large)](images/Rotating_earth_\\(large\\).gif)')
+  })
+
+  test('paste un GIF local en erreur n insere ni image ni markdown', async ({ page }) => {
+    await installImageApiFailureMock(page)
+    await gotoEditorFrame(page)
+
+    const initialMd = (await page.locator('#pw-editorframe-md-output').textContent()) ?? ''
+
+    await dispatchGifPaste(page)
+
+    await expect(page.locator('img[src^="data:image/gif;base64,"]')).toHaveCount(0)
+    await expect.poll(async () => (await page.locator('#pw-editorframe-md-output').textContent()) ?? '', { timeout: 3000 }).toBe(initialMd)
   })
 })

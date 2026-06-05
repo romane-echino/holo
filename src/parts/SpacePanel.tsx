@@ -426,6 +426,9 @@ export function SpacePanel({
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
   const [selectedFolderPath, setSelectedFolderPath] = useState('')
+  const addDialogBackdropPressedRef = useRef(false)
+  const templateDialogBackdropPressedRef = useRef(false)
+  const renameDialogBackdropPressedRef = useRef(false)
 
   useEffect(() => {
     if (!rootPath || !selectedPath || !selectedPath.startsWith(`${rootPath}/`)) return
@@ -515,6 +518,30 @@ export function SpacePanel({
         })
     }
   }, [files])
+
+  useEffect(() => {
+    const handlePathMoved = (event: Event) => {
+      const detail = (event as CustomEvent<{ oldPath?: string; newPath?: string }>).detail
+      const oldPath = detail?.oldPath
+      const newPath = detail?.newPath
+      if (!oldPath || !newPath) return
+
+      setFileMeta((previous) => {
+        let changed = false
+        const nextEntries = Object.entries(previous).map(([path, meta]) => {
+          if (path === oldPath || path.startsWith(`${oldPath}/`)) {
+            changed = true
+            return [newPath + path.slice(oldPath.length), meta] as const
+          }
+          return [path, meta] as const
+        })
+        return changed ? Object.fromEntries(nextEntries) : previous
+      })
+    }
+
+    window.addEventListener('holo:path-moved', handlePathMoved)
+    return () => window.removeEventListener('holo:path-moved', handlePathMoved)
+  }, [])
 
   // ─── Drag-and-drop ──────────────────────────────────────────────────────────
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
@@ -954,10 +981,24 @@ export function SpacePanel({
     {addOpen && (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        onClick={() => { setAddOpen(false); setFolderPickerOpen(false) }}
+        onMouseDown={(event) => {
+          addDialogBackdropPressedRef.current = event.target === event.currentTarget
+        }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget || !addDialogBackdropPressedRef.current) {
+            addDialogBackdropPressedRef.current = false
+            return
+          }
+          addDialogBackdropPressedRef.current = false
+          setAddOpen(false)
+          setFolderPickerOpen(false)
+        }}
       >
         <div
           className="w-[340px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
+          onMouseDown={() => {
+            addDialogBackdropPressedRef.current = false
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
@@ -1054,8 +1095,27 @@ export function SpacePanel({
 
     {/* Dialog "À partir d'un modèle" */}
     {tplOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setTplOpen(false)}>
-        <div className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.5)]" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onMouseDown={(event) => {
+          templateDialogBackdropPressedRef.current = event.target === event.currentTarget
+        }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget || !templateDialogBackdropPressedRef.current) {
+            templateDialogBackdropPressedRef.current = false
+            return
+          }
+          templateDialogBackdropPressedRef.current = false
+          setTplOpen(false)
+        }}
+      >
+        <div
+          className="mx-4 w-full max-w-sm rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.5)]"
+          onMouseDown={() => {
+            templateDialogBackdropPressedRef.current = false
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="mb-4 flex items-center gap-2">
             <Layers size={15} className="text-violet-400 shrink-0" />
             <h3 className="text-sm font-semibold text-holo-text">À partir d'un modèle</h3>
@@ -1254,10 +1314,23 @@ export function SpacePanel({
     {renameOpen && (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        onClick={() => setRenameOpen(false)}
+        onMouseDown={(event) => {
+          renameDialogBackdropPressedRef.current = event.target === event.currentTarget
+        }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget || !renameDialogBackdropPressedRef.current) {
+            renameDialogBackdropPressedRef.current = false
+            return
+          }
+          renameDialogBackdropPressedRef.current = false
+          setRenameOpen(false)
+        }}
       >
         <div
           className="w-[320px] rounded-holo-2xl border border-holo-border-soft bg-holo-bg-elevated p-5 shadow-[0_24px_64px_rgba(0,0,0,.45)]"
+          onMouseDown={() => {
+            renameDialogBackdropPressedRef.current = false
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
