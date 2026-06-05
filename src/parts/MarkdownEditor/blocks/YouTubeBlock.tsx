@@ -75,7 +75,7 @@ function extractYouTubeData(value: string): { videoId: string; startSeconds: num
 }
 
 function buildEmbedUrl(videoId: string, startSeconds?: number | null): string {
-  const url = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`)
+  const url = new URL(`https://www.youtube.com/embed/${videoId}`)
   if (startSeconds && startSeconds > 0) {
     url.searchParams.set('start', String(startSeconds))
   }

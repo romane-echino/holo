@@ -37,6 +37,76 @@ function filenameFromPath(filepath: string) {
   return normalized.split('/').filter(Boolean).at(-1) ?? filepath
 }
 
+function extensionFromMimeType(mimeType: string | undefined) {
+  switch ((mimeType ?? '').toLowerCase()) {
+    case 'image/gif':
+      return '.gif'
+    case 'image/webp':
+      return '.webp'
+    case 'image/jpeg':
+      return '.jpg'
+    case 'image/svg+xml':
+      return '.svg'
+    case 'image/bmp':
+      return '.bmp'
+    case 'image/avif':
+      return '.avif'
+    default:
+      return '.png'
+  }
+}
+
+function extractGifUrlFromClipboardData(clipboardData: DataTransfer | null): string | null {
+  if (!clipboardData) return null
+
+  const textPlain = clipboardData.getData('text/plain').trim()
+  if (/^https?:\/\/\S+\.gif(?:[?#]\S*)?$/i.test(textPlain)) {
+    return textPlain
+  }
+
+  const textHtml = clipboardData.getData('text/html')
+  if (!textHtml) return null
+
+  try {
+    const doc = new DOMParser().parseFromString(textHtml, 'text/html')
+    const imgSrc = doc.querySelector('img[src]')?.getAttribute('src')?.trim() ?? ''
+    if (/^https?:\/\/\S+\.gif(?:[?#]\S*)?$/i.test(imgSrc)) {
+      return imgSrc
+    }
+
+    const linkHref = doc.querySelector('a[href]')?.getAttribute('href')?.trim() ?? ''
+    if (/^https?:\/\/\S+\.gif(?:[?#]\S*)?$/i.test(linkHref)) {
+      return linkHref
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function filenameFromRemoteUrl(url: string, mimeType?: string | null): string {
+  try {
+    const parsed = new URL(url)
+    const rawName = parsed.pathname.split('/').filter(Boolean).at(-1) ?? ''
+    if (rawName) return decodeURIComponent(rawName)
+  } catch {
+    // ignore
+  }
+
+  return `image-${Date.now()}${extensionFromMimeType(mimeType ?? undefined)}`
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+  return dataUrl.split(',')[1]
+}
+
 function buildBreadcrumb(filepath: string, rootPath?: string): { label: string; path: string; isDir: boolean }[] {
   const normalized = filepath.replace(/\\/g, '/')
   if (!rootPath) return [{ label: normalized.split('/').filter(Boolean).at(-1) ?? filepath, path: filepath, isDir: false }]
@@ -784,12 +854,33 @@ export function EditorFrame({
   }, [buildImageStorageOptions])
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const remoteGifUrl = extractGifUrlFromClipboardData(e.clipboardData)
     const imageItems = Array.from(e.clipboardData.items).filter((item) => item.type.startsWith('image/'))
-    if (!imageItems.length) return
+    if (!remoteGifUrl && !imageItems.length) return
     const opts = buildImageStorageOptions()
     if (!opts) return
     e.preventDefault()
     e.stopPropagation()
+
+    if (remoteGifUrl) {
+      try {
+        const response = await fetch(remoteGifUrl)
+        if (response.ok) {
+          const blob = await response.blob()
+          if (blob.type === 'image/gif') {
+            const base64 = await blobToBase64(blob)
+            const name = filenameFromRemoteUrl(remoteGifUrl, blob.type)
+            const result = await window.holo!.saveImage(name, base64, opts)
+            const alt = name.replace(/\.[^.]+$/, '')
+            blockEditorRef.current?.insertImage(result.relativePath, alt)
+            return
+          }
+        }
+      } catch (err) {
+        console.warn('[EditorFrame] remote gif paste fallback to bitmap clipboard item', err)
+      }
+    }
+
     for (const item of imageItems) {
       const file = item.getAsFile()
       if (!file) continue
@@ -801,7 +892,7 @@ export function EditorFrame({
           reader.readAsDataURL(file)
         })
         const base64 = dataUrl.split(',')[1]
-        const name = file.name || `image-${Date.now()}.png`
+        const name = file.name || `image-${Date.now()}${extensionFromMimeType(file.type)}`
         const result = await window.holo!.saveImage(name, base64, opts)
         const alt = name.replace(/\.[^.]+$/, '')
         blockEditorRef.current?.insertImage(result.relativePath, alt)

@@ -537,10 +537,6 @@ function parseClipboardGridData(text: string): string[][] {
   return normalized.split('\n').map((line) => line.split('\t'))
 }
 
-function getCellContentVersion(nodes: InlineNode[] | undefined): string {
-  return JSON.stringify(nodes ?? [])
-}
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -1698,7 +1694,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
                     {table.columns.map((col, colIdx) => {
                       const cellKey = `${row.id}-${col.id}`
-                      const cellContentVersion = getCellContentVersion(row.cells[col.id])
                       const isActive = activeCell?.rowId === row.id && activeCell.colId === col.id
                       const isLastCol = colIdx === table.columns.length - 1
                       const isCheckboxColumn = col.type === 'checkbox'
@@ -1805,7 +1800,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                                 className="flex min-h-11 w-full cursor-pointer items-center justify-center px-3 py-3"
                               >
                                 <input
-                                  key={`${cellKey}:${cellContentVersion}`}
                                   ref={(el) => {
                                     if (el) {
                                       cellRefs.current.set(cellKey, {
@@ -1875,7 +1869,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                                   </span>
                                 )}
                                 <input
-                                  key={`${cellKey}:${cellContentVersion}`}
                                   ref={(el) => {
                                     if (el) {
                                       cellRefs.current.set(cellKey, {
@@ -1936,7 +1929,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                               </div>
                             ) : (
                               <InlineEditor
-                                key={`${cellKey}:${cellContentVersion}`}
                                 ref={(handle) => {
                                   if (handle) cellRefs.current.set(cellKey, handle)
                                   else cellRefs.current.delete(cellKey)

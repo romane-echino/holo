@@ -128,7 +128,7 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
           editorRef.current?.focus()
         }}
       >
-        <div ref={menuRef} className="absolute right-2 top-2 z-10 flex items-center gap-2">
+        <div ref={menuRef} className="absolute right-1 top-1 z-10 flex items-center gap-2">
           <button
             type="button"
             onMouseDown={(event) => {
@@ -139,9 +139,11 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
             aria-label={`Type de citation ${currentTypeLabel}`}
             aria-expanded={isTypeMenuOpen}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-[0_8px_24px_rgba(0,0,0,.16)] transition',
-              'opacity-0 group-hover/blockquote:opacity-100 group-focus-within/blockquote:opacity-100',
-              isTypeMenuOpen && 'opacity-100',
+              'inline-flex h-8 items-center overflow-hidden rounded-xl border text-[10px] font-semibold uppercase tracking-[0.14em] shadow-[0_8px_24px_rgba(0,0,0,.16)] transition-all',
+              'w-8 justify-center px-0 py-0 opacity-100',
+              'group-hover/blockquote:w-auto group-hover/blockquote:gap-1.5 group-hover/blockquote:px-2 group-hover/blockquote:py-1',
+              'group-focus-within/blockquote:w-auto group-focus-within/blockquote:gap-1.5 group-focus-within/blockquote:px-2 group-focus-within/blockquote:py-1',
+              isTypeMenuOpen && 'w-auto gap-1.5 px-2 py-1',
               alert && currentAlertStyles
                 ? cn('border-transparent', currentAlertStyles.badge)
                 : 'border-holo-border-soft bg-white/[0.04] text-holo-text-faint hover:bg-white/[0.06] hover:text-holo-text',
@@ -150,7 +152,17 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
             <span className="flex size-4 items-center justify-center leading-none">
               <currentTypeOption.Icon size={14} className={currentTypeOption.iconClassName} />
             </span>
-            <ChevronDown size={12} className={cn('transition-transform', isTypeMenuOpen && 'rotate-180')} />
+            <span
+              className={cn(
+                'overflow-hidden transition-all',
+                'w-0 opacity-0',
+                'group-hover/blockquote:w-3 group-hover/blockquote:opacity-100',
+                'group-focus-within/blockquote:w-3 group-focus-within/blockquote:opacity-100',
+                isTypeMenuOpen && 'w-3 opacity-100',
+              )}
+            >
+              <ChevronDown size={12} className={cn('transition-transform', isTypeMenuOpen && 'rotate-180')} />
+            </span>
           </button>
 
           {isTypeMenuOpen && (

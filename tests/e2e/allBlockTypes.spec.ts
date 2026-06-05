@@ -486,6 +486,31 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
     expect(replacedMd).toContain('Arrière-plan')
   })
 
+  test('Tableau : recliquer dans une cellule deja selectionnee place le curseur au point de clic', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Valeur |',
+      '| --- | --- |',
+      '| Alpha | 10 |',
+      '| Bravo | 20 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    const firstTextCell = page.locator('tbody [data-block-type="table-cell"][contenteditable="true"]').first()
+    await firstTextCell.click()
+
+    const box = await firstTextCell.boundingBox()
+    if (!box) throw new Error('Cell bounding box not available')
+
+    await page.mouse.click(box.x + box.width - 8, box.y + box.height / 2)
+    await page.keyboard.type('Z')
+
+    const updatedMd = await waitForMd(page, (s) =>
+      findTableRowIndex(s, 'AlphaZ', '10') !== -1 && findTableRowIndex(s, 'Z', '10') === -1,
+    )
+    expect(updatedMd).toContain('Arrière-plan')
+  })
+
   test('Tableau : type date est persisté, assiste la saisie et pilote le tri chronologique', async ({ page }) => {
     await gotoEditor(page, [
       '| Nom | Echeance |',

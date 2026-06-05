@@ -487,6 +487,18 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     sel?.addRange(range)
   }, [])
 
+  const isEntireContentSelected = useCallback((el: HTMLElement) => {
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.commonAncestorContainer)) return false
+
+    const fullRange = document.createRange()
+    fullRange.selectNodeContents(el)
+
+    return range.toString() === fullRange.toString()
+  }, [])
+
   // Handle impératif : appelé par BlockEditor pour la navigation inter-blocs
   useImperativeHandle(ref, () => ({
     focus(cursor?: InitialCursor) {
@@ -824,6 +836,21 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
               onConvert('checklist', children)
               return
             }
+            // > → blockquote
+            if (textBeforeCursor === '>') {
+              e.preventDefault()
+              testRange.deleteContents()
+              const children = domToInlines(el)
+              onConvert('blockquote', children)
+              return
+            }
+            // --- → séparateur
+            if (textBeforeCursor === '---') {
+              e.preventDefault()
+              testRange.deleteContents()
+              onConvert('separator', [])
+              return
+            }
           } catch { /* ignore */ }
         }
       }
@@ -1009,13 +1036,13 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         }}
         onMouseDown={(e) => {
           if (!selectAllOnFocus || e.button !== 0) return
+          if (document.activeElement === e.currentTarget) {
+            if (isEntireContentSelected(e.currentTarget)) return
+            return
+          }
           e.preventDefault()
           e.currentTarget.focus({ preventScroll: true })
           requestAnimationFrame(() => selectAllContents(e.currentTarget))
-        }}
-        onClick={(e) => {
-          if (!selectAllOnFocus) return
-          selectAllContents(e.currentTarget)
         }}
         onBlur={() => {
           save()

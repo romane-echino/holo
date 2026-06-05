@@ -202,26 +202,42 @@ Amélioration des tables
         
 # Phase 15
 Nouveau composants :
- - Support des gif (importation, affichage)
- - Support des video youtube
- - Exposant et indice comme formatage de texte
- - Bloc HTML (comme code mais avec rendu)
- - Mentions (listing automatique des paticipants du repo et pouvoir faire @) avec possibilité de recherche @romane dans le panneau de recherche
- - Mermaid (avec design css adapté au look de holo)
- - Amélioration des Footnote (Fonctionne plus comme un tooltip en terme rendu) -> Selection d'un mot ajout d'un footnote 
+ - ✅Support des gif (importation, affichage)
+ - ✅Support des video youtube
+ - ✅Exposant et indice comme formatage de texte
+ - ✅Bloc HTML (comme code mais avec rendu)
+ - ✅Mentions (listing automatique des paticipants du repo et pouvoir faire @) avec possibilité de recherche @romane dans le panneau de recherche
+ - ✅Mermaid (avec design css adapté au look de holo)
+ - ✅Amélioration des Footnote (Fonctionne plus comme un tooltip en terme rendu) -> Selection d'un mot ajout d'un footnote 
     Here is a simple footnote[^1].
     [^1]: My reference.
- - Amélioration des bloc de citation -> Ajout des alert github ([!NOTE] [!TIP] [!IMPORTANT] [!WARNING] [!CAUTION])
+ - ✅Amélioration des bloc de citation -> Ajout des alert github ([!NOTE] [!TIP] [!IMPORTANT] [!WARNING] [!CAUTION])
     > [!NOTE]
     > Useful information that users should know, even when skimming content.
- - Collapsible secion github
+ - ✅Collapsible secion github
     <details>
     <summary>Click me</summary>
     
     Content
     </details>
-- Détection automatique des couleurs dans les bloc de code inline (petit point de couleur pour représenter la couleur)
+- ✅Détection automatique des couleurs dans les bloc de code inline (petit point de couleur pour représenter la couleur)
     `#RRGGBB`
     `rgb(R,G,B)`
     `hsl(H,S,L)`
 
+
+# Phase 16
+- ✅Pouvoir taper "> " pour créer une citation
+- Pouvoir taper "---" pour créer un séparateur
+- ✅ Quand je tape dans des notes je perd le focus pour aucune raison, pareil dans une cellule de tableau. ça a l'aire de couper le focus quand la sauvegarde automatique se lance
+- ✅  Dans un tableau quand je clique ça sélectionne tout le texte, c'est cool, mais si je reclique alors que tout le texte est sélectionné j'aimerai que le curseur aille la ou j'ai cliqué
+- ✅ Dans les citation avec info github -> j'aimerais quand meme voir l'icone de base mais qu'elle se transforme en dropdown au hover
+- ✅ J'ai mis ce lien dans le composant youtube "https://www.youtube.com/watch?v=eNhx-ehhumg" et il me dit que cela ne fonctionne pas (erreur 153)
+- ✅quand je colle un gif cela montre une image fixe
+- ✅ les section repliable ressemble trop a des blocs de code il faudrai faire qqch de plus naturel
+
+# Phase 17
+- Youtube, HTML, Section repliable doivent avoir un stlye moins proche des bloc de code
+Typiquement youtube doit être intégré comme une image (simple bordure) sans gros header avec un bouton pen (pour modifier) flottant en haut a droite bien visible
+Plus ou moin pareil pour html qui doit être ressenti comme intégré a la page mais avec un bouton disret d'édition
+Et pour les section repliable je m'attend plus a un retrait a gauche pour la partie contenu mais qu'on garde ce contexte de création de composant

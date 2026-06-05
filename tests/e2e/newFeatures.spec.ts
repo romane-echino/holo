@@ -137,6 +137,27 @@ async function placeCaretAtEnd(locator: ReturnType<Page['locator']>) {
 
 test.describe('BlockquoteBlock — édition et sérialisation', () => {
 
+  test('taper > espace convertit un paragraphe en citation', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await milieu.click()
+    await page.keyboard.press('End')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('> ')
+    await page.keyboard.type('Citation via raccourci')
+    await page.keyboard.press('Tab')
+
+    const bqEditor = page.locator('[data-block-type="blockquote"][contenteditable]').filter({ hasText: 'Citation via raccourci' })
+    await expect(bqEditor).toBeVisible({ timeout: 3_000 })
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('> Citation via raccourci') && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
   test('création via slash command, saisie et sérialisation markdown', async ({ page }) => {
     await gotoEditor(page, contextMd())
 
@@ -580,11 +601,11 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await input.fill('https://youtu.be/dQw4w9WgXcQ')
     await page.getByRole('button', { name: 'Valider' }).click()
 
-    await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1)
+    await expect(page.locator('iframe[src*="youtube.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (s) =>
       s.includes('<iframe')
-      && s.includes('youtube-nocookie.com/embed/dQw4w9WgXcQ')
+      && s.includes('youtube.com/embed/dQw4w9WgXcQ')
       && s.includes('Gamma-dernier'),
       6000,
     )
@@ -608,8 +629,29 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await page.getByRole('button', { name: 'Valider' }).click()
 
     const md = await waitForMd(page, (s) =>
-      s.includes('youtube-nocookie.com/embed/M7lc1UVf-VE')
+      s.includes('youtube.com/embed/M7lc1UVf-VE')
       && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un lien watch youtube valide produit un embed compatible sans erreur 153', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Vidéo YouTube')
+
+    const input = page.locator('input[type="url"]').first()
+    await expect(input).toBeVisible()
+    await input.fill('https://www.youtube.com/watch?v=eNhx-ehhumg')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('iframe[src*="youtube.com/embed/eNhx-ehhumg"]')).toHaveCount(1)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('youtube.com/embed/eNhx-ehhumg') && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
@@ -668,12 +710,35 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
     expect(md).toContain('Alpha-premier')
   })
 
+  test('l auto-save d une note ne doit pas faire perdre le focus pendant la saisie', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Note de bas de page')
+
+    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
+    await expect(fnEditor).toBeVisible({ timeout: 3_000 })
+    await fnEditor.click()
+    await page.keyboard.type('Premier')
+    await page.waitForTimeout(700)
+    await expect(fnEditor).toBeFocused()
+    await page.keyboard.type(' second')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Premier second/m.test(s) && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
   test('création via slash command, saisie et sérialisation markdown', async ({ page }) => {
     await gotoEditor(page, contextMd())
 
     const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
     await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note')
+    await selectCmd(page, 'Note de bas de page')
 
     const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
     await expect(fnEditor).toBeVisible({ timeout: 3_000 })
@@ -696,7 +761,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
 
     const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
     await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note')
+    await selectCmd(page, 'Note de bas de page')
 
     // Le badge [id] doit être visible dans le bloc
     // Il est rendu dans un <span> avec font-mono
@@ -709,7 +774,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
 
     const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
     await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note')
+    await selectCmd(page, 'Note de bas de page')
 
     const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
     await fnEditor.click()
@@ -754,6 +819,24 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
 // ─── 3. Séparateur (thematicBreak) ────────────────────────────────────────────
 
 test.describe('Séparateur — création, sélection, suppression', () => {
+
+  test('taper --- espace convertit un paragraphe en séparateur', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await milieu.click()
+    await page.keyboard.press('End')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('--- ')
+
+    await expect(page.locator('hr')).toBeVisible({ timeout: 3_000 })
+
+    const md = await waitForMd(page, (s) =>
+      /^(\*{3,}|-{3,})$/m.test(s) && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
 
   test('création via slash command insère un séparateur HR', async ({ page }) => {
     await gotoEditor(page, contextMd())
@@ -810,6 +893,28 @@ test.describe('Séparateur — création, sélection, suppression', () => {
     await expect(page.locator('hr')).toBeHidden({ timeout: 2_000 })
     const md = await waitForMd(page, (s) => !s.includes('---') && s.includes('Gamma-dernier'), 4000)
     expect(md).not.toMatch(/^---$/m)
+  })
+})
+
+test.describe('Tableau — stabilité de focus', () => {
+  test('l auto-save d une cellule inline ne doit pas couper le focus pendant la saisie', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Tableau')
+
+    const firstTextCell = page.locator('tbody [data-block-type="table-cell"][contenteditable="true"]').first()
+    await expect(firstTextCell).toBeVisible({ timeout: 3_000 })
+    await firstTextCell.click()
+    await page.keyboard.type('Alpha')
+    await page.waitForTimeout(700)
+    await expect(firstTextCell).toBeFocused()
+    await page.keyboard.type(' beta')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) => s.includes('| Alpha beta |') && s.includes('Gamma-dernier'), 6000)
+    expect(md).toContain('Alpha-premier')
   })
 })
 

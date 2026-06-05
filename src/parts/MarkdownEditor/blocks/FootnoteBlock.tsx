@@ -220,7 +220,6 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
     const inlines: InlineNode[] = firstPara?.type === 'paragraph' && Array.isArray(firstPara.children) ? firstPara.children : []
     const noteTone = getNoteTone(inlineNodesToPlainText(inlines))
     const editorInlines = stripNoteMarkerFromInlineNodes(inlines)
-    const inlineContentVersion = JSON.stringify(editorInlines)
     const ToneIcon = noteTone.Icon
 
     useEffect(() => {
@@ -335,7 +334,6 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
               }}
             >
               <InlineEditor
-                key={`${node.identifier}:${inlineContentVersion}`}
                 ref={editorRef}
                 initialContent={editorInlines}
                 onSave={handleSave}
