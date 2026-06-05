@@ -2,6 +2,24 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.6.0',
+    releasedAt: '2026-06-05',
+    items: [
+      'Recherche : indexation locale renforcee et centralisee dans AppData pour de meilleures recherches intra-espace et inter-espaces.',
+      'Recherche : meilleure prise en compte des tags, titres, mots-cles et ajout d un bouton de debug pour ouvrir le fichier d indexation.',
+      'Historique d edition : solidification du systeme Undo/Redo pour annuler et refaire une longue serie d actions sans perdre le focus.',
+      'Modeles : flux de creation revu, auto-selection quand un seul modele est disponible et acces etendu depuis les menus contextuels fichiers et dossiers.',
+      'Liens et navigation : correction des URI holo://, ouverture du bon espace et du bon document, meilleurs tooltips et mise a jour automatique des liens relatifs lors des deplacements.',
+      'Arborescence : meilleur highlight du fichier ouvert, ouverture automatique des dossiers parents et zone de depot plus propre pour remettre un fichier a la racine.',
+      'Blocs de code : nouvel editeur plus propre avec validation au clavier, meilleure ergonomie de selection et support plus robuste du code dans l editeur.',
+      'Tableaux : tri A-Z / Z-A, metadonnees YAML invisibles pour les types et couleurs de colonnes, et nombreuses ameliorations de largeur, selection et edition.',
+      'Citations et notes : ajout des alertes GitHub, edition plus fiable des footnotes, rendu tooltip cote lecture et creation d une note directement depuis une selection de texte.',
+      'Nouveaux composants Markdown : prise en charge de Mermaid, des blocs HTML avec rendu, des sections repliables GitHub et des videos YouTube.',
+      'Texte enrichi : ajout de l exposant, de l indice, des mentions basees sur les contributeurs du repo et de la detection visuelle des couleurs dans le code inline.',
+      'Medias : meilleur support des GIF et du collage ou affichage d images dans les differents flux d edition.',
+    ],
+  },
+  {
     version: '0.5.0',
     releasedAt: '2026-06-03',
     items: [
