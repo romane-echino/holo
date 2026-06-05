@@ -182,6 +182,24 @@ async function setHoloConfig(cfg) {
   await writeHoloConfig(typeof cfg === 'object' && cfg !== null ? cfg : {})
 }
 
+function normalizeMarkdownFilename(name) {
+  const trimmed = String(name ?? '').trim()
+  if (!trimmed) return 'untitled.md'
+  if (/\.md$/i.test(trimmed)) {
+    return trimmed.replace(/\.md$/i, '.md')
+  }
+
+  const lastSlashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const lastDotIndex = trimmed.lastIndexOf('.')
+  const hasExtension = lastDotIndex > lastSlashIndex
+
+  if (!hasExtension) {
+    return `${trimmed}.md`
+  }
+
+  return `${trimmed.slice(0, lastDotIndex)}.md`
+}
+
 function createDefaultGitState() {
   return {
     isRepo: false,
@@ -1721,7 +1739,7 @@ ipcMain.handle('fs:write-file', async (_event, filePath, content) => {
 
 ipcMain.handle('fs:create-file', async (_event, parentDirectoryPath, name) => {
   assertPathInsideRoot(parentDirectoryPath)
-  const safeName = sanitizeName(name)
+  const safeName = sanitizeName(normalizeMarkdownFilename(name))
   const targetPath = path.join(parentDirectoryPath, safeName)
   assertPathInsideRoot(targetPath)
   await fs.writeFile(targetPath, '', { flag: 'wx' })

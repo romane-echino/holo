@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
-import { getBaseName, getParentPath, isSameOrChildPath } from '../lib/appUtils'
+import { getBaseName, getParentPath, isSameOrChildPath, normalizeMarkdownFilename } from '../lib/appUtils'
 import { pathReferencesMovedTarget, remapTrackedPath, rewriteMarkdownLinksForMovedPath, rewriteMarkdownLinksForRelocatedSource } from '../lib/markdownLinks'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -1374,7 +1374,8 @@ export function SpaceRoute({
     if (!parent) return
     try {
       if (type === 'file') {
-        await window.holo?.createFile(parent, name)
+        const filename = normalizeMarkdownFilename(name)
+        await window.holo?.createFile(parent, filename)
       } else {
         await window.holo?.createDirectory(parent, name)
       }
@@ -1382,8 +1383,9 @@ export function SpaceRoute({
       if (result) setTree(result.tree)
       // Auto-ouvrir le fichier nouvellement créé
       if (type === 'file') {
-        const newPath = `${parent}/${name}`
-        onSelectFile?.({ id: newPath, path: newPath, name, type: 'file' })
+        const filename = normalizeMarkdownFilename(name)
+        const newPath = `${parent}/${filename}`
+        onSelectFile?.({ id: newPath, path: newPath, name: filename, type: 'file' })
       }
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
@@ -1394,7 +1396,7 @@ export function SpaceRoute({
   const handleAddFromTemplate = useCallback(async (name: string, content: string, parentPath?: string) => {
     const parent = parentPath || rootPath
     if (!parent) return
-    const finalName = name.includes('.') ? name : name + '.md'
+    const finalName = normalizeMarkdownFilename(name)
     const newPath = `${parent}/${finalName}`
     try {
       await window.holo?.createFile(parent, finalName)

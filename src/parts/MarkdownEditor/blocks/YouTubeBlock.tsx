@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { PlaySquare, Video } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 import type { InlineEditorHandle } from '../InlineEditor'
 import type { HtmlNode } from './DetailsBlock'
 
@@ -114,7 +114,7 @@ export function isYouTubeHtmlNode(node: unknown): node is HtmlNode {
 export const YouTubeBlock = forwardRef<InlineEditorHandle, YouTubeBlockProps>(
   function YouTubeBlock({ node, onChange, onEnterAtEnd, onBackspaceAtStart }, ref) {
     const parsed = useMemo(() => parseYouTubeHtml(node.value), [node.value])
-    const [editing, setEditing] = useState(false)
+    const [isEditing, setIsEditing] = useState(false)
     const [draftUrl, setDraftUrl] = useState(parsed?.inputUrl ?? DEFAULT_YOUTUBE_URL)
     const editorRootRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
@@ -123,38 +123,38 @@ export const YouTubeBlock = forwardRef<InlineEditorHandle, YouTubeBlockProps>(
       setDraftUrl(parsed?.inputUrl ?? DEFAULT_YOUTUBE_URL)
     }, [parsed?.inputUrl])
 
-    const draftParsed = useMemo(() => extractYouTubeData(draftUrl), [draftUrl])
+    useEffect(() => {
+      if (!isEditing) return
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      })
+    }, [isEditing])
 
     const commit = () => {
-      if (!draftParsed) return
-      setEditing(false)
-      const nextValue = buildYouTubeHtml(draftUrl)
+      const trimmed = draftUrl.trim()
+      const nextParsed = extractYouTubeData(trimmed)
+      if (!nextParsed) {
+        inputRef.current?.focus()
+        return
+      }
+
+      const nextValue = buildYouTubeHtml(trimmed)
       if (nextValue !== node.value) {
         onChange({ ...node, value: nextValue })
       }
+      setIsEditing(false)
     }
 
     useImperativeHandle(ref, () => ({
-      focus: () => {
-        setEditing(true)
-        requestAnimationFrame(() => {
-          inputRef.current?.focus()
-          inputRef.current?.select()
-        })
-      },
-      clear: () => setDraftUrl(''),
+      focus: () => { setIsEditing(true) },
+      clear: () => undefined,
       clearSlash: () => [],
-      flush: () => { commit() },
+      flush: () => undefined,
       getContent: () => [],
     }))
 
-    const handleEditorBlur = (event: React.FocusEvent<HTMLDivElement>) => {
-      const nextFocused = event.relatedTarget as Node | null
-      if (nextFocused && editorRootRef.current?.contains(nextFocused)) return
-      commit()
-    }
-
-    if (!parsed && !editing) {
+    if (!parsed) {
       return (
         <div className="rounded-holo-xl border border-dashed border-holo-border-soft px-3 py-2 text-sm text-holo-text-faint">
           Bloc YouTube non pris en charge
@@ -162,142 +162,106 @@ export const YouTubeBlock = forwardRef<InlineEditorHandle, YouTubeBlockProps>(
       )
     }
 
-    if (editing) {
-      return (
-        <div
-          ref={editorRootRef}
-          onBlur={handleEditorBlur}
-          className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30"
+    return (
+      <div
+        ref={editorRootRef}
+        className="group relative my-4 rounded-holo-xl"
+        onBlur={(event) => {
+          const nextFocused = event.relatedTarget as Node | null
+          if (nextFocused && editorRootRef.current?.contains(nextFocused)) return
+          setIsEditing(false)
+          setDraftUrl(parsed.inputUrl)
+        }}
+      >
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setIsEditing((current) => !current)
+          }}
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-full bg-black/72 px-3 py-1.5 text-[11px] text-white opacity-0 shadow-[0_10px_20px_rgba(0,0,0,.22)] ring-1 ring-white/10 transition hover:bg-black/82 group-hover:opacity-100 group-focus-within:opacity-100"
+          title="Modifier la vidéo YouTube"
+          aria-label="Modifier la vidéo YouTube"
         >
-          <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint">
-              <PlaySquare size={12} className="text-red-300" />
-              youtube
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onMouseDown={(event) => { event.preventDefault(); commit() }}
-                disabled={!draftParsed}
-                className="rounded-holo-sm px-2 py-0.5 text-[11px] text-holo-primary-soft enabled:hover:bg-holo-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Valider
-              </button>
-              <button
-                onMouseDown={(event) => {
+          <Pencil size={12} />
+          Modifier
+        </button>
+
+        {isEditing && (
+          <div className="absolute right-2 top-12 z-20 w-[min(28rem,calc(100%-1rem))] rounded-holo-xl border border-holo-border-soft/80 bg-holo-bg-elevated/95 p-3 shadow-[0_18px_48px_rgba(0,0,0,.26)] backdrop-blur-xl">
+            <label className="block text-[11px] font-medium uppercase tracking-[0.18em] text-holo-text-faint">
+              Lien YouTube
+            </label>
+            <input
+              ref={inputRef}
+              type="url"
+              value={draftUrl}
+              onChange={(event) => setDraftUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
                   event.preventDefault()
-                  setDraftUrl(parsed?.inputUrl ?? DEFAULT_YOUTUBE_URL)
-                  setEditing(false)
+                  setIsEditing(false)
+                  setDraftUrl(parsed.inputUrl)
+                }
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commit()
+                  onEnterAtEnd?.()
+                }
+                if (event.key === 'Backspace' && draftUrl === '') {
+                  event.preventDefault()
+                  onBackspaceAtStart?.()
+                }
+              }}
+              placeholder={DEFAULT_YOUTUBE_URL}
+              className="mt-2 w-full rounded-holo-lg border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-sm text-holo-text outline-none transition focus:border-holo-primary/50 focus:ring-2 focus:ring-holo-primary/20"
+            />
+            {!extractYouTubeData(draftUrl.trim()) && draftUrl.trim() !== '' && (
+              <p className="mt-2 text-xs text-amber-200">URL YouTube invalide.</p>
+            )}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setIsEditing(false)
+                  setDraftUrl(parsed.inputUrl)
                 }}
-                className="rounded-holo-sm px-2 py-0.5 text-[11px] text-holo-text-faint hover:bg-holo-glass"
+                className="rounded-holo-sm px-2 py-1 text-[11px] text-holo-text-faint hover:bg-holo-glass"
               >
                 Annuler
               </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commit()}
+                className="rounded-holo-sm px-2 py-1 text-[11px] text-holo-primary-soft hover:bg-holo-primary/10"
+              >
+                Valider
+              </button>
             </div>
           </div>
+        )}
 
-          <div className="grid gap-px bg-holo-border-soft/50 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)]">
-            <div className="space-y-3 bg-black/10 px-4 py-4">
-              <label className="block text-xs font-medium uppercase tracking-[0.18em] text-holo-text-faint">
-                URL YouTube
-              </label>
-              <input
-                ref={inputRef}
-                type="url"
-                value={draftUrl}
-                onChange={(event) => setDraftUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    setDraftUrl(parsed?.inputUrl ?? DEFAULT_YOUTUBE_URL)
-                    setEditing(false)
-                  }
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault()
-                    commit()
-                    onEnterAtEnd?.()
-                  }
-                  if (event.key === 'Backspace' && draftUrl === '') {
-                    event.preventDefault()
-                    onBackspaceAtStart?.()
-                  }
-                }}
-                placeholder={DEFAULT_YOUTUBE_URL}
-                className="w-full rounded-holo-lg border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-sm text-holo-text outline-none transition focus:border-holo-primary/50 focus:ring-2 focus:ring-holo-primary/20"
-              />
-              <p className="text-xs text-holo-text-faint">
-                Colle un lien youtu.be, watch, embed, shorts ou directement un identifiant vidéo.
-              </p>
-              {!draftParsed && draftUrl.trim() !== '' && (
-                <p className="rounded-holo-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-                  URL YouTube invalide.
-                </p>
-              )}
-            </div>
-
-            <div className="bg-[linear-gradient(180deg,rgba(239,68,68,0.08),rgba(0,0,0,0))] p-4">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-black/10 px-2.5 py-1 text-[11px] text-holo-text-faint">
-                <Video size={11} className="text-red-300" />
-                Aperçu YouTube
-              </div>
-              <div className="overflow-hidden rounded-holo-lg border border-holo-border-soft bg-black/30 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
-                {draftParsed ? (
-                  <div className="aspect-video w-full bg-black">
-                    <iframe
-                      src={buildEmbedUrl(draftParsed.videoId, draftParsed.startSeconds)}
-                      title="Vidéo YouTube"
-                      loading="lazy"
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                      className="h-full w-full border-0"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex aspect-video items-center justify-center px-6 text-center text-sm text-holo-text-faint">
-                    Entrez un lien YouTube valide pour afficher l’aperçu.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
-        <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint transition hover:text-holo-text"
-            title="Cliquer pour modifier la vidéo YouTube"
-          >
-            <PlaySquare size={12} className="text-red-300" />
-            youtube
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="block w-full p-4 text-left"
-          title="Cliquer pour modifier le lien YouTube"
-        >
-          <div className="overflow-hidden rounded-holo-lg border border-holo-border-soft bg-black/30 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
+        <figure className="cursor-default rounded-holo-xl transition hover:opacity-95">
+          <div className="overflow-hidden rounded-holo-xl border border-holo-border-soft/70 bg-black/25">
             <div className="aspect-video w-full bg-black">
               <iframe
-                src={parsed?.embedUrl ?? buildEmbedUrl('dQw4w9WgXcQ')}
+                src={parsed.embedUrl}
                 title="Vidéo YouTube"
                 loading="lazy"
                 referrerPolicy="strict-origin-when-cross-origin"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
-                className="pointer-events-none h-full w-full border-0"
+                className="h-full w-full border-0"
               />
             </div>
           </div>
-        </button>
+          <figcaption className="mt-2 text-center text-xs text-holo-text-faint">
+            {parsed.inputUrl}
+          </figcaption>
+        </figure>
       </div>
     )
   },

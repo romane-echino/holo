@@ -274,6 +274,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   const slashRangeRef = useRef<Range | null>(null)
   const selectionRangeRef = useRef<Range | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingPointerSelectAllRef = useRef(false)
 
   // État de la toolbar de formatage inline
   const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
@@ -1031,7 +1032,8 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         onFocus={(e) => {
           savedRef.current = false
           if (selectAllOnFocus) {
-            requestAnimationFrame(() => selectAllContents(e.currentTarget))
+            const target = e.currentTarget
+            requestAnimationFrame(() => selectAllContents(target))
           }
         }}
         onMouseDown={(e) => {
@@ -1041,10 +1043,20 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
             return
           }
           e.preventDefault()
-          e.currentTarget.focus({ preventScroll: true })
-          requestAnimationFrame(() => selectAllContents(e.currentTarget))
+          pendingPointerSelectAllRef.current = true
+          const target = e.currentTarget
+          target.focus({ preventScroll: true })
+          requestAnimationFrame(() => selectAllContents(target))
+        }}
+        onMouseUp={(e) => {
+          if (!pendingPointerSelectAllRef.current) return
+          pendingPointerSelectAllRef.current = false
+          e.preventDefault()
+          const target = e.currentTarget
+          requestAnimationFrame(() => selectAllContents(target))
         }}
         onBlur={() => {
+          pendingPointerSelectAllRef.current = false
           save()
           setMentionPopup(null)
           // Masquer la toolbar sauf si le focus part vers elle (ex. input URL)

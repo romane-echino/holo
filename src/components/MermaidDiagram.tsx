@@ -17,6 +17,7 @@ function ensureMermaidInitialized() {
     startOnLoad: false,
     securityLevel: 'loose',
     theme: 'base',
+    htmlLabels: false,
     themeVariables: {
       background: 'transparent',
       primaryColor: '#7b61ff22',
@@ -33,10 +34,24 @@ function ensureMermaidInitialized() {
       clusterBorder: '#64748b',
       edgeLabelBackground: '#0f1724',
       fontFamily: 'IBM Plex Sans, ui-sans-serif, system-ui, sans-serif',
+      fontSize: '15px',
+      radius: 14,
     },
+    themeCSS: `
+      .node rect,
+      .cluster rect,
+      .label-container {
+        rx: 14px;
+        ry: 14px;
+      }
+
+      .nodeLabel,
+      .edgeLabel {
+        line-height: 1.3;
+      }
+    `,
     flowchart: {
       curve: 'basis',
-      htmlLabels: true,
     },
   })
 
@@ -111,7 +126,7 @@ export function MermaidDiagram({ code, className }: MermaidDiagramProps) {
 
   return (
     <div
-      className={cn('mermaid-diagram holo-scrollbar overflow-x-auto rounded-holo-xl bg-[radial-gradient(circle_at_top,rgba(123,97,255,0.12),transparent_45%),linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full', className)}
+      className={cn('mermaid-diagram flex items-center justify-center holo-scrollbar overflow-x-auto rounded-holo-xl bg-[radial-gradient(circle_at_top,rgba(123,97,255,0.12),transparent_45%),linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full', className)}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   )

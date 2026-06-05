@@ -6,6 +6,7 @@ import {
   getBaseName,
   getCommitTargetPath,
   isSameOrChildPath,
+  normalizeMarkdownFilename,
 } from '../lib/appUtils'
 import { useUI } from '../contexts/UIContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
@@ -57,7 +58,7 @@ export function useNameDialogSubmission({
       let commitMessage: string | null = null
 
       if (nameDialog.mode === 'create-file') {
-        const filename = value.endsWith('.md') ? value : `${value}.md`
+        const filename = normalizeMarkdownFilename(value)
         const newFilePath = `${nameDialog.targetDirectoryPath}/${filename}`
         await holo.createFile(nameDialog.targetDirectoryPath, filename)
 

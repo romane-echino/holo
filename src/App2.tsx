@@ -36,7 +36,15 @@ function extractFmMeta(md: string): TreeFileMeta {
       index += 1
       continue
     }
+
     const key = line.slice(0, colon).trim()
+
+    if (key === 'template' || key === 'isTemplate') {
+      result.isTemplate = /^(true|1|yes|on)$/i.test(line.slice(colon + 1).trim())
+      index += 1
+      continue
+    }
+
     if (key === 'tags') {
       const raw = line.slice(colon + 1).trim()
       if (raw.startsWith('[')) {
@@ -57,10 +65,12 @@ function extractFmMeta(md: string): TreeFileMeta {
       index += 1
       continue
     }
+
     if (key !== 'title' && key !== 'description' && key !== 'icon') {
       index += 1
       continue
     }
+
     const value = line.slice(colon + 1).trim().replace(/^['"']|['"']$/g, '')
     if (value) result[key as 'title' | 'description' | 'icon'] = value
     index += 1
@@ -115,6 +125,21 @@ export default function App2() {
     getHoloApi,
   })
 
+  const persistConfigEntries = useCallback(async (entries: Record<string, unknown>) => {
+    if (!window.holo) return
+
+    if (typeof window.holo.setHoloConfigValue === 'function') {
+      await Promise.all(Object.entries(entries).map(([key, value]) => window.holo!.setHoloConfigValue(key, value)))
+      return
+    }
+
+    const existing = await window.holo.getHoloConfig().catch(() => ({}))
+    await window.holo.setHoloConfig({
+      ...(existing && typeof existing === 'object' ? existing : {}),
+      ...entries,
+    })
+  }, [])
+
   // ─── Onboarding ───────────────────────────────────────────────────────────
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [settingsValue, setSettingsValue] = useState<HoloSettingsValue | undefined>(undefined)
@@ -128,9 +153,13 @@ export default function App2() {
         if (import.meta.env.DEV) {
           setOnboardingDone(true)
         } else {
+          const firstName = typeof cfg['app-author-first-name'] === 'string' ? (cfg['app-author-first-name'] as string).trim() : ''
+          const lastName = typeof cfg['app-author-last-name'] === 'string' ? (cfg['app-author-last-name'] as string).trim() : ''
+          const email = typeof cfg['git-email'] === 'string' ? (cfg['git-email'] as string).trim() : ''
           const hasAuthor = typeof cfg['app-author'] === 'string' && (cfg['app-author'] as string).trim().length > 0
+          const hasProfile = Boolean((firstName && lastName) || email)
           const alreadyDone = cfg['app-onboarding-done'] === true
-          setOnboardingDone(hasAuthor || alreadyDone)
+          setOnboardingDone(hasAuthor || hasProfile || alreadyDone)
         }
         // Favoris
         const savedFavs = cfg['space-favorites']
@@ -205,9 +234,7 @@ export default function App2() {
     const fullName = `${v.firstName.trim()} ${v.lastName.trim()}`.trim()
     setAppAuthor(fullName)
     setGitEmail(v.email.trim())
-    const existing = await window.holo?.getHoloConfig() ?? {}
-    await window.holo?.setHoloConfig({
-      ...existing,
+    await persistConfigEntries({
       'app-author': fullName,
       'app-author-first-name': v.firstName.trim(),
       'app-author-last-name': v.lastName.trim(),
@@ -222,24 +249,19 @@ export default function App2() {
       gitEmail: v.email.trim(),
     }))
     setOnboardingDone(true)
-  }, [setAppAuthor, setGitEmail])
+  }, [persistConfigEntries, setAppAuthor, setGitEmail])
 
   const handleOnboardingSkip = useCallback(async () => {
-    const existing = await window.holo?.getHoloConfig() ?? {}
-    await window.holo?.setHoloConfig({
-      ...existing,
+    await persistConfigEntries({
       'app-onboarding-done': true,
     })
     setOnboardingDone(true)
-  }, [])
+  }, [persistConfigEntries])
 
   // ─── Sauvegarde des paramètres ────────────────────────────────────────────
   const handleSettingsSave = useCallback(async (value: HoloSettingsValue) => {
     const fullName = `${value.firstName?.trim() ?? ''} ${value.lastName?.trim() ?? ''}`.trim()
-    // Lire le config existant et merger en une seule écriture atomique
-    const existing = await window.holo?.getHoloConfig() ?? {}
-    await window.holo?.setHoloConfig({
-      ...existing,
+    await persistConfigEntries({
       'app-author': fullName,
       'app-author-first-name': value.firstName?.trim() ?? '',
       'app-author-last-name': value.lastName?.trim() ?? '',
@@ -283,7 +305,7 @@ export default function App2() {
     setSettingsValue(value)
     setSettingsSaved(true)
     setTimeout(() => setSettingsSaved(false), 3000)
-  }, [setAppAuthor, setGitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId])
+  }, [persistConfigEntries, setAppAuthor, setGitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId])
 
   const handleSaveSpaceConfig = useCallback(async (spacePath: string, mode: string, credentials: SpaceCredentials) => {
     try {

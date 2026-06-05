@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Braces, Eye } from 'lucide-react'
+import { Braces, Eye, Pencil } from 'lucide-react'
 import type { InlineEditorHandle } from '../InlineEditor'
 import type { HtmlNode } from './DetailsBlock'
 
@@ -52,9 +52,9 @@ export const HtmlBlock = forwardRef<InlineEditorHandle, HtmlBlockProps>(
 
     if (editing) {
       return (
-        <div ref={editorRootRef} className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
-          <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint">
+        <div ref={editorRootRef} className="group relative my-5 overflow-hidden rounded-holo-2xl border border-holo-border-soft/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] shadow-[0_18px_60px_rgba(0,0,0,.10)]">
+          <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
+            <div className="inline-flex items-center gap-2 rounded-full bg-teal-400/8 px-2.5 py-1 text-[11px] text-holo-text-faint ring-1 ring-teal-300/15">
               <Braces size={12} className="text-holo-primary-soft" />
               html
             </div>
@@ -78,8 +78,8 @@ export const HtmlBlock = forwardRef<InlineEditorHandle, HtmlBlockProps>(
             </div>
           </div>
 
-          <div className="grid gap-px bg-holo-border-soft/50 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.95fr)]">
-            <div className="bg-black/10 p-0">
+          <div className="grid gap-5 px-4 pb-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.95fr)]">
+            <div className="overflow-hidden rounded-holo-xl bg-black/10 ring-1 ring-white/5">
               <textarea
                 ref={textareaRef}
                 value={draft}
@@ -106,12 +106,12 @@ export const HtmlBlock = forwardRef<InlineEditorHandle, HtmlBlockProps>(
                 spellCheck={false}
               />
             </div>
-            <div className="bg-[linear-gradient(180deg,rgba(94,234,212,0.07),rgba(0,0,0,0))] p-4">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-black/10 px-2.5 py-1 text-[11px] text-holo-text-faint">
+            <div className="rounded-holo-xl bg-[linear-gradient(180deg,rgba(94,234,212,0.07),rgba(0,0,0,0))] p-4 ring-1 ring-white/5">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-black/10 px-2.5 py-1 text-[11px] text-holo-text-faint ring-1 ring-white/5">
                 <Eye size={11} className="text-teal-300" />
                 Aperçu HTML
               </div>
-              <div className="rounded-holo-lg border border-holo-border-soft bg-white/[0.025] p-4 text-sm text-holo-text" dangerouslySetInnerHTML={{ __html: draft || DEFAULT_HTML_SOURCE }} />
+              <div className="rounded-holo-xl bg-white/[0.03] p-5 text-sm text-holo-text ring-1 ring-white/6" dangerouslySetInnerHTML={{ __html: draft || DEFAULT_HTML_SOURCE }} />
             </div>
           </div>
         </div>
@@ -119,26 +119,23 @@ export const HtmlBlock = forwardRef<InlineEditorHandle, HtmlBlockProps>(
     }
 
     return (
-      <div className="group relative my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-glass/30">
-        <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/60 px-4 py-2">
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint transition hover:text-holo-text"
-            title="Cliquer pour modifier le bloc HTML"
-          >
-            <Braces size={12} className="text-holo-primary-soft" />
-            html
-          </button>
-        </div>
-
+      <div className="group relative my-5">
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="block w-full text-left p-4"
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1.5 text-[11px] text-slate-800 opacity-0 shadow-[0_10px_20px_rgba(15,23,42,.10)] ring-1 ring-slate-950/6 transition hover:bg-white group-hover:opacity-100 group-focus-within:opacity-100"
+          title="Cliquer pour modifier le bloc HTML"
+        >
+          <Pencil size={12} />
+          Modifier
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="block w-full text-left"
           title="Cliquer pour modifier le HTML"
         >
-          <div className="rounded-holo-lg border border-holo-border-soft bg-white/[0.025] p-4 text-sm text-holo-text" dangerouslySetInnerHTML={{ __html: node.value || DEFAULT_HTML_SOURCE }} />
+          <div className="rounded-[1rem] border border-transparent bg-transparent p-3 text-sm text-holo-text transition group-hover:border-holo-border-soft/70" dangerouslySetInnerHTML={{ __html: node.value || DEFAULT_HTML_SOURCE }} />
         </button>
       </div>
     )

@@ -145,11 +145,12 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
     await page.keyboard.press('End')
     await page.keyboard.press('Enter')
     await page.keyboard.type('> ')
+    const bqEditor = page.locator('[data-block-type="blockquote"][contenteditable]')
+    await expect(bqEditor).toBeVisible({ timeout: 3_000 })
+    await bqEditor.click()
     await page.keyboard.type('Citation via raccourci')
     await page.keyboard.press('Tab')
-
-    const bqEditor = page.locator('[data-block-type="blockquote"][contenteditable]').filter({ hasText: 'Citation via raccourci' })
-    await expect(bqEditor).toBeVisible({ timeout: 3_000 })
+    await expect(bqEditor).toContainText('Citation via raccourci')
 
     const md = await waitForMd(page, (s) =>
       s.includes('> Citation via raccourci') && s.includes('Gamma-dernier'),
@@ -282,7 +283,7 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
 
     const alertBlock = page.locator('blockquote[data-blockquote-alert="note"]')
     await expect(alertBlock).toBeVisible()
-    await expect(alertBlock).toContainText('Note')
+    await expect(alertBlock.getByRole('button', { name: 'Type de citation Note' })).toBeVisible()
 
     const alertEditor = alertBlock.locator('[data-block-type="blockquote"][contenteditable]')
     await alertEditor.click()
@@ -400,6 +401,24 @@ test.describe('MermaidBlock — édition et sérialisation', () => {
       6000,
     )
     expect(md).toContain('Gamma-dernier')
+  })
+
+  test('un diagramme mermaid peut s ouvrir en plein écran', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  Start --> End',
+      '```',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Voir le diagramme en plein écran' }).click()
+    await expect(page.getByRole('dialog', { name: 'Diagramme Mermaid en plein écran' })).toBeVisible()
+    await page.getByRole('button', { name: 'Fermer le diagramme en plein écran' }).click()
+    await expect(page.getByRole('dialog', { name: 'Diagramme Mermaid en plein écran' })).toBeHidden()
   })
 })
 
@@ -622,11 +641,11 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     ].join('\n'))
 
     await expect(page.locator('iframe[src*="embed/dQw4w9WgXcQ"]')).toHaveCount(1)
-    await page.locator('button[title="Cliquer pour modifier la vidéo YouTube"]').click()
+  await page.getByRole('button', { name: 'Modifier la vidéo YouTube' }).click()
 
-    const input = page.locator('input[type="url"]').first()
-    await input.fill('https://www.youtube.com/watch?v=M7lc1UVf-VE')
-    await page.getByRole('button', { name: 'Valider' }).click()
+  const input = page.locator('input[type="url"]').first()
+  await input.fill('https://www.youtube.com/watch?v=M7lc1UVf-VE')
+  await page.getByRole('button', { name: 'Valider' }).click()
 
     const md = await waitForMd(page, (s) =>
       s.includes('youtube.com/embed/M7lc1UVf-VE')
@@ -643,15 +662,36 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
     await enterAndSlash(page, milieu)
     await selectCmd(page, 'Vidéo YouTube')
 
-    const input = page.locator('input[type="url"]').first()
-    await expect(input).toBeVisible()
-    await input.fill('https://www.youtube.com/watch?v=eNhx-ehhumg')
-    await page.getByRole('button', { name: 'Valider' }).click()
+  const input = page.locator('input[type="url"]').first()
+  await expect(input).toBeVisible()
+  await input.fill('https://www.youtube.com/watch?v=eNhx-ehhumg')
+  await page.getByRole('button', { name: 'Valider' }).click()
 
     await expect(page.locator('iframe[src*="youtube.com/embed/eNhx-ehhumg"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (s) =>
       s.includes('youtube.com/embed/eNhx-ehhumg') && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un autre lien watch youtube valide produit aussi un embed compatible', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Vidéo YouTube')
+
+    const input = page.locator('input[type="url"]').first()
+    await expect(input).toBeVisible()
+    await input.fill('https://www.youtube.com/watch?v=L5mJQ0kyHbM')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('iframe[src*="youtube.com/embed/L5mJQ0kyHbM"]')).toHaveCount(1)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('youtube.com/embed/L5mJQ0kyHbM') && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
@@ -751,7 +791,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
       6000,
     )
     // Le markdown footnoteDefinition : [^id]: contenu
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*Contenu de la note de bas de page/m)
+    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Contenu de la note de bas de page/m)
     expect(md).toContain('Gamma-dernier')
     await expectContextIntact(page)
   })
@@ -788,7 +828,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
     const md = await waitForMd(page, (s) =>
       s.includes('Ma note') && s.includes('Après note'), 6000,
     )
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*Ma note/m)
+    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Ma note/m)
     expect(md).toContain('Après note')
   })
 
@@ -810,7 +850,7 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
     await page.keyboard.press('Tab')
 
     const md = await waitForMd(page, (s) => s.includes('Note pré-existante éditée'), 6000)
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*Note pré-existante éditée/m)
+    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Note pré-existante éditée/m)
     expect(md).toContain('Alpha-premier')
     expect(md).toContain('Gamma-dernier')
   })
@@ -988,6 +1028,98 @@ test.describe('Image block — sélection et suppression', () => {
     // La figure ne doit plus avoir ring-2
     await expect(figure).not.toHaveClass(/ring-2/, { timeout: 2_000 })
   })
+
+  test('une image peut s ouvrir en plein écran', async ({ page }) => {
+    await gotoEditor(page, IMAGE_MD)
+
+    await page.getByRole('button', { name: 'Voir l\'image en plein écran' }).click()
+    await expect(page.getByRole('dialog', { name: 'Image en plein écran' })).toBeVisible()
+    await page.getByRole('button', { name: 'Fermer l\'image en plein écran' }).click()
+    await expect(page.getByRole('dialog', { name: 'Image en plein écran' })).toBeHidden()
+  })
+})
+
+test.describe('CodeBlock — édition WYSIWYG', () => {
+  test('création via slash command et changement de langage persistent la fence markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Bloc de code')
+
+    const editor = page.locator('.cm-content').first()
+    await expect(editor).toBeVisible()
+
+    await page.getByRole('button', { name: 'Plain text' }).first().click()
+    await page.getByRole('button', { name: 'TypeScript' }).click()
+
+    await editor.click()
+    await page.keyboard.type('const answer: number = 42')
+    await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('```typescript')
+      && s.includes('const answer: number = 42')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un bloc de code pré-existant est éditable avec coloration et persiste son contenu', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '```typescript',
+      'const answer = 41',
+      '```',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    const editor = page.locator('.cm-content').first()
+    await expect(editor).toBeVisible()
+    await editor.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' + 1')
+
+    // Blur pour déclencher la persistance vers le markdown.
+    await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('const answer = 41 + 1') && s.includes('```typescript'),
+      6000,
+    )
+    expect(md).toContain('Gamma-dernier')
+  })
+
+  test('Ctrl+A dans le bloc code remplace seulement le code et pas tous les blocs', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '```typescript',
+      'const answer = 41',
+      '```',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    const editor = page.locator('.cm-content').first()
+    await expect(editor).toBeVisible()
+    await editor.click()
+    await page.keyboard.press('Control+A')
+    await page.keyboard.type('const replaced = true')
+    await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('const replaced = true')
+      && !s.includes('const answer = 41')
+      && s.includes('Alpha-premier')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('```typescript')
+  })
 })
 
 // ─── 5. Drag-select multi-blocs ────────────────────────────────────────────────
@@ -1159,18 +1291,10 @@ test.describe('Shift+clic — sélection de plage', () => {
       'Bloc-B',
     ].join('\n'))
 
-    // Sélectionner d'abord Bloc-A via drag court
+    // Sélectionner d'abord Bloc-A via le drag handle
     const blocA = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Bloc-A' })
-    const boxA = await blocA.boundingBox()
-    if (!boxA) throw new Error('boundingBox manquant')
-
-    await page.mouse.move(boxA.x + 2, boxA.y + boxA.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(boxA.x + 2, boxA.y + boxA.height / 2 + 15)
-    await page.waitForTimeout(80)
-    await page.mouse.up()
-
     const wrapperA = page.locator('[data-block-id]').filter({ has: blocA })
+    await wrapperA.locator('[data-drag-handle]').click({ force: true })
     await expect(wrapperA).toHaveClass(/ring-1/, { timeout: 2_000 })
 
     // Shift+clic sur Bloc-B
@@ -1200,15 +1324,13 @@ test.describe('Shift+clic — sélection de plage', () => {
     const delUn = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Del-un' })
     const delTrois = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Del-trois' })
 
-    // Sélectionner Del-un par drag
+    // Sélectionner Del-un via le drag handle pour poser l'ancre de plage
     const boxUn = await delUn.boundingBox()
     if (!boxUn) throw new Error('boundingBox manquant')
 
-    await page.mouse.move(boxUn.x + 2, boxUn.y + boxUn.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(boxUn.x + 2, boxUn.y + boxUn.height / 2 + 15)
-    await page.waitForTimeout(80)
-    await page.mouse.up()
+    const wrapperUn = page.locator('[data-block-id]').filter({ has: delUn })
+    await wrapperUn.locator('[data-drag-handle]').click({ force: true })
+    await expect(wrapperUn).toHaveClass(/ring-1/, { timeout: 2_000 })
 
     // Shift+clic sur Del-trois → plage [Del-un, Del-deux, Del-trois]
     await delTrois.click({ modifiers: ['Shift'] })

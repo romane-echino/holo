@@ -126,6 +126,25 @@ export function getBaseName(targetPath: string): string {
   return normalized.slice(index + 1)
 }
 
+export function normalizeMarkdownFilename(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return 'untitled.md'
+
+  if (/\.md$/i.test(trimmed)) {
+    return trimmed.replace(/\.md$/i, '.md')
+  }
+
+  const lastSlashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const lastDotIndex = trimmed.lastIndexOf('.')
+  const hasExtension = lastDotIndex > lastSlashIndex
+
+  if (!hasExtension) {
+    return `${trimmed}.md`
+  }
+
+  return `${trimmed.slice(0, lastDotIndex)}.md`
+}
+
 export function getDirectoryTarget(rootPath: string | null, selectedPath: string | null, selectedType: NodeType | null) {
   if (!rootPath) {
     return null

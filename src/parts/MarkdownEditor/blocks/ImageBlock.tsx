@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ImageOff } from 'lucide-react'
+import { Expand, ImageOff, X } from 'lucide-react'
 import type { ImageNode } from '../lib/types'
 import { cn } from '../../../utils/global'
 
@@ -23,6 +23,7 @@ function isLocalRelativePath(url: string) {
 export function ImageBlock({ node, isSelected, onSelect }: ImageBlockProps) {
   const [error, setError] = useState(false)
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
     if (!node.url || !isLocalRelativePath(node.url)) return
@@ -56,10 +57,24 @@ export function ImageBlock({ node, isSelected, onSelect }: ImageBlockProps) {
   }
 
   return (
-    <figure
-      className={cn('my-4 cursor-pointer rounded-holo-xl transition', isSelected && 'ring-2 ring-holo-primary/60')}
-      onClick={onSelect}
-    >
+    <>
+      <figure
+        className={cn('group relative my-4 cursor-pointer rounded-holo-xl transition', isSelected && 'ring-2 ring-holo-primary/60')}
+        onClick={onSelect}
+      >
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setIsFullscreen(true)
+          }}
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-black/72 px-2.5 py-1.5 text-[11px] text-white opacity-0 shadow-[0_10px_20px_rgba(0,0,0,.2)] ring-1 ring-white/10 transition hover:bg-black/82 group-hover:opacity-100 group-focus-within:opacity-100"
+          title="Voir l'image en plein écran"
+          aria-label="Voir l'image en plein écran"
+        >
+          <Expand size={12} />
+        </button>
       {displaySrc ? (
         <img
           src={displaySrc}
@@ -79,6 +94,38 @@ export function ImageBlock({ node, isSelected, onSelect }: ImageBlockProps) {
           {node.title || node.alt}
         </figcaption>
       )}
-    </figure>
+      </figure>
+
+      {isFullscreen && displaySrc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
+          onClick={() => setIsFullscreen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image en plein écran"
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              setIsFullscreen(false)
+            }}
+            className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-2 text-sm text-white ring-1 ring-white/10"
+            aria-label="Fermer l'image en plein écran"
+          >
+            <X size={14} />
+            Fermer
+          </button>
+          <img
+            src={displaySrc}
+            alt={node.alt}
+            title={node.title ?? undefined}
+            className="max-h-full max-w-full rounded-holo-xl object-contain"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
   )
 }

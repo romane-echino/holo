@@ -237,7 +237,24 @@ Nouveau composants :
 - ✅ les section repliable ressemble trop a des blocs de code il faudrai faire qqch de plus naturel
 
 # Phase 17
-- Youtube, HTML, Section repliable doivent avoir un stlye moins proche des bloc de code
-Typiquement youtube doit être intégré comme une image (simple bordure) sans gros header avec un bouton pen (pour modifier) flottant en haut a droite bien visible
-Plus ou moin pareil pour html qui doit être ressenti comme intégré a la page mais avec un bouton disret d'édition
-Et pour les section repliable je m'attend plus a un retrait a gauche pour la partie contenu mais qu'on garde ce contexte de création de composant
+- ✅ Youtube, HTML, Section repliable doivent avoir un stlye moins proche des bloc de code
+    Typiquement youtube doit être intégré comme une image (simple bordure) sans gros header avec un bouton pen (pour modifier) flottant en haut a droite bien visible
+    Plus ou moin pareil pour html qui doit être ressenti comme intégré a la page mais avec un bouton disret d'édition
+    Et pour les section repliable je m'attend plus a un retrait a gauche pour la partie contenu mais qu'on garde ce contexte de création de composant
+- ✅ Il a visiblement un problème de sauvegarde des info de onboarding sur windows 
+- ✅ Dans les création de fichier -> Bien verifié de créer un fichier markdown .md dans TOUT les cas
+- ✅ Déplacer un fichier qui est un modèle -> le fichier perd sont status de "modèle"
+
+# Phase 17.1
+- ✅Est-ce que le bloc de code peux-être juste plus wysiwyg : c'est a dire on tape directement dans le code coloré et y'a pas cette systématique de rendu/editeur
+- ✅Une icone dans le composant image qui permet de voir l'image en fullscreen
+- ✅Une icone dans le composant mermaid qui permet de voir le diagram en fullscreen
+
+# Phase 18
+- ✅ Batterie de test playwright
+
+# Phase 19
+- Documentation global sur toutes les fonctionnalités du projet
+
+# Phase 20
+- Site internet du projet

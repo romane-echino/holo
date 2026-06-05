@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronDown, ChevronRight, FoldVertical, TextQuote } from 'lucide-react'
+import { ChevronDown, ChevronRight, FoldVertical, Pencil, TextQuote } from 'lucide-react'
 import type { InlineEditorHandle } from '../InlineEditor'
 
 export interface HtmlNode {
@@ -133,10 +133,10 @@ export const DetailsBlock = forwardRef<InlineEditorHandle, DetailsBlockProps>(
         <div
           ref={editorRootRef}
           onBlur={handleEditorBlur}
-          className="group relative my-4 overflow-hidden rounded-holo-2xl border border-holo-border-soft/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.015))] shadow-[inset_0_1px_0_rgba(255,255,255,.03)]"
+          className="group relative my-5 overflow-hidden rounded-holo-2xl border border-holo-border-soft/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.028),rgba(255,255,255,0.012))] shadow-[0_18px_54px_rgba(0,0,0,.08)]"
         >
-          <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/40 px-4 py-2.5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft/70 bg-white/[0.04] px-2.5 py-1 text-[11px] text-holo-text-faint">
+          <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
+            <div className="inline-flex items-center gap-2 rounded-full bg-sky-400/8 px-2.5 py-1 text-[11px] text-holo-text-faint ring-1 ring-sky-300/15">
               <FoldVertical size={12} className="text-holo-primary-soft" />
               details
             </div>
@@ -162,8 +162,8 @@ export const DetailsBlock = forwardRef<InlineEditorHandle, DetailsBlockProps>(
             </div>
           </div>
 
-          <div className="grid gap-px bg-holo-border-soft/30 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.95fr)]">
-            <div className="space-y-3 bg-transparent p-4">
+          <div className="grid gap-5 px-4 pb-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.95fr)]">
+            <div className="space-y-3 rounded-holo-xl bg-white/[0.015] p-4 ring-1 ring-white/5">
               <label className="block space-y-1.5">
                 <span className="text-[11px] uppercase tracking-[0.18em] text-holo-text-faint">Résumé</span>
                 <input
@@ -207,14 +207,14 @@ export const DetailsBlock = forwardRef<InlineEditorHandle, DetailsBlockProps>(
               </label>
             </div>
 
-            <div className="bg-[radial-gradient(circle_at_top,rgba(96,165,250,0.08),transparent_62%)] p-4">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-holo-border-soft/70 bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint">
+            <div className="rounded-holo-xl bg-[radial-gradient(circle_at_top,rgba(96,165,250,0.08),transparent_62%)] p-4 ring-1 ring-white/5">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/[0.03] px-2.5 py-1 text-[11px] text-holo-text-faint ring-1 ring-white/5">
                 <TextQuote size={11} className="text-sky-300" />
                 Aperçu GitHub details
               </div>
-              <details open={previewOpen} className="rounded-holo-xl border border-holo-border-soft/70 bg-white/[0.03] px-4 py-3 text-sm text-holo-text">
+              <details open={previewOpen} className="rounded-holo-xl bg-white/[0.03] px-4 py-3 text-sm text-holo-text ring-1 ring-white/6">
                 <summary className="cursor-pointer select-none font-medium marker:text-holo-primary-soft">{draftSummary.trim() || DEFAULT_DETAILS_SUMMARY}</summary>
-                <div className="mt-3 text-holo-text-muted">
+                <div className="mt-3 border-l border-holo-border-soft/60 pl-4 text-holo-text-muted">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftContent || DEFAULT_DETAILS_CONTENT}</ReactMarkdown>
                 </div>
               </details>
@@ -225,22 +225,20 @@ export const DetailsBlock = forwardRef<InlineEditorHandle, DetailsBlockProps>(
     }
 
     return (
-      <div className="group relative my-4 overflow-hidden rounded-holo-2xl border border-holo-border-soft/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.032),rgba(255,255,255,0.012))] shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
-        <div className="flex items-center justify-between gap-3 border-b border-holo-border-soft/35 px-4 py-2.5">
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="inline-flex items-center gap-2 rounded-full border border-holo-border-soft/70 bg-white/[0.04] px-2.5 py-1 text-[11px] text-holo-text-faint transition hover:text-holo-text"
-            title="Cliquer pour modifier la section repliable"
-          >
-            <FoldVertical size={12} className="text-holo-primary-soft" />
-            details
-          </button>
-        </div>
+      <div className="group relative my-5 px-1 py-1">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="absolute right-2 top-0 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/82 px-3 py-1.5 text-[11px] text-slate-800 opacity-0 shadow-[0_10px_20px_rgba(15,23,42,.10)] ring-1 ring-slate-950/6 transition hover:bg-white group-hover:opacity-100 group-focus-within:opacity-100"
+          title="Cliquer pour modifier la section repliable"
+        >
+          <Pencil size={12} />
+          Modifier
+        </button>
 
         <details
           open={previewOpen}
-          className="px-4 py-3.5 text-sm text-holo-text"
+          className="text-sm text-holo-text"
           onToggle={(event) => setPreviewOpen((event.currentTarget as HTMLDetailsElement).open)}
         >
           <summary className="cursor-pointer select-none font-medium marker:text-holo-primary-soft">
@@ -249,7 +247,7 @@ export const DetailsBlock = forwardRef<InlineEditorHandle, DetailsBlockProps>(
               {parsed?.summary ?? DEFAULT_DETAILS_SUMMARY}
             </span>
           </summary>
-          <div className="mt-3 pl-6 text-holo-text-muted">
+          <div className="mt-3 ml-3 border-l-2 border-holo-border-soft/70 pl-5 text-holo-text-muted">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{parsed?.content ?? DEFAULT_DETAILS_CONTENT}</ReactMarkdown>
           </div>
         </details>

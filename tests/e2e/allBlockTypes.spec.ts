@@ -236,13 +236,13 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
     await enterAndSlash(page, milieu)
     await selectCmd(page, 'Tableau')
 
-    // Les cellules header sont des textarea
-    const headerCells = page.locator('table textarea').first()
+    // Les headers sont maintenant des inputs nommés "Colonne"
+    const headerCells = page.getByRole('textbox', { name: 'Colonne' }).first()
     await headerCells.click()
     await headerCells.fill('Colonne 1')
     await page.keyboard.press('Tab')
 
-    const headerCells2 = page.locator('table textarea').nth(1)
+    const headerCells2 = page.getByRole('textbox', { name: 'Colonne' }).nth(1)
     await headerCells2.fill('Colonne 2')
     await page.keyboard.press('Tab') // blur
 
@@ -479,6 +479,7 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
     const firstTextCell = page.locator('tbody [data-block-type="table-cell"][contenteditable="true"]').first()
     await firstTextCell.click()
     await page.keyboard.type('Zulu')
+    await page.keyboard.press('Tab')
 
     const replacedMd = await waitForMd(page, (s) =>
       findTableRowIndex(s, 'Zulu', '10') !== -1 && findTableRowIndex(s, 'AlphaZulu', '10') === -1,
@@ -725,7 +726,8 @@ test.describe('Document complet — tous les types de blocs', () => {
     await expect(pomme).toContainText('rouge')
 
     // ── Édition cellule tableau ───────────────────────────────────────────────
-    const firstCell = page.locator('table textarea').first()
+    const firstCell = page.locator('tbody [data-block-type="table-cell"][contenteditable="true"]').first()
+    await firstCell.click()
     await firstCell.fill('Nom modifié')
     await page.keyboard.press('Tab') // Tab dans tableau va à la cellule suivante
 

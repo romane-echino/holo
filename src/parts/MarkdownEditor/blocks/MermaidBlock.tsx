@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { GitBranch, Play, WandSparkles } from 'lucide-react'
+import { Expand, GitBranch, Play, WandSparkles, X } from 'lucide-react'
 import { MermaidDiagram } from '../../../components/MermaidDiagram'
 import { cn } from '../../../utils/global'
 import type { CodeNode } from '../lib/types'
@@ -18,6 +18,7 @@ export const MermaidBlock = forwardRef<InlineEditorHandle, MermaidBlockProps>(
   function MermaidBlock({ node, onChange, onEnterAtEnd, onBackspaceAtStart }, ref) {
     const [editing, setEditing] = useState(false)
     const [draft, setDraft] = useState(node.value)
+    const [isFullscreen, setIsFullscreen] = useState(false)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
 
     useImperativeHandle(ref, () => ({
@@ -125,10 +126,26 @@ export const MermaidBlock = forwardRef<InlineEditorHandle, MermaidBlockProps>(
             <GitBranch size={12} className="text-holo-primary-soft" />
             mermaid
           </button>
-          <span className="inline-flex items-center gap-1.5 text-[11px] text-holo-text-faint opacity-0 transition group-hover:opacity-100">
-            <WandSparkles size={11} className="text-holo-primary-soft" />
-            Cliquer pour modifier
-          </span>
+          <div className="flex items-center gap-2 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setIsFullscreen(true)
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-black/72 px-2.5 py-1.5 text-[11px] text-white shadow-[0_10px_20px_rgba(0,0,0,.22)] ring-1 ring-white/10 transition hover:bg-black/82"
+              title="Voir le diagramme en plein écran"
+              aria-label="Voir le diagramme en plein écran"
+            >
+              <Expand size={12} />
+              Plein écran
+            </button>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-holo-text-faint">
+              <WandSparkles size={11} className="text-holo-primary-soft" />
+              Cliquer pour modifier
+            </span>
+          </div>
         </div>
 
         <button
@@ -139,6 +156,36 @@ export const MermaidBlock = forwardRef<InlineEditorHandle, MermaidBlockProps>(
         >
           <MermaidDiagram code={node.value} className="pointer-events-none" />
         </button>
+
+        {isFullscreen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
+            onClick={() => setIsFullscreen(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Diagramme Mermaid en plein écran"
+          >
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setIsFullscreen(false)
+              }}
+              className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-2 text-sm text-white ring-1 ring-white/10"
+              aria-label="Fermer le diagramme en plein écran"
+            >
+              <X size={14} />
+              Fermer
+            </button>
+            <div
+              className="h-[calc(100vh-3rem)] w-[calc(100vw-3rem)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <MermaidDiagram code={node.value} className="h-full w-full [&_svg]:max-h-full [&_svg]:w-full" />
+            </div>
+          </div>
+        )}
       </div>
     )
   },
