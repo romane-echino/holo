@@ -272,9 +272,6 @@ Nouveau composants :
  
  
 
- 
-
-
 # Phase 19
 - Documentation global sur toutes les fonctionnalités du projet
 
