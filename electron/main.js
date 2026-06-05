@@ -2038,6 +2038,33 @@ ipcMain.handle('git:get-file-activity', async (_event, filePath, maxCount = 10) 
   return activities.filter(Boolean)
 })
 
+ipcMain.handle('git:get-contributors', async () => {
+  const cwd = currentRootPath
+  if (!cwd) return []
+
+  const isRepo = await isGitRepository(cwd)
+  if (!isRepo) return []
+
+  const result = await runGit(['shortlog', '-sne', '--all'], cwd)
+  if (!result.ok || !result.stdout) return []
+
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(.+?)\s+<([^>]+)>$/)
+      if (!match) return null
+
+      return {
+        commitCount: Number(match[1]),
+        authorName: match[2] ?? '',
+        authorEmail: match[3] ?? '',
+      }
+    })
+    .filter(Boolean)
+})
+
 ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail) => {
   const cwd = currentRootPath
   if (!cwd) return { ok: true, committed: false, reason: 'no-root-path' }

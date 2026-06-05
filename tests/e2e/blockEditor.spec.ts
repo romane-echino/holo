@@ -70,6 +70,29 @@ async function selectSlashCommand(page: Page, label: string) {
   await page.waitForSelector('[data-testid="slash-popup"]', { state: 'hidden', timeout: 2_000 })
 }
 
+function historyModifier() {
+  return process.platform === 'darwin' ? 'Meta' : 'Control'
+}
+
+async function pressUndo(page: Page) {
+  await page.keyboard.press(`${historyModifier()}+z`)
+}
+
+async function pressRedo(page: Page) {
+  await page.keyboard.press(`${historyModifier()}+Shift+z`)
+}
+
+async function expectHistoryState(page: Page, expectedText: string, forbiddenText: string[] = []) {
+  const md = await waitForMd(page, (snapshot) => {
+    if (!snapshot.includes(expectedText)) return false
+    return forbiddenText.every((text) => !snapshot.includes(text))
+  })
+  expect(md).toContain(expectedText)
+  for (const text of forbiddenText) {
+    expect(md).not.toContain(text)
+  }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test.describe('BlockEditor — slash commands', () => {
@@ -397,6 +420,102 @@ test.describe('BlockEditor — intégrité du document', () => {
     expect(md).toContain('Sous-section')
     expect(md).toContain('item un')
     expect(md).toContain('Conclusion')
+  })
+
+  test('undo/redo restaure progressivement les éditions texte sans toucher footnote ni code block', async ({ page }) => {
+    await gotoEditor(page, [
+      'Avant',
+      '',
+      '[^1]: Note stable',
+      '',
+      '```plaintext',
+      "console.log('hello')",
+      '```',
+      '',
+      'Après',
+    ].join('\n'))
+
+    const beforeBlock = paragraphWithText(page, 'Avant')
+
+    await beforeBlock.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' A')
+    await page.keyboard.press('Tab')
+    await expectHistoryState(page, 'Avant A', ['Avant A B', 'Avant A B C'])
+
+    await paragraphWithText(page, 'Avant A').click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' B')
+    await page.keyboard.press('Tab')
+    await expectHistoryState(page, 'Avant A B', ['Avant A B C'])
+
+    await paragraphWithText(page, 'Avant A B').click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' C')
+    await page.keyboard.press('Tab')
+
+    const finalMd = await waitForMd(page, (snapshot) => snapshot.includes('Avant A B C'))
+    expect(finalMd).toContain('[^1]: Note stable')
+    expect(finalMd).toContain("console.log('hello')")
+    expect(finalMd).toContain('Après')
+
+    await paragraphWithText(page, 'Avant A B C').click()
+    await pressUndo(page)
+    await expectHistoryState(page, 'Avant A B', ['Avant A B C'])
+
+    await pressUndo(page)
+    await expectHistoryState(page, 'Avant A', ['Avant A B', 'Avant A B C'])
+
+    await pressUndo(page)
+    const restoredInitialMd = await waitForMd(page, (snapshot) => snapshot.includes('Avant\n\n[^1]: Note stable'))
+    expect(restoredInitialMd).toContain('[^1]: Note stable')
+    expect(restoredInitialMd).toContain("console.log('hello')")
+    expect(restoredInitialMd).not.toContain('Avant A')
+
+    await pressRedo(page)
+    await expectHistoryState(page, 'Avant A', ['Avant A B', 'Avant A B C'])
+
+    await pressRedo(page)
+    await expectHistoryState(page, 'Avant A B', ['Avant A B C'])
+
+    await pressRedo(page)
+    const redoneMd = await waitForMd(page, (snapshot) => snapshot.includes('Avant A B C'))
+    expect(redoneMd).toContain('[^1]: Note stable')
+    expect(redoneMd).toContain("console.log('hello')")
+    expect(redoneMd).toContain('Après')
+  })
+
+  test('undo/redo restaure une suppression de bloc pas à pas', async ({ page }) => {
+    await gotoEditor(page, [
+      'Bloc un',
+      '',
+      'Bloc deux',
+      '',
+      'Bloc trois',
+    ].join('\n'))
+
+    const secondBlock = paragraphWithText(page, 'Bloc deux')
+    await secondBlock.click()
+    await page.keyboard.press(`${historyModifier()}+A`)
+    await page.keyboard.press('Delete')
+    await page.keyboard.press('Backspace')
+
+    const withoutSecondBlock = await waitForMd(page, (snapshot) => !snapshot.includes('Bloc deux') && snapshot.includes('Bloc trois'))
+    expect(withoutSecondBlock).toContain('Bloc un')
+    expect(withoutSecondBlock).toContain('Bloc trois')
+
+    await paragraphWithText(page, 'Bloc trois').click()
+    await pressUndo(page)
+
+    const restoredMd = await waitForMd(page, (snapshot) => snapshot.includes('Bloc deux') && snapshot.includes('Bloc trois'))
+    expect(restoredMd).toContain('Bloc un')
+    expect(restoredMd).toContain('Bloc deux')
+    expect(restoredMd).toContain('Bloc trois')
+
+    await pressRedo(page)
+    const redoneDeletionMd = await waitForMd(page, (snapshot) => !snapshot.includes('Bloc deux') && snapshot.includes('Bloc trois'))
+    expect(redoneDeletionMd).toContain('Bloc un')
+    expect(redoneDeletionMd).toContain('Bloc trois')
   })
 
 })

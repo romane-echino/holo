@@ -205,13 +205,15 @@ export default function App2() {
     const fullName = `${v.firstName.trim()} ${v.lastName.trim()}`.trim()
     setAppAuthor(fullName)
     setGitEmail(v.email.trim())
-    await Promise.all([
-      window.holo?.setHoloConfigValue('app-author', fullName),
-      window.holo?.setHoloConfigValue('app-author-first-name', v.firstName.trim()),
-      window.holo?.setHoloConfigValue('app-author-last-name', v.lastName.trim()),
-      window.holo?.setHoloConfigValue('git-email', v.email.trim()),
-      window.holo?.setHoloConfigValue('app-onboarding-done', true),
-    ])
+    const existing = await window.holo?.getHoloConfig() ?? {}
+    await window.holo?.setHoloConfig({
+      ...existing,
+      'app-author': fullName,
+      'app-author-first-name': v.firstName.trim(),
+      'app-author-last-name': v.lastName.trim(),
+      'git-email': v.email.trim(),
+      'app-onboarding-done': true,
+    })
     // Sync settingsValue so the Settings dialog shows the submitted name/email
     setSettingsValue(prev => ({
       ...(prev ?? {} as HoloSettingsValue),
@@ -223,7 +225,11 @@ export default function App2() {
   }, [setAppAuthor, setGitEmail])
 
   const handleOnboardingSkip = useCallback(async () => {
-    await window.holo?.setHoloConfigValue('app-onboarding-done', true)
+    const existing = await window.holo?.getHoloConfig() ?? {}
+    await window.holo?.setHoloConfig({
+      ...existing,
+      'app-onboarding-done': true,
+    })
     setOnboardingDone(true)
   }, [])
 
@@ -501,8 +507,19 @@ export default function App2() {
   // Markdown live (mis à jour à chaque keystroke) — pour l'Inspector en temps réel
   const [liveMarkdown, setLiveMarkdown] = useState<string | null>(null)
 
+  const resolveOwningSpace = useCallback((filePath: string) => {
+    const normalizedFilePath = String(filePath ?? '').replace(/\\/g, '/')
+    return recentFolders.find((folderPath) => {
+      const normalizedFolderPath = String(folderPath ?? '').replace(/\\/g, '/')
+      return normalizedFilePath === normalizedFolderPath || normalizedFilePath.startsWith(`${normalizedFolderPath}/`)
+    })
+  }, [recentFolders])
+
   const handleSelectFile = useCallback(async (node: SpaceFileNode) => {
     if (node.type !== 'file') return
+    switchingToFilePathRef.current = node.path
+    setSaveStatus('idle')
+    setSaveErrorMsg(null)
     // Annuler le timer de sauvegarde différée et déclencher immédiatement le git save
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
@@ -511,15 +528,24 @@ export default function App2() {
     // Git save immédiat du fichier précédent avant de switcher
     void performGitSaveRef.current()
     try {
+      const owningSpace = resolveOwningSpace(node.path)
+      const normalizedRootPath = String(rootPath ?? '').replace(/\\/g, '/')
+      if (owningSpace && String(owningSpace).replace(/\\/g, '/') !== normalizedRootPath) {
+        navigate(`/space/${encodeURIComponent(owningSpace)}`)
+        await window.holo?.openRecentFolder(owningSpace).catch(() => null)
+      }
+
       const content = await window.holo?.readFile(node.path) ?? ''
       setOpenedFile({ path: node.path, name: node.name, content })
       setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
       setRecentFilePaths(prev => [node.path, ...prev.filter(p => p !== node.path)].slice(0, 50))
       setMobileEditorOpen(true)
+      switchingToFilePathRef.current = null
     } catch (err) {
+      switchingToFilePathRef.current = null
       console.error('[App2] Impossible de charger le fichier :', err)
     }
-  }, [setRecentFilePaths])
+  }, [navigate, resolveOwningSpace, rootPath, setRecentFilePaths])
 
   useStartupNavigation({
     openRecentFolder,
@@ -603,6 +629,9 @@ export default function App2() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingWriteRef = useRef<Promise<void> | null>(null)
+  const switchingToFilePathRef = useRef<string | null>(null)
+  const AUTO_GIT_SAVE_DELAY_MS = 1500
   const appAuthorRef = useRef(appAuthor)
   appAuthorRef.current = appAuthor
   const gitEmailRef = useRef(gitEmail)
@@ -611,16 +640,40 @@ export default function App2() {
   const performGitSave = useCallback(async () => {
     const file = openedFileRef.current
     if (!file) return
-    setSaveStatus('saving')
-    setSaveErrorMsg(null)
+    const targetPath = file.path
+    const isStillCurrentFile = () => openedFileRef.current?.path === targetPath
+    const isUiSuppressedForThisSave = () => {
+      const switchingTarget = switchingToFilePathRef.current
+      return Boolean(switchingTarget && switchingTarget !== targetPath)
+    }
+    if (pendingWriteRef.current) {
+      await pendingWriteRef.current.catch(() => undefined)
+    }
+    const emitActivityRefresh = () => {
+      window.dispatchEvent(new CustomEvent('holo:file-activity-updated', { detail: { path: file.path } }))
+    }
+    if (!isUiSuppressedForThisSave()) {
+      setSaveStatus('saving')
+      setSaveErrorMsg(null)
+    }
     try {
       const result = await window.holo?.gitAutoSave(file.path, appAuthorRef.current || undefined, gitEmailRef.current || undefined)
+      if (isUiSuppressedForThisSave()) {
+        if (result?.committed) {
+          emitActivityRefresh()
+        }
+        return
+      }
+      if (!isStillCurrentFile()) return
       if (!result?.ok) {
         const msg = result?.error ?? 'Erreur de commit'
         setSaveErrorMsg(msg)
         setSaveStatus('error')
         setTimeout(() => setSaveStatus(prev => prev === 'error' ? 'idle' : prev), 8000)
         return
+      }
+      if (result.committed) {
+        emitActivityRefresh()
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if ((result as any).pushError) {
@@ -639,6 +692,7 @@ export default function App2() {
       setSaveStatus('synced')
       setTimeout(() => setSaveStatus(prev => prev === 'synced' ? 'idle' : prev), 4000)
     } catch (err) {
+      if (!isStillCurrentFile()) return
       const msg = err instanceof Error ? err.message : 'Erreur inconnue'
       setSaveErrorMsg(msg)
       setSaveStatus('error')
@@ -650,12 +704,13 @@ export default function App2() {
 
   const scheduleGitSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(performGitSave, 10_000)
-  }, [performGitSave])
+    saveTimerRef.current = setTimeout(performGitSave, AUTO_GIT_SAVE_DELAY_MS)
+  }, [AUTO_GIT_SAVE_DELAY_MS, performGitSave])
 
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
+    const targetPath = file.path
     
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
@@ -683,14 +738,23 @@ export default function App2() {
         icon: nextMeta.icon,
       },
     }))
+    const writePromise = (async () => {
     try {
       await window.holo?.writeFile(file.path, markdown)
+      if (openedFileRef.current?.path !== targetPath) return
       updateIndexEntry(file.path, markdown)
       setSaveStatus('saved')
       scheduleGitSave()
     } catch (err) {
+      if (openedFileRef.current?.path !== targetPath) return
       console.error('[App2] Impossible de sauvegarder le fichier :', err)
       setSaveStatus('error')
+    }
+    })()
+    pendingWriteRef.current = writePromise
+    await writePromise
+    if (pendingWriteRef.current === writePromise) {
+      pendingWriteRef.current = null
     }
   }, [scheduleGitSave, setFileMetaByPath, updateIndexEntry])
 
@@ -700,12 +764,15 @@ export default function App2() {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
         if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
-        performGitSave()
+        window.dispatchEvent(new CustomEvent('holo:flush-editor'))
+        window.setTimeout(() => {
+          void performGitSaveRef.current()
+        }, 0)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [performGitSave])
+  }, [])
 
   // Nettoyage du timer au démontage
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])

@@ -41,6 +41,8 @@ export const CodeBlock = forwardRef<InlineEditorHandle, CodeBlockProps>(
     },
     clear: () => setDraft(''),
     clearSlash: () => [],
+    flush: () => { commit() },
+    getContent: () => [],
   }))
 
   useEffect(() => {

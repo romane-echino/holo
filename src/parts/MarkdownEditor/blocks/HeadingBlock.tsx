@@ -6,6 +6,7 @@
  */
 
 import { forwardRef } from 'react'
+import { InlineColorCode } from '../../../components/InlineColorCode'
 import { InlineEditor } from '../InlineEditor'
 import type { InlineEditorHandle } from '../InlineEditor'
 import type { HeadingNode, InlineNode } from '../lib/types'
@@ -24,11 +25,12 @@ interface HeadingBlockProps {
   onSlashCommand?: () => void
   onSplit?: (after: InlineNode[]) => void
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
+  onCreateFootnote?: (selectedText: string) => string | null
   alwaysShowPlaceholder?: boolean
 }
 
 export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
-  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, alwaysShowPlaceholder }, ref) {
+  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -51,6 +53,7 @@ export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
         onSlashCommand={onSlashCommand}
         onSplit={onSplit}
         onSmartPaste={onSmartPaste}
+        onCreateFootnote={onCreateFootnote}
         blockType={`heading-${node.depth}`}
         placeholder="Titre…"
         alwaysShowPlaceholder={alwaysShowPlaceholder}
@@ -70,10 +73,13 @@ function InlineNodeView({ node }: { node: InlineNode }) {
     case 'text':       return <>{node.value}</>
     case 'strong':     return <strong><InlineView nodes={node.children} /></strong>
     case 'emphasis':   return <em><InlineView nodes={node.children} /></em>
-    case 'inlineCode': return <code>{node.value}</code>
+    case 'inlineCode': return <InlineColorCode value={node.value} />
     case 'link':       return <a href={node.url}><InlineView nodes={node.children} /></a>
     case 'delete':     return <del><InlineView nodes={node.children} /></del>
     case 'underline':  return <u><InlineView nodes={node.children} /></u>
+    case 'superscript': return <sup><InlineView nodes={node.children} /></sup>
+    case 'subscript':  return <sub><InlineView nodes={node.children} /></sub>
+    case 'footnoteReference': return <sup>[{node.identifier}]</sup>
     case 'break':      return <br />
     default:           return null
   }

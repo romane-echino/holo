@@ -632,6 +632,7 @@ export function SpacePanel({
   const [tplVars, setTplVars] = useState<string[]>([])
   const [tplVarValues, setTplVarValues] = useState<Record<string, string>>({})
   const [tplLoading, setTplLoading] = useState(false)
+  const [tplStep, setTplStep] = useState<'template' | 'title' | 'variables'>('template')
   const tplNameRef = useRef<HTMLInputElement>(null)
   const templateFiles = useMemo(
     () => Object.entries(fileMetaByPath).filter(([, m]) => m.isTemplate).map(([path, m]) => ({ path, title: m.title || getBaseName(path) })),
@@ -658,6 +659,7 @@ export function SpacePanel({
       })
       .finally(() => {
         setTplLoading(false)
+        setTplStep('title')
         setTimeout(() => {
           const el = tplNameRef.current
           if (el) {
@@ -675,6 +677,7 @@ export function SpacePanel({
     setTplContent(null)
     setTplVars([])
     setTplVarValues({})
+    setTplStep('template')
     setMenuAnchorEl(null)
     setTplOpen(true)
     if (templateFiles.length === 1) {
@@ -700,6 +703,14 @@ export function SpacePanel({
     onAddFromTemplate?.(name, processed, tplParent)
     setTplOpen(false)
   }, [tplSelected, tplName, tplContent, tplVarValues, tplParent, onAddFromTemplate])
+  const handleTplContinue = useCallback(() => {
+    if (!tplSelected || !tplName.trim() || !tplContent) return
+    if (tplVars.length === 0) {
+      handleTplConfirm()
+      return
+    }
+    setTplStep('variables')
+  }, [handleTplConfirm, tplContent, tplName, tplSelected, tplVars.length])
 
   // ─── Menu contextuel clic-droit ────────────────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; node: SpaceFileNode } | null>(null)
@@ -1051,50 +1062,83 @@ export function SpacePanel({
           </div>
           {templateFiles.length === 0 ? (
             <p className="mb-4 text-sm text-holo-text-faint">Aucun modèle disponible. Marquez un fichier comme modèle via le menu contextuel.</p>
+          ) : tplStep === 'template' ? (
+            <>
+              <p className="mb-3 text-xs text-holo-text-faint">Choisis d'abord le modèle à utiliser.</p>
+              <div className="mb-4 max-h-[220px] overflow-y-auto rounded-holo-lg border border-holo-border-soft holo-scrollbar">
+                {templateFiles.map((t) => (
+                  <button
+                    key={t.path}
+                    type="button"
+                    onClick={() => loadTemplateSelection(t.path, t.title)}
+                    className={cn(
+                      'flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-holo-glass-hover',
+                      tplSelected === t.path ? 'bg-holo-primary-surface text-holo-primary-soft ring-inset ring-1 ring-holo-primary/20' : 'text-holo-text-muted',
+                    )}
+                  >
+                    <Layers size={12} className={cn('shrink-0', tplSelected === t.path ? 'text-violet-400' : 'text-holo-text-faint')} />
+                    <span className="truncate">{t.title}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : tplStep === 'title' ? (
+            <>
+              <div className="mb-3 rounded-holo-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-xs text-violet-200/90">
+                Modèle sélectionné : <span className="font-medium text-violet-100">{templateFiles.find((item) => item.path === tplSelected)?.title ?? 'Modèle'}</span>
+              </div>
+              {tplLoading && (
+                <p className="mb-3 text-xs text-holo-text-faint animate-pulse">Analyse du modèle…</p>
+              )}
+              <p className="mb-2 text-xs text-holo-text-faint">Ensuite, donne un nom au nouveau document.</p>
+              <input
+                ref={tplNameRef}
+                value={tplName}
+                onChange={(e) => setTplName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleTplContinue(); if (e.key === 'Escape') setTplOpen(false) }}
+                placeholder={tplSelected ? 'Suffixe du titre (ex : 25.06.26)' : 'Nom du nouveau fichier'}
+                className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+              />
+            </>
           ) : (
-            <div className="mb-3 max-h-[180px] overflow-y-auto rounded-holo-lg border border-holo-border-soft holo-scrollbar">
-              {templateFiles.map((t) => (
-                <button key={t.path} type="button"
-                  onClick={() => loadTemplateSelection(t.path, t.title)}
-                  className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-holo-glass-hover',
-                    tplSelected === t.path ? 'bg-holo-primary-surface text-holo-primary-soft ring-inset ring-1 ring-holo-primary/20' : 'text-holo-text-muted')}>
-                  <Layers size={12} className={cn('shrink-0', tplSelected === t.path ? 'text-violet-400' : 'text-holo-text-faint')} />
-                  <span className="truncate">{t.title}</span>
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="mb-3 rounded-holo-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-xs text-violet-200/90">
+                <div>Modèle : <span className="font-medium text-violet-100">{templateFiles.find((item) => item.path === tplSelected)?.title ?? 'Modèle'}</span></div>
+                <div className="mt-1">Nom : <span className="font-medium text-violet-100">{tplName.trim()}</span></div>
+              </div>
+              <div className="mb-4 space-y-2 rounded-holo-lg border border-violet-500/20 bg-violet-500/5 p-3">
+                <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-violet-400/80">Variables</p>
+                {tplVars.map((varName) => (
+                  <div key={varName} className="flex items-center gap-2">
+                    <span className="w-24 shrink-0 truncate font-mono text-xs text-violet-400">${varName}</span>
+                    <input
+                      value={tplVarValues[varName] ?? ''}
+                      onChange={(e) => setTplVarValues((prev) => ({ ...prev, [varName]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleTplConfirm(); if (e.key === 'Escape') setTplOpen(false) }}
+                      placeholder={varName.charAt(0) + varName.slice(1).toLowerCase()}
+                      className="min-w-0 flex-1 rounded-holo-md border border-holo-border-soft bg-holo-glass px-2.5 py-1 text-sm text-holo-text placeholder:text-holo-text-faint/60 focus:border-violet-500/40 focus:outline-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
           )}
-
-          {/* Variables du modèle */}
-          {tplLoading && (
-            <p className="mb-3 text-xs text-holo-text-faint animate-pulse">Analyse du modèle…</p>
-          )}
-          {!tplLoading && tplVars.length > 0 && (
-            <div className="mb-3 space-y-2 rounded-holo-lg border border-violet-500/20 bg-violet-500/5 p-3">
-              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-violet-400/80">Variables</p>
-              {tplVars.map(varName => (
-                <div key={varName} className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 truncate font-mono text-xs text-violet-400">${varName}</span>
-                  <input
-                    value={tplVarValues[varName] ?? ''}
-                    onChange={(e) => setTplVarValues(prev => ({ ...prev, [varName]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleTplConfirm(); if (e.key === 'Escape') setTplOpen(false) }}
-                    placeholder={varName.charAt(0) + varName.slice(1).toLowerCase()}
-                    className="min-w-0 flex-1 rounded-holo-md border border-holo-border-soft bg-holo-glass px-2.5 py-1 text-sm text-holo-text placeholder:text-holo-text-faint/60 focus:border-violet-500/40 focus:outline-none"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          <input ref={tplNameRef} value={tplName} onChange={(e) => setTplName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleTplConfirm(); if (e.key === 'Escape') setTplOpen(false) }}
-            placeholder={tplSelected ? 'Suffixe du titre (ex : 25.06.26)' : 'Nom du nouveau fichier'}
-            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
-          />
           <div className="flex justify-end gap-2">
             <button onClick={() => setTplOpen(false)} className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text">Annuler</button>
-            <button onClick={handleTplConfirm} disabled={!tplSelected || !tplName.trim() || !tplContent} className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]">Créer</button>
+            {templateFiles.length > 0 && tplStep !== 'template' && (
+              <button
+                onClick={() => setTplStep(tplStep === 'variables' ? 'title' : 'template')}
+                className="rounded-holo-md border border-holo-border-soft bg-holo-glass px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text"
+              >
+                Retour
+              </button>
+            )}
+            {templateFiles.length > 0 && tplStep === 'title' && (
+              <button onClick={handleTplContinue} disabled={!tplSelected || !tplName.trim() || !tplContent || tplLoading} className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]">{tplVars.length > 0 ? 'Suivant' : 'Créer'}</button>
+            )}
+            {templateFiles.length > 0 && tplStep === 'variables' && (
+              <button onClick={handleTplConfirm} disabled={!tplSelected || !tplName.trim() || !tplContent} className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40 active:scale-[0.98]">Créer</button>
+            )}
           </div>
         </div>
       </div>

@@ -30,6 +30,12 @@ function inlineToMarkdown(node: InlineNode): string {
       return `~~${node.children.map(inlineToMarkdown).join('')}~~`
     case 'underline':
       return `<u>${node.children.map(inlineToMarkdown).join('')}</u>`
+    case 'superscript':
+      return `<sup>${node.children.map(inlineToMarkdown).join('')}</sup>`
+    case 'subscript':
+      return `<sub>${node.children.map(inlineToMarkdown).join('')}</sub>`
+    case 'footnoteReference':
+      return `[^${node.identifier}]`
     case 'break':
       return '  \n'
     case 'image':

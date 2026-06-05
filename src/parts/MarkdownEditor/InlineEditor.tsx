@@ -17,6 +17,152 @@ import { FormatToolbar } from './FormatToolbar'
 import type { FormatToolbarState } from './FormatToolbar'
 import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
+import { useWorkspace } from '../../contexts/WorkspaceContext'
+
+interface MentionSuggestion {
+  mention: string
+  displayName: string
+  email: string
+  commitCount: number
+}
+
+interface RepoContributor {
+  commitCount: number
+  authorName: string
+  authorEmail: string
+}
+
+interface MentionPopupState {
+  rect: DOMRect
+  query: string
+  start: number
+  end: number
+  activeIndex: number
+  suggestions: MentionSuggestion[]
+}
+
+const mentionCache = new Map<string, MentionSuggestion[]>()
+const mentionPromiseCache = new Map<string, Promise<MentionSuggestion[]>>()
+
+function slugifyMentionCandidate(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function extractGithubLikeHandle(email: string): string | null {
+  const githubNoreply = email.match(/\+([^@]+)@users\.noreply\.github\.com$/i)
+  if (githubNoreply?.[1]) return slugifyMentionCandidate(githubNoreply[1])
+
+  const localPart = email.split('@')[0] ?? ''
+  const normalized = slugifyMentionCandidate(localPart.replace(/^\d+\+/, ''))
+  return normalized || null
+}
+
+function buildMentionSuggestions(contributors: RepoContributor[]): MentionSuggestion[] {
+  const seen = new Set<string>()
+  const suggestions: MentionSuggestion[] = []
+
+  contributors
+    .slice()
+    .sort((left, right) => right.commitCount - left.commitCount || left.authorName.localeCompare(right.authorName))
+    .forEach((contributor) => {
+      const candidates = [
+        extractGithubLikeHandle(contributor.authorEmail),
+        slugifyMentionCandidate(contributor.authorName),
+      ].filter(Boolean) as string[]
+
+      const mention = candidates.find((candidate) => !seen.has(candidate))
+      if (!mention) return
+
+      seen.add(mention)
+      suggestions.push({
+        mention,
+        displayName: contributor.authorName || mention,
+        email: contributor.authorEmail,
+        commitCount: contributor.commitCount,
+      })
+    })
+
+  return suggestions
+}
+
+async function loadMentionSuggestions(rootPath: string): Promise<MentionSuggestion[]> {
+  const cached = mentionCache.get(rootPath)
+  if (cached) return cached
+
+  const pending = mentionPromiseCache.get(rootPath)
+  if (pending) return pending
+
+  const request = window.holo?.gitGetContributors()
+    .then((contributors) => {
+      const suggestions = buildMentionSuggestions(contributors ?? [])
+      mentionCache.set(rootPath, suggestions)
+      mentionPromiseCache.delete(rootPath)
+      return suggestions
+    })
+    .catch(() => {
+      mentionPromiseCache.delete(rootPath)
+      return []
+    }) ?? Promise.resolve([])
+
+  mentionPromiseCache.set(rootPath, request)
+  return request
+}
+
+function getTextOffsetPosition(root: HTMLElement, offset: number): { container: Node; offset: number } {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let remaining = Math.max(0, offset)
+  let lastTextNode: Text | null = null
+
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode as Text
+    lastTextNode = textNode
+    if (remaining <= textNode.data.length) {
+      return { container: textNode, offset: remaining }
+    }
+    remaining -= textNode.data.length
+  }
+
+  if (lastTextNode) {
+    return { container: lastTextNode, offset: lastTextNode.data.length }
+  }
+
+  return { container: root, offset: root.childNodes.length }
+}
+
+function getTextOffsetWithin(root: HTMLElement, container: Node, offset: number): number {
+  const range = document.createRange()
+  range.setStart(root, 0)
+  range.setEnd(container, offset)
+  return range.toString().length
+}
+
+function getMentionQueryAtCaret(root: HTMLElement, range: Range): Omit<MentionPopupState, 'activeIndex' | 'suggestions'> | null {
+  if (!range.collapsed) return null
+
+  const caretOffset = getTextOffsetWithin(root, range.startContainer, range.startOffset)
+  const textBefore = root.textContent?.slice(0, caretOffset) ?? ''
+  const match = textBefore.match(/(?:^|\s)@([a-z0-9._-]*)$/i)
+  if (!match) return null
+
+  const query = match[1] ?? ''
+  const start = caretOffset - query.length - 1
+  const end = caretOffset
+  const rect = range.getBoundingClientRect()
+  const fallbackRect = root.getBoundingClientRect()
+
+  return {
+    query,
+    start,
+    end,
+    rect: rect.width || rect.height ? rect : fallbackRect,
+  }
+}
 
 // ─── Helpers sélection (niveau module) ──────────────────────────────────────
 
@@ -65,6 +211,10 @@ export interface InlineEditorHandle {
   clear: () => void
   /** Supprime le «/» du DOM et retourne le contenu restant */
   clearSlash: () => InlineNode[]
+  /** Force la remontée immédiate du contenu courant vers le parent */
+  flush: () => void
+  /** Retourne le contenu courant du DOM sans attendre un blur/save. */
+  getContent: () => InlineNode[]
 }
 
 export interface InlineEditorProps {
@@ -91,6 +241,10 @@ export interface InlineEditorProps {
   onSplit?: (after: InlineNode[]) => void
   /** Coller du texte multi-paragraphe : délègue la création des blocs au parent */
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
+  /** Crée une note de bas de page depuis la sélection courante et retourne son identifiant. */
+  onCreateFootnote?: (selectedText: string) => string | null
+  /** Au focus/clic, sélectionne tout le contenu du bloc. Utile pour les cellules de tableau. */
+  selectAllOnFocus?: boolean
   className?: string
 }
 
@@ -110,14 +264,21 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   onSlashCommand,
   onSplit,
   onSmartPaste,
+  onCreateFootnote,
+  selectAllOnFocus,
   className,
 }, ref) {
+  const { rootPath } = useWorkspace()
   const divRef = useRef<HTMLDivElement>(null)
   const savedRef = useRef(false)
   const slashRangeRef = useRef<Range | null>(null)
+  const selectionRangeRef = useRef<Range | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // État de la toolbar de formatage inline
   const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
+  const [repoMentions, setRepoMentions] = useState<MentionSuggestion[]>([])
+  const [mentionPopup, setMentionPopup] = useState<MentionPopupState | null>(null)
 
   // Met à jour data-empty selon le contenu réel (ignore le <br> fantôme de Chrome)
   const syncEmpty = useCallback((el: HTMLElement) => {
@@ -132,35 +293,6 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     el.innerHTML = inlinesToHtml(initialContent)
     syncEmpty(el)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Toolbar : suit la sélection active dans ce bloc
-  useEffect(() => {
-    const handleSelectionChange = () => {
-      // Conserver la toolbar si le focus est dedans (ex. input URL du lien)
-      if (document.activeElement?.closest('[data-format-toolbar]')) return
-      const sel = window.getSelection()
-      const el = divRef.current
-      if (!sel || sel.isCollapsed || !sel.rangeCount || !el) {
-        setToolbar(null)
-        return
-      }
-      const range = sel.getRangeAt(0)
-      if (!el.contains(range.commonAncestorContainer)) { setToolbar(null); return }
-      const rect = range.getBoundingClientRect()
-      if (!rect.width && !rect.height) { setToolbar(null); return }
-      setToolbar({
-        rect,
-        bold:   document.queryCommandState('bold'),
-        italic: document.queryCommandState('italic'),
-        strike: document.queryCommandState('strikeThrough'),
-        code:   isInsideTag(range, el, 'code'),
-        underline: isInsideTag(range, el, 'u'),
-        link:   getLinkHref(range, el),
-      })
-    }
-    document.addEventListener('selectionchange', handleSelectionChange)
-    return () => document.removeEventListener('selectionchange', handleSelectionChange)
-  }, [])
 
   // Positionne le curseur selon le type de navigation
   const positionCursor = (el: HTMLElement, cursor?: InitialCursor) => {
@@ -184,11 +316,176 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
 
     // Fallback : curseur à la fin
     const range = document.createRange()
-    range.selectNodeContents(el)
+    range.setStart(el, el.childNodes.length)
     range.collapse(false)
     sel.removeAllRanges()
     sel.addRange(range)
   }
+
+  const save = useCallback(() => {
+    if (savedRef.current) return
+    const el = divRef.current
+    // Ne pas sauvegarder si l'élément a été retiré du DOM (ex : conversion de type)
+    if (!el || !document.contains(el)) return
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    savedRef.current = true
+    onSave(domToInlines(el))
+  }, [onSave])
+
+  const scheduleSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      save()
+    }, 400)
+  }, [save])
+
+  useEffect(() => {
+    if (!rootPath || !window.holo?.gitGetContributors) {
+      setRepoMentions([])
+      return
+    }
+
+    let cancelled = false
+    void loadMentionSuggestions(rootPath).then((suggestions) => {
+      if (!cancelled) {
+        setRepoMentions(suggestions)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [rootPath])
+
+  const refreshMentionPopup = useCallback(() => {
+    const el = divRef.current
+    const sel = window.getSelection()
+    if (!el || !sel?.rangeCount || repoMentions.length === 0) {
+      setMentionPopup(null)
+      return
+    }
+
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.commonAncestorContainer)) {
+      setMentionPopup(null)
+      return
+    }
+
+    const mention = getMentionQueryAtCaret(el, range)
+    if (!mention) {
+      setMentionPopup(null)
+      return
+    }
+
+    const needle = mention.query.trim().toLowerCase()
+    const suggestions = repoMentions.filter((candidate) => {
+      if (!needle) return true
+      return candidate.mention.includes(needle)
+        || candidate.displayName.toLowerCase().includes(needle)
+        || candidate.email.toLowerCase().includes(needle)
+    }).slice(0, 6)
+
+    if (suggestions.length === 0) {
+      setMentionPopup(null)
+      return
+    }
+
+    setMentionPopup((previous) => ({
+      ...mention,
+      suggestions,
+      activeIndex: previous && previous.query === mention.query
+        ? Math.min(previous.activeIndex, suggestions.length - 1)
+        : 0,
+    }))
+  }, [repoMentions])
+
+  const insertMention = useCallback((suggestion: MentionSuggestion) => {
+    const el = divRef.current
+    const popup = mentionPopup
+    const sel = window.getSelection()
+    if (!el || !popup || !sel) return
+
+    const mentionRange = document.createRange()
+    const startPos = getTextOffsetPosition(el, popup.start)
+    const endPos = getTextOffsetPosition(el, popup.end)
+    mentionRange.setStart(startPos.container, startPos.offset)
+    mentionRange.setEnd(endPos.container, endPos.offset)
+    mentionRange.deleteContents()
+
+    const textNode = document.createTextNode(`@${suggestion.mention} `)
+    mentionRange.insertNode(textNode)
+
+    const after = document.createRange()
+    after.setStart(textNode, textNode.data.length)
+    after.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(after)
+
+    syncEmpty(el)
+    savedRef.current = false
+    scheduleSave()
+    setMentionPopup(null)
+  }, [mentionPopup, scheduleSave, syncEmpty])
+
+  // Toolbar : suit la sélection active dans ce bloc
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      // Conserver la toolbar si le focus est dedans (ex. input URL du lien)
+      if (document.activeElement?.closest('[data-format-toolbar]')) return
+      const sel = window.getSelection()
+      const el = divRef.current
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !el) {
+        selectionRangeRef.current = null
+        setToolbar(null)
+        if (sel?.rangeCount && el) {
+          refreshMentionPopup()
+        } else {
+          setMentionPopup(null)
+        }
+        return
+      }
+      const range = sel.getRangeAt(0)
+      if (!el.contains(range.commonAncestorContainer)) {
+        selectionRangeRef.current = null
+        setToolbar(null)
+        setMentionPopup(null)
+        return
+      }
+      selectionRangeRef.current = range.cloneRange()
+      setMentionPopup(null)
+      const rect = range.getBoundingClientRect()
+      if (!rect.width && !rect.height) { setToolbar(null); return }
+      setToolbar({
+        rect,
+        bold:   document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        strike: document.queryCommandState('strikeThrough'),
+        code:   isInsideTag(range, el, 'code'),
+        underline: isInsideTag(range, el, 'u'),
+        superscript: isInsideTag(range, el, 'sup'),
+        subscript: isInsideTag(range, el, 'sub'),
+        link:   getLinkHref(range, el),
+      })
+    }
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [refreshMentionPopup])
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+  }, [])
+
+  const selectAllContents = useCallback((el: HTMLElement) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }, [])
 
   // Handle impératif : appelé par BlockEditor pour la navigation inter-blocs
   useImperativeHandle(ref, () => ({
@@ -240,7 +537,14 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       savedRef.current = true
       return domToInlines(el)
     },
-  }))
+    flush() {
+      save()
+    },
+    getContent() {
+      const el = divRef.current
+      return el ? domToInlines(el) : []
+    },
+  }), [save, syncEmpty])
 
   // Bascule le formatage <code> sur la sélection
   const toggleCode = useCallback(() => {
@@ -308,14 +612,77 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     syncEmpty(el); savedRef.current = false
   }, [syncEmpty])
 
-  const save = useCallback(() => {
-    if (savedRef.current) return
+  const toggleInlineTag = useCallback((tagName: 'sup' | 'sub') => {
+    const sel = window.getSelection()
     const el = divRef.current
-    // Ne pas sauvegarder si l'élément a été retiré du DOM (ex : conversion de type)
-    if (!el || !document.contains(el)) return
-    savedRef.current = true
-    onSave(domToInlines(el))
-  }, [onSave])
+    if (!sel?.rangeCount || !el) return
+    const range = sel.getRangeAt(0)
+    if (range.collapsed) return
+
+    let node: Node | null = range.commonAncestorContainer
+    while (node && node !== el) {
+      if ((node as Element).tagName?.toLowerCase() === tagName) {
+        const frag = document.createDocumentFragment()
+        while ((node as Element).firstChild) frag.appendChild((node as Element).firstChild!)
+        node.parentNode?.replaceChild(frag, node)
+        syncEmpty(el); savedRef.current = false
+        return
+      }
+      node = node.parentNode
+    }
+
+    try {
+      const frag = range.extractContents()
+      const wrapper = document.createElement(tagName)
+      wrapper.appendChild(frag)
+      range.insertNode(wrapper)
+      const after = document.createRange()
+      after.setStartAfter(wrapper)
+      after.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(after)
+    } catch { /* ignore */ }
+    syncEmpty(el); savedRef.current = false
+  }, [syncEmpty])
+
+  const toggleSuperscript = useCallback(() => toggleInlineTag('sup'), [toggleInlineTag])
+  const toggleSubscript = useCallback(() => toggleInlineTag('sub'), [toggleInlineTag])
+
+  const insertFootnoteReference = useCallback(() => {
+    const el = divRef.current
+    const sel = window.getSelection()
+    if (!el || !sel || !onCreateFootnote) return
+
+    const liveRange = sel.rangeCount ? sel.getRangeAt(0) : null
+    const range = liveRange && !liveRange.collapsed && el.contains(liveRange.commonAncestorContainer)
+      ? liveRange.cloneRange()
+      : selectionRangeRef.current?.cloneRange() ?? null
+    if (!range || range.collapsed || !el.contains(range.commonAncestorContainer)) return
+
+    const selectedText = range.toString().trim()
+    const identifier = onCreateFootnote(selectedText)
+    if (!identifier) return
+
+    const refNode = document.createElement('sup')
+    refNode.setAttribute('data-footnote-ref', identifier)
+    refNode.setAttribute('data-footnote-label', identifier)
+    refNode.setAttribute('contenteditable', 'false')
+    refNode.textContent = `[${identifier}]`
+
+    range.collapse(false)
+    range.insertNode(refNode)
+
+    const after = document.createRange()
+    after.setStartAfter(refNode)
+    after.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(after)
+    selectionRangeRef.current = null
+
+    syncEmpty(el)
+    savedRef.current = false
+    save()
+  }, [onCreateFootnote, save, syncEmpty])
 
   // Vérifie si le curseur est au tout début du contenu
   // Mesure le texte entre le début de l'élément et le curseur
@@ -385,10 +752,32 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     return rect.left || el.getBoundingClientRect().left
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {    // CTRL+Z / CTRL+Y / CTRL+SHIFT+Z → déléguer à BlockEditor (empêcher l'undo natif du navigateur)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (mentionPopup) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionPopup((previous) => previous ? { ...previous, activeIndex: (previous.activeIndex + 1) % previous.suggestions.length } : previous)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionPopup((previous) => previous ? { ...previous, activeIndex: (previous.activeIndex - 1 + previous.suggestions.length) % previous.suggestions.length } : previous)
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && mentionPopup.suggestions[mentionPopup.activeIndex]) {
+        e.preventDefault()
+        insertMention(mentionPopup.suggestions[mentionPopup.activeIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionPopup(null)
+        return
+      }
+    }
+
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y' || e.key === 'Z')) {
       e.preventDefault()
-      // Ne pas stopPropagation — l'événement doit remonter jusqu'au conteneur BlockEditor
       return
     }
     // Raccourcis de conversion : # + espace au début d’un bloc (avec ou sans contenu)
@@ -599,6 +988,8 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (e.key === 'i') { e.preventDefault(); document.execCommand('italic');            return }
       if (e.key === 'e') { e.preventDefault(); toggleCode();                              return }
       if (e.key === 'u') { e.preventDefault(); toggleUnderline();                        return }
+      if (e.key === '.') { e.preventDefault(); toggleSuperscript();                       return }
+      if (e.key === ',') { e.preventDefault(); toggleSubscript();                         return }
       if (e.key === 's' && e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); return }
     }
   }
@@ -610,9 +1001,25 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         contentEditable
         suppressContentEditableWarning
         data-block-type={blockType}
-        onFocus={() => { savedRef.current = false }}
+        onFocus={(e) => {
+          savedRef.current = false
+          if (selectAllOnFocus) {
+            requestAnimationFrame(() => selectAllContents(e.currentTarget))
+          }
+        }}
+        onMouseDown={(e) => {
+          if (!selectAllOnFocus || e.button !== 0) return
+          e.preventDefault()
+          e.currentTarget.focus({ preventScroll: true })
+          requestAnimationFrame(() => selectAllContents(e.currentTarget))
+        }}
+        onClick={(e) => {
+          if (!selectAllOnFocus) return
+          selectAllContents(e.currentTarget)
+        }}
         onBlur={() => {
           save()
+          setMentionPopup(null)
           // Masquer la toolbar sauf si le focus part vers elle (ex. input URL)
           setTimeout(() => {
             if (!document.activeElement?.closest('[data-format-toolbar]')) {
@@ -694,9 +1101,52 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
             savedRef.current = false
           }
         }}
-        onInput={(e) => { syncEmpty(e.currentTarget); savedRef.current = false }}
+        onInput={(e) => {
+          syncEmpty(e.currentTarget)
+          savedRef.current = false
+          scheduleSave()
+          requestAnimationFrame(() => refreshMentionPopup())
+        }}
         className={cn('outline-none', className)}
       />
+      {mentionPopup && (
+        <div
+          data-testid="mention-popup"
+          className="fixed z-50 w-[280px] overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated shadow-holo-md"
+          style={{
+            left: Math.min(mentionPopup.rect.left, window.innerWidth - 304),
+            top: Math.min(mentionPopup.rect.bottom + 10, window.innerHeight - 240),
+          }}
+        >
+          <div className="border-b border-holo-border-soft/60 px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-holo-text-faint">
+            Mentions du repo
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {mentionPopup.suggestions.map((suggestion, index) => (
+              <button
+                key={`${suggestion.mention}-${suggestion.email}`}
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  insertMention(suggestion)
+                }}
+                className={cn(
+                  'flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition',
+                  index === mentionPopup.activeIndex ? 'bg-holo-primary/12 text-holo-text' : 'text-holo-text-faint hover:bg-white/[0.04] hover:text-holo-text',
+                )}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-inherit">@{suggestion.mention}</span>
+                  <span className="block truncate text-[11px] text-holo-text-faint">{suggestion.displayName}{suggestion.email ? ` · ${suggestion.email}` : ''}</span>
+                </span>
+                <span className="shrink-0 rounded-full border border-holo-border-soft px-2 py-0.5 text-[10px] text-holo-text-faint">
+                  {suggestion.commitCount}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {toolbar && (
         <FormatToolbar
           state={toolbar}
@@ -705,6 +1155,9 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           onStrike={()  => document.execCommand('strikeThrough')}
           onCode={toggleCode}
           onUnderline={toggleUnderline}
+          onSuperscript={toggleSuperscript}
+          onSubscript={toggleSubscript}
+          onFootnote={insertFootnoteReference}
           onLink={(url) => document.execCommand('createLink', false, url)}
           onUnlink={()  => document.execCommand('unlink')}
         />

@@ -16,9 +16,12 @@
 import { useState, useMemo, useCallback, useRef, useEffect, isValidElement } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import hljs from 'highlight.js'
 import { marked } from 'marked'
+import { MermaidDiagram } from '../components/MermaidDiagram'
+import { InlineColorCode } from '../components/InlineColorCode'
 import { cn } from '../utils/global'
 import { htmlToMarkdown } from '../lib/markdown'
 import { splitIntoBlocks, blocksToMarkdown } from '../lib/markdownBlocks'
@@ -56,6 +59,52 @@ function slugify(text: string): string {
     .replace(/\s+/g, '-')
 }
 
+function parseFootnoteDefinitions(markdown: string): Map<string, string> {
+  const definitions = new Map<string, string>()
+  const lines = markdown.split('\n')
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const match = line.match(/^\[\^([^\]]+)\]:\s?(.*)$/)
+    if (!match) continue
+
+    const identifier = match[1]?.trim()
+    if (!identifier) continue
+
+    const contentLines = [match[2] ?? '']
+    let cursor = index + 1
+
+    while (cursor < lines.length) {
+      const continuation = lines[cursor]
+      if (/^( {2,}|\t)/.test(continuation)) {
+        contentLines.push(continuation.replace(/^( {2,}|\t)/, ''))
+        cursor += 1
+        continue
+      }
+      if (continuation.trim() === '') {
+        contentLines.push('')
+        cursor += 1
+        continue
+      }
+      break
+    }
+
+    definitions.set(identifier, contentLines.join('\n').trim())
+    index = cursor - 1
+  }
+
+  return definitions
+}
+
+function extractFootnoteReferenceId(href: string | undefined, props: MDProps): string | null {
+  if (!href) return null
+  if (props['data-footnote-backref']) return null
+  if (typeof props.id === 'string' && props.id.includes('footnote-label')) return null
+
+  const match = href.match(/#(?:user-content-)?fn-([^#]+)/)
+  return match?.[1] ? decodeURIComponent(match[1]) : null
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MDProps = { children?: React.ReactNode; node?: unknown; [key: string]: any }
 
@@ -85,6 +134,10 @@ function PreComponent({ children, node, ...props }: MDProps) {
   const { 'data-block-index': blockIndex, ...preProps } = props
   const [copied, setCopied] = useState(false)
   const ref = useRef<HTMLPreElement>(null)
+  const child = Array.isArray(children) ? children[0] : children
+  const mermaidClassName = isValidElement(child) ? (child.props as { className?: string }).className : undefined
+  const mermaidSource = isValidElement(child) ? textFromChildren((child.props as { children?: React.ReactNode }).children) : ''
+  const isMermaidBlock = /language-mermaid/.test(mermaidClassName ?? '')
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -93,6 +146,14 @@ function PreComponent({ children, node, ...props }: MDProps) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
+  }
+
+  if (isMermaidBlock) {
+    return (
+      <div className="my-4" data-block-index={blockIndex}>
+        <MermaidDiagram code={mermaidSource} className="border border-holo-border-soft bg-holo-glass/20" />
+      </div>
+    )
   }
 
   return (
@@ -136,6 +197,17 @@ function ImgComponent({ src, alt, node, ...props }: MDProps) {
   return <img src={src} alt={alt} onError={() => setError(true)} {...props} />
 }
 
+function isYouTubeIframeSrc(src: string | undefined): boolean {
+  if (!src) return false
+  try {
+    const url = new URL(src)
+    const hostname = url.hostname.replace(/^www\./, '')
+    return hostname === 'youtube.com' || hostname === 'youtube-nocookie.com' || hostname === 'm.youtube.com' || hostname === 'youtu.be'
+  } catch {
+    return false
+  }
+}
+
 // ─── Default react-markdown components ─────────────────────────────────────
 
 const defaultComponents: Components = {
@@ -153,9 +225,10 @@ const defaultComponents: Components = {
   },
   // Code: syntax highlighting via hljs
   code({ children, className, node, ...rest }) {
+    const codeValue = String(children).replace(/\n$/, '')
     const match = /language-(\w+)/.exec(className ?? '')
     if (match) {
-      const highlighted = hljs.highlight(String(children).replace(/\n$/, ''), {
+      const highlighted = hljs.highlight(codeValue, {
         language: match[1],
         ignoreIllegals: true,
       })
@@ -166,6 +239,9 @@ const defaultComponents: Components = {
           dangerouslySetInnerHTML={{ __html: highlighted.value }}
         />
       )
+    }
+    if (!className && !codeValue.includes('\n')) {
+      return <InlineColorCode value={codeValue} className={className} />
     }
     return (
       <code {...rest} className={className}>
@@ -186,6 +262,53 @@ const defaultComponents: Components = {
   table: TableComponent,
   // Images: error fallback
   img: ImgComponent,
+  iframe({ node, className, src, title, ...props }) {
+    if (!isYouTubeIframeSrc(typeof src === 'string' ? src : undefined)) {
+      return <iframe {...props} src={src} title={title} className={className} />
+    }
+
+    return (
+      <span className="my-4 block overflow-hidden rounded-holo-2xl border border-holo-border-soft bg-black/30 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
+        <span className="block aspect-video w-full bg-black">
+          <iframe
+            {...props}
+            src={src}
+            title={title ?? 'Vidéo YouTube'}
+            loading="lazy"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className={cn('h-full w-full border-0', className)}
+          />
+        </span>
+      </span>
+    )
+  },
+  details({ children, node, className, ...props }) {
+    return (
+      <details
+        {...props}
+        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          'my-4 overflow-hidden rounded-holo-xl border border-holo-border-soft bg-white/[0.02] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]',
+          className,
+        )}
+      >
+        {children}
+      </details>
+    )
+  },
+  summary({ children, node, className, ...props }) {
+    return (
+      <summary
+        {...props}
+        onClick={(e) => e.stopPropagation()}
+        className={cn('cursor-pointer select-none font-medium text-holo-text marker:text-holo-primary-soft', className)}
+      >
+        {children}
+      </summary>
+    )
+  },
 }
 
 // ─── WYSIWYG block editor ───────────────────────────────────────────────────
@@ -257,10 +380,69 @@ export function MarkdownRenderer({
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
 
   const blocks = useMemo(() => splitIntoBlocks(markdown), [markdown])
+  const footnoteDefinitions = useMemo(() => parseFootnoteDefinitions(markdown), [markdown])
 
   const resolvedComponents = useMemo<Components>(
-    () => ({ ...defaultComponents, ...components }),
-    [components],
+    () => ({
+      ...defaultComponents,
+      a(props) {
+        const href = typeof props.href === 'string' ? props.href : undefined
+        const footnoteId = extractFootnoteReferenceId(href, props as MDProps)
+        const footnoteContent = footnoteId ? footnoteDefinitions.get(footnoteId) : null
+
+        if (!footnoteId || !footnoteContent || mode === 'export') {
+          const { children, node, ...rest } = props
+          return (
+            <a href={href} onClick={(event) => event.stopPropagation()} {...rest}>
+              {children}
+            </a>
+          )
+        }
+
+        const { children, className, node, ...rest } = props
+
+        return (
+          <span className="group/footnote-ref relative inline-flex align-super">
+            <a
+              {...rest}
+              href={href}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              className={cn(
+                'inline-flex min-h-5 min-w-5 items-center justify-center rounded-full border border-holo-primary/20 bg-holo-primary/8 px-1.5 text-[0.7rem] font-semibold leading-none text-holo-primary-soft no-underline transition hover:border-holo-primary/35 hover:bg-holo-primary/14',
+                className,
+              )}
+            >
+              {children}
+            </a>
+            <span
+              data-testid="footnote-tooltip"
+              className="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-3 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 rounded-holo-xl border border-holo-border-soft bg-holo-bg-elevated/95 p-3 text-left opacity-0 shadow-[0_20px_70px_rgba(0,0,0,.42)] backdrop-blur-xl transition duration-150 group-hover/footnote-ref:visible group-hover/footnote-ref:opacity-100 group-focus-within/footnote-ref:visible group-focus-within/footnote-ref:opacity-100"
+            >
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-holo-text-faint">
+                Note {footnoteId}
+              </div>
+              <div className="holo-markdown text-sm text-holo-text">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{ ...defaultComponents, ...components }}>
+                  {footnoteContent}
+                </ReactMarkdown>
+              </div>
+            </span>
+          </span>
+        )
+      },
+      section({ children, className, node, ...props }) {
+        if (mode !== 'export' && typeof className === 'string' && /\bfootnotes\b/.test(className)) {
+          return null
+        }
+
+        return <section {...props} className={className}>{children}</section>
+      },
+      ...components,
+    }),
+    [components, footnoteDefinitions, mode],
   )
 
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
@@ -283,7 +465,7 @@ export function MarkdownRenderer({
   if (mode === 'export') {
     return (
       <div className={cn('holo-markdown', className)}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={resolvedComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={resolvedComponents}>
           {markdown}
         </ReactMarkdown>
       </div>
@@ -307,6 +489,7 @@ export function MarkdownRenderer({
       >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkAddBlockIndex]}
+          rehypePlugins={[rehypeRaw]}
           components={resolvedComponents}
         >
           {markdown}
@@ -323,7 +506,7 @@ export function MarkdownRenderer({
   return (
     <div className={cn('holo-markdown', className)}>
       {prefixMd && (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={resolvedComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={resolvedComponents}>
           {prefixMd}
         </ReactMarkdown>
       )}
@@ -335,7 +518,7 @@ export function MarkdownRenderer({
         />
       )}
       {suffixMd && (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={resolvedComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={resolvedComponents}>
           {suffixMd}
         </ReactMarkdown>
       )}

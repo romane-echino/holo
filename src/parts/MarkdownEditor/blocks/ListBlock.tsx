@@ -184,6 +184,8 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       },
       clear() {},
       clearSlash() { return [] },
+      flush() {},
+      getContent() { return [] },
     }))
 
     // ── Emit ─────────────────────────────────────────────────────────────────
@@ -446,6 +448,8 @@ function ListItemRow({
         strike: document.queryCommandState('strikeThrough'),
         code: isInsideTag(range, el, 'code'),
         underline: isInsideTag(range, el, 'u'),
+        superscript: isInsideTag(range, el, 'sup'),
+        subscript: isInsideTag(range, el, 'sub'),
         link: getLinkHref(range, el),
       })
     }
@@ -519,6 +523,44 @@ function ListItemRow({
       // Ignore DOM range errors and leave selection unchanged.
     }
   }, [])
+
+  const toggleInlineTag = useCallback((tagName: 'sup' | 'sub') => {
+    const sel = window.getSelection()
+    const el = divRef.current
+    if (!sel?.rangeCount || !el) return
+    const range = sel.getRangeAt(0)
+    if (range.collapsed) return
+
+    let node: Node | null = range.commonAncestorContainer
+    while (node && node !== el) {
+      if ((node as Element).tagName?.toLowerCase() === tagName) {
+        const frag = document.createDocumentFragment()
+        while ((node as Element).firstChild) frag.appendChild((node as Element).firstChild!)
+        node.parentNode?.replaceChild(frag, node)
+        savedRef.current = false
+        return
+      }
+      node = node.parentNode
+    }
+
+    try {
+      const frag = range.extractContents()
+      const wrapper = document.createElement(tagName)
+      wrapper.appendChild(frag)
+      range.insertNode(wrapper)
+      const after = document.createRange()
+      after.setStartAfter(wrapper)
+      after.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(after)
+      savedRef.current = false
+    } catch {
+      // Ignore DOM range errors and leave selection unchanged.
+    }
+  }, [])
+
+  const toggleSuperscript = useCallback(() => toggleInlineTag('sup'), [toggleInlineTag])
+  const toggleSubscript = useCallback(() => toggleInlineTag('sub'), [toggleInlineTag])
 
   const getCursorX = (): number => {
     const sel = window.getSelection()
@@ -629,6 +671,8 @@ function ListItemRow({
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); return }
       if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); return }
+      if (e.key === '.') { e.preventDefault(); toggleSuperscript(); return }
+      if (e.key === ',') { e.preventDefault(); toggleSubscript(); return }
       if (e.key === 's' && e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); return }
     }
   }
@@ -705,6 +749,9 @@ function ListItemRow({
           onStrike={() => document.execCommand('strikeThrough')}
           onCode={toggleCode}
           onUnderline={toggleUnderline}
+          onSuperscript={toggleSuperscript}
+          onSubscript={toggleSubscript}
+          onFootnote={() => {}}
           onLink={(url) => document.execCommand('createLink', false, url)}
           onUnlink={() => document.execCommand('unlink')}
         />

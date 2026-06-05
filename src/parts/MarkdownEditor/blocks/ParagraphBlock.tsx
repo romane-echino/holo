@@ -6,6 +6,7 @@
  */
 
 import { forwardRef } from 'react'
+import { InlineColorCode } from '../../../components/InlineColorCode'
 import { InlineEditor } from '../InlineEditor'
 import type { InlineEditorHandle } from '../InlineEditor'
 import type { ParagraphNode, InlineNode } from '../lib/types'
@@ -24,11 +25,12 @@ interface ParagraphBlockProps {
   onSlashCommand?: () => void
   onSplit?: (after: InlineNode[]) => void
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
+  onCreateFootnote?: (selectedText: string) => string | null
   alwaysShowPlaceholder?: boolean
 }
 
 export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps>(
-  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, alwaysShowPlaceholder }, ref) {
+  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -54,6 +56,7 @@ export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps
         onSlashCommand={onSlashCommand}
         onSplit={onSplit}
         onSmartPaste={onSmartPaste}
+        onCreateFootnote={onCreateFootnote}
         blockType="paragraph"
         placeholder={alwaysShowPlaceholder ? 'Commencez à taper  —  / ou Ctrl+Espace pour les commandes' : 'Commencez à taper…'}
         alwaysShowPlaceholder={alwaysShowPlaceholder}
@@ -73,10 +76,13 @@ function InlineNodeView({ node }: { node: InlineNode }) {
     case 'text':       return <>{node.value}</>
     case 'strong':     return <strong><InlineView nodes={node.children} /></strong>
     case 'emphasis':   return <em><InlineView nodes={node.children} /></em>
-    case 'inlineCode': return <code>{node.value}</code>
+    case 'inlineCode': return <InlineColorCode value={node.value} />
     case 'link':       return <a href={node.url} onClick={(e) => e.stopPropagation()}><InlineView nodes={node.children} /></a>
     case 'delete':     return <del><InlineView nodes={node.children} /></del>
     case 'underline':  return <u><InlineView nodes={node.children} /></u>
+    case 'superscript': return <sup><InlineView nodes={node.children} /></sup>
+    case 'subscript':  return <sub><InlineView nodes={node.children} /></sub>
+    case 'footnoteReference': return <sup>[{node.identifier}]</sup>
     case 'break':      return <br />
     default:           return null
   }

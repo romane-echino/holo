@@ -461,6 +461,27 @@
     font-family: var(--font-mono);
   }
 
+  .holo-markdown code[data-inline-color],
+  [contenteditable="true"] code[data-inline-color] {
+    position: relative;
+    padding-left: 1.15rem;
+  }
+
+  .holo-markdown code[data-inline-color]::before,
+  [contenteditable="true"] code[data-inline-color]::before {
+    content: '';
+    position: absolute;
+    left: 0.42rem;
+    top: 50%;
+    width: 0.48rem;
+    height: 0.48rem;
+    border-radius: 999px;
+    transform: translateY(-50%);
+    background: var(--inline-color-preview);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-holo-border-soft) 75%, transparent);
+    pointer-events: none;
+  }
+
 
   .holo-markdown pre code {
     border: none;

@@ -27,6 +27,19 @@ async function gotoEditor(page: Page, markdown?: string) {
   await page.waitForSelector('[data-testid="block-editor"]', { timeout: 10_000 })
 }
 
+async function installMentionApiMock(page: Page) {
+  await page.addInitScript(() => {
+    const existing = (window as Window & { holo?: Record<string, unknown> }).holo ?? {}
+    ;(window as Window & { holo?: Record<string, unknown> }).holo = {
+      ...existing,
+      gitGetContributors: async () => [
+        { commitCount: 42, authorName: 'Romane', authorEmail: 'romane@example.com' },
+        { commitCount: 17, authorName: 'Jane Doe', authorEmail: '12345+janedoe@users.noreply.github.com' },
+      ],
+    }
+  })
+}
+
 async function waitForMd(page: Page, predicate: (md: string) => boolean, timeout = 5000): Promise<string> {
   let md = ''
   await expect(async () => {
@@ -64,6 +77,60 @@ async function expectContextIntact(page: Page) {
       page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: p }),
     ).toBeVisible({ timeout: 3_000 })
   }
+}
+
+async function selectTextRange(locator: ReturnType<Page['locator']>, start: number, end: number) {
+  await locator.evaluate((el, range) => {
+    const root = el as HTMLElement
+    const selection = window.getSelection()
+    if (!selection) return
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    let currentOffset = 0
+    let startNode: Text | null = null
+    let endNode: Text | null = null
+    let startOffset = 0
+    let endOffset = 0
+
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode as Text
+      const nextOffset = currentOffset + textNode.data.length
+
+      if (!startNode && range.start >= currentOffset && range.start <= nextOffset) {
+        startNode = textNode
+        startOffset = range.start - currentOffset
+      }
+
+      if (!endNode && range.end >= currentOffset && range.end <= nextOffset) {
+        endNode = textNode
+        endOffset = range.end - currentOffset
+        break
+      }
+
+      currentOffset = nextOffset
+    }
+
+    if (!startNode || !endNode) return
+
+    const domRange = document.createRange()
+    domRange.setStart(startNode, startOffset)
+    domRange.setEnd(endNode, endOffset)
+    selection.removeAllRanges()
+    selection.addRange(domRange)
+  }, { start, end })
+}
+
+async function placeCaretAtEnd(locator: ReturnType<Page['locator']>) {
+  await locator.evaluate((el) => {
+    const root = el as HTMLElement
+    const selection = window.getSelection()
+    if (!selection) return
+    const range = document.createRange()
+    range.setStart(root, root.childNodes.length)
+    range.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  })
 }
 
 // ─── 1. BlockquoteBlock ────────────────────────────────────────────────────────
@@ -181,11 +248,425 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
     expect(md).toContain('Alpha-premier')
     expect(md).toContain('Gamma-dernier')
   })
+
+  test('blockquote github alert est stylé et préserve son marqueur markdown', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '> [!NOTE]',
+      '> Information utile',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    const alertBlock = page.locator('blockquote[data-blockquote-alert="note"]')
+    await expect(alertBlock).toBeVisible()
+    await expect(alertBlock).toContainText('Note')
+
+    const alertEditor = alertBlock.locator('[data-block-type="blockquote"][contenteditable]')
+    await alertEditor.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' complément')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('> [!NOTE]') && s.includes('> Information utile complément'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+    expect(md).toContain('Gamma-dernier')
+  })
+
+  test('création d\'une alerte github via slash command', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Alerte note')
+
+    const alertBlock = page.locator('blockquote[data-blockquote-alert="note"]')
+    await expect(alertBlock).toBeVisible()
+
+    const alertEditor = alertBlock.locator('[data-block-type="blockquote"][contenteditable]')
+    await alertEditor.click()
+    await page.keyboard.type('Depuis slash')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('> [!NOTE]') && s.includes('> Depuis slash') && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('le bouton de type permet de convertir une citation en alerte puis de revenir en citation simple', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Citation')
+
+    const blockquote = page.locator('blockquote').filter({ has: page.locator('[data-block-type="blockquote"][contenteditable]') }).first()
+    const editor = blockquote.locator('[data-block-type="blockquote"][contenteditable]')
+    await editor.click()
+    await page.keyboard.type('Texte de citation')
+
+    await blockquote.hover()
+    await blockquote.getByRole('button', { name: 'Type de citation Citation' }).click()
+    await page.getByRole('button', { name: 'Définir le type Attention' }).click()
+
+    const warningMd = await waitForMd(page, (s) =>
+      s.includes('> [!WARNING]') && s.includes('> Texte de citation'),
+      6000,
+    )
+    expect(warningMd).toContain('Gamma-dernier')
+
+    await blockquote.hover()
+    await blockquote.getByRole('button', { name: 'Type de citation Attention' }).click()
+    await page.getByRole('button', { name: 'Définir le type Citation simple' }).click()
+
+    const plainMd = await waitForMd(page, (s) =>
+      s.includes('> Texte de citation') && !s.includes('[!WARNING]'),
+      6000,
+    )
+    expect(plainMd).toContain('Alpha-premier')
+  })
+})
+
+test.describe('MermaidBlock — édition et sérialisation', () => {
+  test('création via slash command, rendu et persistance markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Diagramme Mermaid')
+
+    const textarea = page.locator('textarea[placeholder*="flowchart TD"]').first()
+    await expect(textarea).toBeVisible()
+    await textarea.fill('flowchart LR\n  A[Alpha] --> B[Bravo]')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('.mermaid-diagram svg')).toHaveCount(1)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('```mermaid') && s.includes('A[Alpha] --> B[Bravo]') && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un bloc mermaid pré-existant est rendu et reste éditable', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  Start --> End',
+      '```',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await expect(page.locator('.mermaid-diagram svg')).toHaveCount(1)
+
+    await page.locator('button[title="Cliquer pour modifier le diagramme"]').click()
+    const textarea = page.locator('textarea[placeholder*="flowchart TD"]').first()
+    await textarea.fill('flowchart TD\n  Start --> Middle\n  Middle --> End')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('Middle --> End') && s.includes('```mermaid'),
+      6000,
+    )
+    expect(md).toContain('Gamma-dernier')
+  })
+})
+
+test.describe('DetailsBlock — édition et sérialisation', () => {
+  test('création via slash command, rendu et persistance markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Section repliable')
+
+    const summaryInput = page.locator('input[placeholder="Click me"]').first()
+    await expect(summaryInput).toBeVisible()
+    await summaryInput.fill('Bloc repliable')
+
+    const textarea = page.locator('textarea[placeholder="Content"]').first()
+    await textarea.fill('Contenu **markdown**\n\n- Alpha\n- Bravo')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('details')).toHaveCount(1)
+    await expect(page.locator('summary')).toContainText('Bloc repliable')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('<details>')
+      && s.includes('<summary>Bloc repliable</summary>')
+      && s.includes('Contenu **markdown**')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un bloc details pré-existant reste éditable', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '<details>',
+      '<summary>Click me</summary>',
+      '',
+      'Content',
+      '</details>',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await expect(page.locator('summary')).toContainText('Click me')
+    await page.locator('button[title="Cliquer pour modifier la section repliable"]').click()
+
+    const summaryInput = page.locator('input[placeholder="Click me"]').first()
+    await summaryInput.fill('Nouvelle section')
+    const textarea = page.locator('textarea[placeholder="Content"]').first()
+    await textarea.fill('Ligne 1\n\nLigne 2')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('<summary>Nouvelle section</summary>')
+      && s.includes('Ligne 2')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+})
+
+test.describe('Formatage inline — exposant et indice', () => {
+  test('applique exposant et indice via raccourcis clavier et persiste le markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await milieu.click()
+    await page.keyboard.type('H2O CO2')
+
+    await selectTextRange(milieu, 'Beta-milieuH'.length, 'Beta-milieuH2'.length)
+    await page.keyboard.press('Control+Period')
+
+    await selectTextRange(milieu, 'Beta-milieuH2O CO'.length, 'Beta-milieuH2O CO2'.length)
+    await page.keyboard.press('Control+Comma')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('H<sup>2</sup>O CO<sub>2</sub>') && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un markdown pré-existant avec sup et sub reste éditable', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      'H<sup>2</sup>O et CO<sub>2</sub>',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    const paragraph = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'H2O et CO2' }).first()
+    await expect(paragraph.locator('sup')).toHaveText('2')
+    await expect(paragraph.locator('sub')).toHaveText('2')
+
+    await paragraph.click()
+    await placeCaretAtEnd(paragraph)
+    await page.keyboard.type(' ok')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('H<sup>2</sup>O et CO<sub>2 ok</sub>') && s.includes('Alpha-premier'),
+      6000,
+    )
+    expect(md).toContain('Gamma-dernier')
+  })
+})
+
+test.describe('Code inline — détection automatique des couleurs', () => {
+  test('affiche un swatch pour hex, rgb et hsl sans changer le markdown', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      'Palette `#FF6600` `rgb(12, 34, 56)` `hsl(210, 60%, 50%)` et `hello`',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    const paragraph = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Palette' }).first()
+    await expect(paragraph.locator('code[data-inline-color="#FF6600"]')).toHaveCount(1)
+    await expect(paragraph.locator('code[data-inline-color="rgb(12, 34, 56)"]')).toHaveCount(1)
+    await expect(paragraph.locator('code[data-inline-color="hsl(210, 60%, 50%)"]')).toHaveCount(1)
+    await expect(paragraph.locator('code[data-inline-color]').filter({ hasText: 'hello' })).toHaveCount(0)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('`#FF6600`')
+      && s.includes('`rgb(12, 34, 56)`')
+      && s.includes('`hsl(210, 60%, 50%)`')
+      && s.includes('`hello`'),
+      3000,
+    )
+    expect(md).toContain('Gamma-dernier')
+  })
+})
+
+test.describe('HtmlBlock — édition et sérialisation', () => {
+  test('création via slash command, rendu et persistance markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Bloc HTML')
+
+    const textarea = page.locator('textarea').first()
+    await expect(textarea).toBeVisible()
+    await textarea.fill('<section class="promo"><strong>Bonjour HTML</strong><p>Contenu</p></section>')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('.promo')).toHaveCount(1)
+    await expect(page.locator('.promo strong')).toContainText('Bonjour HTML')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('<section class="promo"><strong>Bonjour HTML</strong><p>Contenu</p></section>')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('un bloc html pré-existant reste éditable', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '<div class="promo">Hello</div>',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await expect(page.locator('.promo')).toContainText('Hello')
+    await page.locator('button[title="Cliquer pour modifier le bloc HTML"]').click()
+
+    const textarea = page.locator('textarea').first()
+    await textarea.fill('<div class="promo"><em>Hello édité</em></div>')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('<div class="promo"><em>Hello édité</em></div>')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+})
+
+test.describe('YouTubeBlock — édition et sérialisation', () => {
+  test('création via slash command, rendu et persistance markdown', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await enterAndSlash(page, milieu)
+    await selectCmd(page, 'Vidéo YouTube')
+
+    const input = page.locator('input[type="url"]').first()
+    await expect(input).toBeVisible()
+    await input.fill('https://youtu.be/dQw4w9WgXcQ')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    await expect(page.locator('iframe[src*="youtube-nocookie.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1)
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('<iframe')
+      && s.includes('youtube-nocookie.com/embed/dQw4w9WgXcQ')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+
+  test('une iframe youtube pré-existante reste éditable', async ({ page }) => {
+    await gotoEditor(page, [
+      'Alpha-premier',
+      '',
+      '<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Vidéo YouTube" allowfullscreen></iframe>',
+      '',
+      'Gamma-dernier',
+    ].join('\n'))
+
+    await expect(page.locator('iframe[src*="embed/dQw4w9WgXcQ"]')).toHaveCount(1)
+    await page.locator('button[title="Cliquer pour modifier la vidéo YouTube"]').click()
+
+    const input = page.locator('input[type="url"]').first()
+    await input.fill('https://www.youtube.com/watch?v=M7lc1UVf-VE')
+    await page.getByRole('button', { name: 'Valider' }).click()
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('youtube-nocookie.com/embed/M7lc1UVf-VE')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
+})
+
+test.describe('Mentions — autocomplete repo', () => {
+  test('taper @ ouvre des suggestions et insère la mention choisie', async ({ page }) => {
+    await installMentionApiMock(page)
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await milieu.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' @ro')
+
+    const popup = page.getByTestId('mention-popup')
+    await expect(popup).toBeVisible()
+    await expect(popup).toContainText('@romane')
+
+    await page.keyboard.press('Enter')
+
+    const md = await waitForMd(page, (s) =>
+      s.includes('Beta-milieu @romane')
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('@romane')
+  })
 })
 
 // ─── 2. FootnoteBlock ─────────────────────────────────────────────────────────
 
 test.describe('FootnoteBlock — édition et sérialisation', () => {
+
+  test('sélectionner un mot permet de créer une note via la toolbar inline', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await selectTextRange(milieu, 0, 4)
+
+    await page.getByTitle('Créer une note de bas de page').click()
+
+    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
+    await expect(fnEditor).toBeVisible({ timeout: 3_000 })
+    await fnEditor.click()
+    await page.keyboard.type('Note créée depuis sélection')
+    await page.keyboard.press('Tab')
+
+    const md = await waitForMd(page, (s) =>
+      /Beta\[\^[^\]]+\]-milieu/.test(s)
+      && /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Note créée depuis sélection/m.test(s)
+      && s.includes('Gamma-dernier'),
+      6000,
+    )
+    expect(md).toContain('Alpha-premier')
+  })
 
   test('création via slash command, saisie et sérialisation markdown', async ({ page }) => {
     await gotoEditor(page, contextMd())

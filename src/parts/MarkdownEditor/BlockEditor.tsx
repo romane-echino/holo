@@ -22,11 +22,16 @@ import { HeadingBlock } from './blocks/HeadingBlock'
 import { TableBlock } from './blocks/TableBlock'
 import { ListBlock, listBlockItemsToNode } from './blocks/ListBlock'
 import { CodeBlock } from './blocks/CodeBlock'
+import { DetailsBlock, buildDetailsHtml, isDetailsHtmlNode } from './blocks/DetailsBlock'
+import { HtmlBlock } from './blocks/HtmlBlock'
+import { YouTubeBlock, buildYouTubeHtml, isYouTubeHtmlNode } from './blocks/YouTubeBlock'
+import { MermaidBlock } from './blocks/MermaidBlock'
 import { BlockquoteBlock } from './blocks/BlockquoteBlock'
 import { ImageBlock } from './blocks/ImageBlock'
 import { MathBlock } from './blocks/MathBlock'
 import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
+import { buildBlockquoteAlertNodes, type BlockquoteAlertType } from './lib/blockquoteAlerts'
 import { domToInlines } from './lib/domToInlines'
 import { inlinesToMarkdown } from './lib/inlinesToMarkdown'
 import { setClipboardEventData } from './lib/clipboard'
@@ -35,7 +40,7 @@ import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
-import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
+import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -54,6 +59,16 @@ function remarkUnderlinePlugin(this: any) {
       underline(node: any, _: any, state: any, info: any) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return '<u>' + (state as any).containerPhrasing(node, info) + '</u>'
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      superscript(node: any, _: any, state: any, info: any) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return '<sup>' + (state as any).containerPhrasing(node, info) + '</sup>'
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      subscript(node: any, _: any, state: any, info: any) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return '<sub>' + (state as any).containerPhrasing(node, info) + '</sub>'
       },
     },
   })
@@ -76,6 +91,53 @@ function slugifyHeadingText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/gi, '-').replace(/^-+|-+$/g, '') || 'section'
 }
 
+function parseTableMetadataComment(value: string): TableMetadata | null {
+  const match = value.trim().match(/^<!--\s*holo:table\s+([\s\S]+?)\s*-->$/)
+  if (!match) return null
+  try {
+    const parsed = JSON.parse(match[1]) as TableMetadata
+    if (!parsed || typeof parsed !== 'object') return null
+    const isAggregation = (entry: unknown): entry is TableColumnAggregation =>
+      entry === 'none' || entry === 'count' || entry === 'sum' || entry === 'avg' || entry === 'min' || entry === 'max' || entry === 'checked'
+    return {
+      columnTypes: Array.isArray(parsed.columnTypes)
+        ? parsed.columnTypes.filter((entry) => entry === 'text' || entry === 'number' || entry === 'currency' || entry === 'date' || entry === 'checkbox')
+        : undefined,
+      columnColors: Array.isArray(parsed.columnColors)
+        ? parsed.columnColors.map((entry) => (typeof entry === 'string' && entry ? entry : null))
+        : undefined,
+      columnAggregations: Array.isArray(parsed.columnAggregations)
+        ? parsed.columnAggregations.filter(isAggregation)
+        : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+function hasNonDefaultTableMetadata(metadata: TableMetadata | undefined): boolean {
+  if (!metadata) return false
+  const hasTypedColumns = metadata.columnTypes?.some((entry) => entry && entry !== 'text') ?? false
+  const hasColoredColumns = metadata.columnColors?.some((entry) => Boolean(entry)) ?? false
+  const hasAggregatedColumns = metadata.columnAggregations?.some((entry) => entry && entry !== 'none') ?? false
+  return hasTypedColumns || hasColoredColumns || hasAggregatedColumns
+}
+
+function buildTableMetadataComment(metadata: TableMetadata | undefined): string | null {
+  if (!hasNonDefaultTableMetadata(metadata)) return null
+  const payload: TableMetadata = {}
+  if (metadata?.columnTypes?.some((entry) => entry && entry !== 'text')) {
+    payload.columnTypes = metadata.columnTypes
+  }
+  if (metadata?.columnColors?.some((entry) => Boolean(entry))) {
+    payload.columnColors = metadata.columnColors
+  }
+  if (metadata?.columnAggregations?.some((entry) => entry && entry !== 'none')) {
+    payload.columnAggregations = metadata.columnAggregations
+  }
+  return `<!-- holo:table ${JSON.stringify(payload)} -->`
+}
+
 function markdownToBlocks(markdown: string): BlockState[] {
   if (!markdown.trim()) return [freshParagraph()]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,6 +155,53 @@ function markdownToBlocks(markdown: string): BlockState[] {
       const listNode = { ...children[i + 1], data: { ...(children[i + 1].data ?? {}), listStyle: 'alpha' } }
       result.push({ id: newId(), node: convertHtmlUnderline(listNode) })
       i++ // sauter la liste (déjà consommée)
+    } else if (
+      node.type === 'html'
+      && /^<details(?:\s|>)/i.test((node.value as string).trim())
+    ) {
+      let closingIndex = -1
+      for (let cursor = i + 1; cursor < children.length; cursor++) {
+        if (children[cursor].type === 'html' && (children[cursor].value as string).trim() === '</details>') {
+          closingIndex = cursor
+          break
+        }
+      }
+
+      if (closingIndex !== -1) {
+        const innerChildren = children.slice(i + 1, closingIndex)
+        const innerMarkdown = serializer.stringify({
+          type: 'root',
+          children: innerChildren,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any).trim()
+        const combinedValue = innerMarkdown
+          ? `${(node.value as string).trim()}\n\n${innerMarkdown}\n${(children[closingIndex].value as string).trim()}`
+          : `${(node.value as string).trim()}\n${(children[closingIndex].value as string).trim()}`
+
+        result.push({ id: newId(), node: { type: 'html', value: combinedValue } })
+        i = closingIndex
+      } else {
+        result.push({ id: newId(), node: convertHtmlUnderline(node) })
+      }
+    } else if (
+      node.type === 'html'
+      && i + 1 < children.length
+      && children[i + 1].type === 'table'
+    ) {
+      const tableMetadata = parseTableMetadataComment(node.value as string)
+      if (tableMetadata) {
+        const tableNode = {
+          ...children[i + 1],
+          data: {
+            ...(children[i + 1].data ?? {}),
+            holoTable: tableMetadata,
+          },
+        }
+        result.push({ id: newId(), node: convertHtmlUnderline(tableNode) })
+        i++
+      } else {
+        result.push({ id: newId(), node: convertHtmlUnderline(node) })
+      }
     } else if (
       // $$formula$$ sur une ligne → parsé en inlineMath dans un paragraphe → convertir en bloc math
       node.type === 'paragraph' &&
@@ -123,20 +232,67 @@ function ensureTrailingParagraph(blocks: BlockState[]): BlockState[] {
   return [...blocks, freshParagraph()]
 }
 
-// Convertit les nœuds HTML inline `<u>...</u>` en nœuds underline lors du chargement
+function wrapInlineHtmlTag(tagName: 'u' | 'sup' | 'sub', children: InlineNode[]) {
+  const type = tagName === 'u' ? 'underline' : tagName === 'sup' ? 'superscript' : 'subscript'
+  return { type, children }
+}
+
+// Convertit les nœuds HTML inline `<u>`, `<sup>`, `<sub>` en nœuds sémantiques lors du chargement
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function convertHtmlUnderline(node: any): any {
+  const convertChildren = (children: any[]) => {
+    const convertedChildren: any[] = []
+
+    for (let index = 0; index < children.length; index++) {
+      const child = children[index]
+      if (child?.type === 'html') {
+        const openMatch = (child.value as string).trim().match(/^<(u|sup|sub)>$/i)
+        if (openMatch) {
+          const tagName = openMatch[1].toLowerCase() as 'u' | 'sup' | 'sub'
+          const nestedChildren: any[] = []
+          let depth = 1
+          let cursor = index + 1
+
+          for (; cursor < children.length; cursor++) {
+            const candidate = children[cursor]
+            if (candidate?.type === 'html') {
+              const candidateValue = (candidate.value as string).trim().toLowerCase()
+              if (candidateValue === `<${tagName}>`) depth++
+              if (candidateValue === `</${tagName}>`) {
+                depth--
+                if (depth === 0) break
+              }
+            }
+            nestedChildren.push(candidate)
+          }
+
+          if (depth === 0) {
+            const nestedNode = convertHtmlUnderline({ type: 'paragraph', children: nestedChildren })
+            convertedChildren.push(wrapInlineHtmlTag(tagName, nestedNode.children ?? []))
+            index = cursor
+            continue
+          }
+        }
+      }
+
+      convertedChildren.push(convertHtmlUnderline(child))
+    }
+
+    return convertedChildren
+  }
+
   if (!node) return node
+  if (Array.isArray(node.children)) {
+    return { ...node, children: convertChildren(node.children) }
+  }
+
   if (node.type === 'html') {
-    const m = node.value.match(/^<u>([\s\S]*)<\/u>$/)
+    const m = node.value.match(/^<(u|sup|sub)>([\s\S]*)<\/\1>$/i)
     if (m) {
       const tmp = document.createElement('div')
-      tmp.innerHTML = m[1]
-      return { type: 'underline', children: domToInlines(tmp) }
+      tmp.innerHTML = m[2]
+      return wrapInlineHtmlTag(m[1].toLowerCase() as 'u' | 'sup' | 'sub', domToInlines(tmp))
     }
-  }
-  if (node.children) {
-    return { ...node, children: node.children.map(convertHtmlUnderline) }
   }
   return node
 }
@@ -151,15 +307,25 @@ function blocksToMarkdown(blocks: BlockState[]): string {
       // Sérialiser sans le champ data pour éviter les avertissements remark
       const { data: _d, ...nodeWithoutData } = b.node as ListNode
       expanded.push(nodeWithoutData)
+    } else if (b.node.type === 'table') {
+      const tableNode = b.node as TableNode
+      const metadataComment = buildTableMetadataComment(tableNode.data?.holoTable)
+      if (metadataComment) {
+        expanded.push({ type: 'html', value: metadataComment })
+      }
+      const { data: _d, ...nodeWithoutData } = tableNode
+      expanded.push(nodeWithoutData)
     } else {
       expanded.push(b.node)
     }
   }
-  return serializer.stringify({
+  const markdown = serializer.stringify({
     type: 'root',
     children: expanded,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as string
+
+  return markdown.replace(/^> \\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/gim, '> [!$1]')
 }
 
 function blocksToClipboardPayload(blocks: BlockState[]) {
@@ -168,6 +334,14 @@ function blocksToClipboardPayload(blocks: BlockState[]) {
     html: parseMarkdownToClipboardHtml(markdown, newClipboardTableId),
     markdown,
   }
+}
+
+function areBlockNodesEqual(left: BlockNode, right: BlockNode): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function areBlockStateArraysIdentical(left: BlockState[], right: BlockState[]): boolean {
+  return left.length === right.length && left.every((block, index) => block === right[index])
 }
 
 function freshParagraph(): BlockState {
@@ -199,7 +373,7 @@ function isEmptyBlock(node: BlockNode): boolean {
   if (node.type === 'paragraph') {
     const text = (node as ParagraphNode).children
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((n: any) => n.value ?? '')
+      .map((n: any) => n.value ?? (n.type === 'footnoteReference' ? `[^${n.identifier ?? ''}]` : ''))
       .join('')
     return !text.trim()
   }
@@ -209,7 +383,7 @@ function isEmptyBlock(node: BlockNode): boolean {
     if (ln.children.length !== 1) return false
     const para = ln.children[0].children.find((c) => c.type === 'paragraph') as ParagraphNode | undefined
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const text = (para?.children ?? []).map((n: any) => n.value ?? '').join('')
+    const text = (para?.children ?? []).map((n: any) => n.value ?? (n.type === 'footnoteReference' ? `[^${n.identifier ?? ''}]` : '')).join('')
     return !text.trim()
   }
   // Blockquote avec premier paragraphe vide
@@ -228,15 +402,43 @@ function isEmptyBlock(node: BlockNode): boolean {
     const firstPara = fn.children?.[0]
     if (!firstPara || firstPara.type !== 'paragraph') return true
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return !(firstPara.children ?? []).map((n: any) => n.value ?? '').join('').trim()
+    return !(firstPara.children ?? []).map((n: any) => n.value ?? (n.type === 'footnoteReference' ? `[^${n.identifier ?? ''}]` : '')).join('').trim()
   }
   return false
+}
+
+function slugifyFootnoteIdentifier(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function buildNextFootnoteIdentifier(blocks: BlockState[], selectedText = ''): string {
+  const existing = new Set(
+    blocks
+      .filter((block) => block.node?.type === 'footnoteDefinition')
+      .map((block) => String(block.node.identifier ?? '').trim())
+      .filter(Boolean),
+  )
+
+  const preferredBase = slugifyFootnoteIdentifier(selectedText)
+  const base = preferredBase || 'note'
+
+  if (!existing.has(base)) return base
+
+  let index = 1
+  while (existing.has(`${base}-${index}`)) index += 1
+  return `${base}-${index}`
 }
 
 // ─── BlockEditor ─────────────────────────────────────────────────────────────
 
 export interface BlockEditorHandle {
   insertImage: (url: string, alt: string) => void
+  flushPendingChanges: () => void
 }
 
 export interface BlockEditorProps {
@@ -292,10 +494,18 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       history.stack.shift()
       history.pos -= 1
     }
+    console.log('[BlockEditor][history] push', {
+      pos: history.pos,
+      size: history.stack.length,
+      preview: snapshot.slice(0, 120),
+    })
   }, [])
 
   const scheduleHistorySnapshot = useCallback((snapshot: string) => {
     if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+    console.log('[BlockEditor][history] schedule', {
+      preview: snapshot.slice(0, 120),
+    })
     historyTimerRef.current = setTimeout(() => {
       pushHistorySnapshot(snapshot)
     }, 250)
@@ -308,6 +518,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     setBlocks((previous) => {
       const next = updater(previous)
       if (next === previous) return previous
+      if (areBlockStateArraysIdentical(previous, next)) return previous
 
       blocksDirtyRef.current = true
 
@@ -361,9 +572,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // Changement externe du prop markdown → réinitialise sans émettre en retour
   useEffect(() => {
     if (markdown !== lastEmittedRef.current) {
-      console.log('[BlockEditor] ⚠️ EXTERNAL SYNC fired! markdown prop changed, resetting blocks. Blocks before reset:', blocksRef.current.length, '→', markdownToBlocks(markdown).length)
-      console.log('[BlockEditor] lastEmitted:', JSON.stringify(lastEmittedRef.current?.slice(0, 80)))
-      console.log('[BlockEditor] new markdown:', JSON.stringify(markdown?.slice(0, 80)))
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
       setBlocks(markdownToBlocks(markdown))
@@ -398,7 +606,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     if (!blocksDirtyRef.current) return
     blocksDirtyRef.current = false
     const md = blocksToMarkdown(blocks)
-    console.log('[BlockEditor] 📤 EMIT', blocks.length, 'blocks →', JSON.stringify(md.slice(0, 120)))
     lastEmittedRef.current = md
     onChangeRef.current(md)
 
@@ -409,7 +616,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   const handleBlockChange = useCallback(
     (id: string, node: BlockNode) => {
-      applyBlocksMutation((prev) => prev.map((b) => (b.id === id ? { ...b, node } : b)), 'debounced')
+      applyBlocksMutation((prev) => prev.map((block) => {
+        if (block.id !== id) return block
+        if (areBlockNodesEqual(block.node, node)) return block
+        return { ...block, node }
+      }), 'immediate')
     },
     [applyBlocksMutation],
   )
@@ -646,10 +857,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const handleConvert = useCallback(
     (id: string, targetType: string, children?: InlineNode[]) => {
       applyBlocksMutation((prev) => {
-        console.log('[BlockEditor] 🔄 handleConvert setBlocks updater called — prev.length=', prev.length, 'targetType=', targetType, 'id=', id.slice(0,8))
         const idx = prev.findIndex((b) => b.id === id)
         if (idx === -1) {
-          console.warn('[BlockEditor] ❌ handleConvert: block id not found in prev!')
           return prev
         }
         const current = prev[idx].node
@@ -667,6 +876,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           newNode = { type: 'table', align: ['left', 'left', 'left'], children: [row(), row(), row()] } as TableNode
         } else if (targetType === 'code') {
           newNode = { type: 'code', lang: 'plaintext', value: inlinesToMarkdown(kids) } as CodeNode
+        } else if (targetType === 'mermaid') {
+          newNode = { type: 'code', lang: 'mermaid', value: 'flowchart TD\n  A[Depart] --> B[Arrivee]' } as CodeNode
+        } else if (targetType === 'details') {
+          newNode = { type: 'html', value: buildDetailsHtml('Click me', 'Content') } as unknown as BlockNode
+        } else if (targetType === 'youtube') {
+          newNode = { type: 'html', value: buildYouTubeHtml('https://www.youtube.com/watch?v=dQw4w9WgXcQ') } as unknown as BlockNode
+        } else if (targetType === 'html') {
+          newNode = { type: 'html', value: '<div class="callout">\n  <strong>Hello HTML</strong>\n</div>' } as unknown as BlockNode
         } else if (targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha') {
           const ordered = targetType !== 'list-bullet'
           const lines = splitAtBreaks(kids)
@@ -695,6 +912,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           newNode = { type: 'math', value: formula, meta: null } as unknown as BlockNode
         } else if (targetType === 'blockquote') {
           newNode = { type: 'blockquote', children: [{ type: 'paragraph', children: kids }] } as unknown as BlockNode
+        } else if (targetType.startsWith('blockquote-alert:')) {
+          const alertType = targetType.slice('blockquote-alert:'.length) as BlockquoteAlertType
+          newNode = {
+            type: 'blockquote',
+            children: [{ type: 'paragraph', children: buildBlockquoteAlertNodes(alertType, kids) }],
+          } as unknown as BlockNode
         } else if (targetType === 'footnote') {
           const id = 'note-' + Math.random().toString(36).slice(2, 6)
           newNode = { type: 'footnoteDefinition', identifier: id, label: id, children: [{ type: 'paragraph', children: kids }] } as unknown as BlockNode
@@ -706,11 +929,9 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
         // Si tableau/liste/math/blockquote/separator/heading/footnote est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'code' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
+        if ((targetType === 'table' || targetType === 'code' || targetType === 'mermaid' || targetType === 'details' || targetType === 'youtube' || targetType === 'html' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType.startsWith('blockquote-alert:') || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
-        console.log('[BlockEditor] 🔄 handleConvert result:', updated.length, 'blocks (was', prev.length, ')')
-        updated.forEach((b, i) => console.log(`  [${i}] id=${b.id.slice(0,8)} type=${b.node.type}`))
         return updated
       }, 'immediate')
       setTimeout(() => blockRefs.current.get(id)?.focus(), 0)
@@ -720,8 +941,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   const handleSlashCommand = useCallback(
     (blockId: string) => {
-      console.log('[BlockEditor] 🔪 SLASH COMMAND opened for block', blockId, '— total blocks:', blocksRef.current.length)
-      blocksRef.current.forEach((b, i) => console.log(`  [${i}] id=${b.id.slice(0,8)} type=${b.node.type}`))
       setSlashCommand({ blockId })
     },
     [],
@@ -743,15 +962,39 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     (blockType: string) => {
       if (!slashCommand) return
       const { blockId } = slashCommand
-      console.log('[BlockEditor] ✅ SLASH SELECT', blockType, 'for block', blockId, '— total blocks before convert:', blocksRef.current.length)
       setSlashCommand(null)
       // Supprimer le "/" du DOM et récupérer le contenu restant
       const children = blockRefs.current.get(blockId)?.clearSlash() ?? []
-      console.log('[BlockEditor] clearSlash returned', children.length, 'inline nodes')
       handleConvert(blockId, blockType, children)
     },
     [slashCommand, handleConvert],
   )
+
+  const handleCreateFootnoteFromSelection = useCallback((blockId: string, selectedText: string) => {
+    const identifier = buildNextFootnoteIdentifier(blocksRef.current, selectedText)
+    let footnoteBlockId = ''
+
+    applyBlocksMutation((prev) => {
+      const index = prev.findIndex((block) => block.id === blockId)
+      if (index === -1) return prev
+
+      footnoteBlockId = crypto.randomUUID()
+      const footnoteBlock: BlockState = {
+        id: footnoteBlockId,
+        node: {
+          type: 'footnoteDefinition',
+          identifier,
+          label: identifier,
+          children: [{ type: 'paragraph', children: [] }],
+        } as unknown as BlockNode,
+      }
+
+      pendingFocusRef.current = footnoteBlockId
+      return [...prev.slice(0, index + 1), footnoteBlock, ...prev.slice(index + 1)]
+    }, 'immediate')
+
+    return identifier
+  }, [applyBlocksMutation])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const lastFocusedBlockIdRef = useRef<string | null>(null)
@@ -794,6 +1037,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         }
         return next
       }, 'immediate')
+    },
+    flushPendingChanges() {
+      for (const handle of blockRefs.current.values()) {
+        handle.flush?.()
+      }
     },
   }), [applyBlocksMutation])
 
@@ -880,14 +1128,26 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
 
   // Ctrl+A → sélectionne tous les blocs | Ctrl+C → copie le markdown des blocs sélectionnés
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null
+    const isFormFieldTarget = Boolean(target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT'))
+
     // CTRL+Z → undo
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      if (isFormFieldTarget && selectedBlockIds.size === 0) return
       e.preventDefault()
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      const focusedId = lastFocusedBlockIdRef.current
+      if (focusedId) {
+        blockRefs.current.get(focusedId)?.flush?.()
+      }
       const h = historyRef.current
-      pushHistorySnapshot(blocksToMarkdown(blocksRef.current))
       if (h.pos > 0) {
         h.pos--
+        console.log('[BlockEditor][history] undo', {
+          pos: h.pos,
+          size: h.stack.length,
+          preview: h.stack[h.pos]?.slice(0, 120),
+        })
         const nextBlocks = markdownToBlocks(h.stack[h.pos])
         restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
@@ -898,11 +1158,17 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     }
     // CTRL+Y / CTRL+SHIFT+Z → redo
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey) || e.key === 'Z')) {
+      if (isFormFieldTarget && selectedBlockIds.size === 0) return
       e.preventDefault()
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
       const h = historyRef.current
       if (h.pos < h.stack.length - 1) {
         h.pos++
+        console.log('[BlockEditor][history] redo', {
+          pos: h.pos,
+          size: h.stack.length,
+          preview: h.stack[h.pos]?.slice(0, 120),
+        })
         const nextBlocks = markdownToBlocks(h.stack[h.pos])
         restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
@@ -1190,6 +1456,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             onSlashCommand={() => handleSlashCommand(block.id)}
             onSplit={(after) => handleSplit(block.id, after)}
             onSmartPaste={(before, after, md) => handleSmartPaste(block.id, before, after, md)}
+            onCreateFootnote={(selectedText) => handleCreateFootnoteFromSelection(block.id, selectedText)}
             onTabExit={() => handleArrowDown(block.id, 0)}
           />
         </div>
@@ -1235,6 +1502,7 @@ function BlockDispatcher({
   onSlashCommand,
   onSplit,
   onSmartPaste,
+  onCreateFootnote,
   onTabExit,
 }: {
   block: BlockState
@@ -1254,6 +1522,7 @@ function BlockDispatcher({
   onSlashCommand: () => void
   onSplit: (after: InlineNode[]) => void
   onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
+  onCreateFootnote: (selectedText: string) => string | null
   onTabExit: () => void
 }) {
   switch (block.node.type) {
@@ -1278,6 +1547,7 @@ function BlockDispatcher({
           onSlashCommand={onSlashCommand}
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
+          onCreateFootnote={onCreateFootnote}
           alwaysShowPlaceholder={isFirst}
         />
       )
@@ -1299,6 +1569,7 @@ function BlockDispatcher({
           onSlashCommand={onSlashCommand}
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
+          onCreateFootnote={onCreateFootnote}
           alwaysShowPlaceholder={isFirst}
         />
       )
@@ -1331,6 +1602,18 @@ function BlockDispatcher({
       )
 
     case 'code':
+      if ((block.node as CodeNode).lang === 'mermaid') {
+        return (
+          <MermaidBlock
+            ref={blockRef}
+            node={block.node as CodeNode}
+            onChange={(node) => onChange(node)}
+            onEnterAtEnd={onEnterAtEnd}
+            onBackspaceAtStart={onBackspaceAtStart}
+          />
+        )
+      }
+
       return (
         <CodeBlock
           ref={blockRef}
@@ -1353,6 +1636,7 @@ function BlockDispatcher({
           onArrowDown={onArrowDown}
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
+          onCreateFootnote={onCreateFootnote}
         />
       )
 
@@ -1393,6 +1677,41 @@ function BlockDispatcher({
           onArrowDown={onArrowDown}
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
+        />
+      )
+
+    case 'html':
+      if (isDetailsHtmlNode(block.node)) {
+        return (
+          <DetailsBlock
+            ref={blockRef}
+            node={block.node}
+            onChange={(node) => onChange(node as unknown as BlockNode)}
+            onEnterAtEnd={onEnterAtEnd}
+            onBackspaceAtStart={onBackspaceAtStart}
+          />
+        )
+      }
+
+      if (isYouTubeHtmlNode(block.node)) {
+        return (
+          <YouTubeBlock
+            ref={blockRef}
+            node={block.node}
+            onChange={(node) => onChange(node as unknown as BlockNode)}
+            onEnterAtEnd={onEnterAtEnd}
+            onBackspaceAtStart={onBackspaceAtStart}
+          />
+        )
+      }
+
+      return (
+        <HtmlBlock
+          ref={blockRef}
+          node={block.node}
+          onChange={(node) => onChange(node as unknown as BlockNode)}
+          onEnterAtEnd={onEnterAtEnd}
+          onBackspaceAtStart={onBackspaceAtStart}
         />
       )
 

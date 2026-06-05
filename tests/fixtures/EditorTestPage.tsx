@@ -9,9 +9,11 @@
  *   - #pw-md-output            : <pre> caché contenant le markdown courant (lu par les tests)
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BlockEditor } from '../../src/parts/MarkdownEditor/BlockEditor'
+import { WorkspaceContext, type WorkspaceContextType } from '../../src/contexts/WorkspaceContext'
+import { EditorFileContext } from '../../src/parts/MarkdownEditor/EditorFileContext'
 import '../../src/index.css'
 
 declare global {
@@ -33,20 +35,64 @@ export const DEFAULT_TEST_MD = [
 
 const INITIAL_MD = window.__PW_MD__ ?? DEFAULT_TEST_MD
 
+const noopDispatch = (() => {}) as unknown as WorkspaceContextType['setRootPath']
+
 function TestApp() {
   const [md, setMd] = useState(INITIAL_MD)
+  const workspaceValue = useMemo<WorkspaceContextType>(() => ({
+    rootPath: '/playwright-workspace',
+    setRootPath: noopDispatch,
+    tree: null,
+    setTree: noopDispatch,
+    expandedDirectories: new Set<string>(),
+    setExpandedDirectories: noopDispatch,
+    selectedPath: null,
+    setSelectedPath: noopDispatch,
+    selectedType: null,
+    setSelectedType: noopDispatch,
+    draggedPath: null,
+    setDraggedPath: noopDispatch,
+    dropTargetPath: null,
+    setDropTargetPath: noopDispatch,
+    recentFolders: [],
+    setRecentFolders: noopDispatch,
+    recentFilePaths: [],
+    setRecentFilePaths: noopDispatch,
+    recentFolderIconByPath: {},
+    setRecentFolderIconByPath: noopDispatch,
+    fileIconByPath: {},
+    setFileIconByPath: noopDispatch,
+    folderIconByPath: {},
+    setFolderIconByPath: noopDispatch,
+    fileMetaByPath: {},
+    setFileMetaByPath: noopDispatch,
+    pathStatsByPath: {},
+    setPathStatsByPath: noopDispatch,
+    archivedFiles: [],
+    setArchivedFiles: noopDispatch,
+    activeSidebar: 'files',
+    setActiveSidebar: noopDispatch,
+    filesSection: 'explorer',
+    setFilesSection: noopDispatch,
+    contextMenu: null,
+    setContextMenu: noopDispatch,
+  }), [])
 
   return (
-    <div style={{ padding: '40px', maxWidth: '860px', margin: '0 auto' }}>
-      {/* Spy : markdown courant lisible par Playwright sans évaluer le DOM React */}
-      <pre
-        id="pw-md-output"
-        data-testid="pw-md-output"
-        style={{ display: 'none' }}
-      >{md}</pre>
+    <WorkspaceContext.Provider value={workspaceValue}>
+      <EditorFileContext value={{ currentFilePath: '/playwright-workspace/test.md' }}>
+        <div style={{ padding: '40px', maxWidth: '860px', margin: '0 auto' }}>
+          {/* Spy : markdown courant lisible par Playwright sans évaluer le DOM React */}
+          <pre
+            id="pw-md-output"
+            data-testid="pw-md-output"
+            style={{ display: 'none' }}
+          >{md}</pre>
 
-      <BlockEditor markdown={md} onChange={setMd} />
-    </div>
+          <BlockEditor markdown={md} onChange={setMd} />
+        </div>
+      </EditorFileContext>
+    </WorkspaceContext.Provider>
   )
 }
 

@@ -26,6 +26,12 @@ function nodeToInlines(node: Node): InlineNode[] {
   const children = Array.from(el.childNodes).flatMap(nodeToInlines)
 
   switch (tag) {
+    case 'sup':
+      if (el.hasAttribute('data-footnote-ref')) {
+        return [{ type: 'footnoteReference', identifier: el.getAttribute('data-footnote-ref') ?? '', label: el.getAttribute('data-footnote-label') }]
+      }
+      return [{ type: 'superscript', children }]
+
     case 'strong':
     case 'b':
       return [{ type: 'strong', children }]
@@ -48,6 +54,9 @@ function nodeToInlines(node: Node): InlineNode[] {
 
     case 'u':
       return [{ type: 'underline', children }]
+
+    case 'sub':
+      return [{ type: 'subscript', children }]
 
     case 'br':
       return [{ type: 'break' }]

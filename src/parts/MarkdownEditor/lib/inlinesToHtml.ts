@@ -7,6 +7,7 @@
  */
 
 import type { InlineNode } from './types'
+import { getInlineColorPreview } from '../../../lib/inlineColor'
 
 function escapeHtml(text: string): string {
   return text
@@ -27,7 +28,11 @@ function inlineToHtml(node: InlineNode): string {
       return `<em>${node.children.map(inlineToHtml).join('')}</em>`
 
     case 'inlineCode':
-      return `<code>${escapeHtml(node.value)}</code>`
+      return (() => {
+        const previewColor = getInlineColorPreview(node.value)
+        if (!previewColor) return `<code>${escapeHtml(node.value)}</code>`
+        return `<code class="inline-color-code" data-inline-color="${escapeHtml(previewColor)}" style="--inline-color-preview:${escapeHtml(previewColor)}">${escapeHtml(node.value)}</code>`
+      })()
 
     case 'link': {
       const href = escapeHtml(node.url)
@@ -40,6 +45,18 @@ function inlineToHtml(node: InlineNode): string {
 
     case 'underline':
       return `<u>${node.children.map(inlineToHtml).join('')}</u>`
+
+    case 'superscript':
+      return `<sup>${node.children.map(inlineToHtml).join('')}</sup>`
+
+    case 'subscript':
+      return `<sub>${node.children.map(inlineToHtml).join('')}</sub>`
+
+    case 'footnoteReference': {
+      const identifier = escapeHtml(node.identifier)
+      const label = escapeHtml(node.label ?? node.identifier)
+      return `<sup data-footnote-ref="${identifier}" data-footnote-label="${label}" contenteditable="false">[${identifier}]</sup>`
+    }
 
     case 'break':
       return '<br>'

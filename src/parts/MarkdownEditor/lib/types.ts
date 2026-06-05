@@ -15,10 +15,13 @@ export type LinkNode      = { type: 'link';       url: string; title: string | n
 export type DeleteNode    = { type: 'delete';     children: InlineNode[] }
 export type BreakNode     = { type: 'break' }
 export type UnderlineNode = { type: 'underline';  children: InlineNode[] }
+export type SuperscriptNode = { type: 'superscript'; children: InlineNode[] }
+export type SubscriptNode = { type: 'subscript'; children: InlineNode[] }
+export type FootnoteReferenceNode = { type: 'footnoteReference'; identifier: string; label?: string | null }
 
 export type InlineNode =
   | TextNode | StrongNode | EmphasisNode | InlineCodeNode
-  | LinkNode | DeleteNode | BreakNode | UnderlineNode | ImageNode
+  | LinkNode | DeleteNode | BreakNode | UnderlineNode | SuperscriptNode | SubscriptNode | FootnoteReferenceNode | ImageNode
 
 // ─── Block nodes ────────────────────────────────────────────────────────────
 
@@ -35,7 +38,22 @@ export type ImageNode        = { type: 'image';        url: string; alt: string;
 
 export type TableCellNode = { type: 'tableCell'; children: InlineNode[] }
 export type TableRowNode  = { type: 'tableRow';  children: TableCellNode[] }
-export type TableNode     = { type: 'table'; align: ('left'|'center'|'right'|null)[]; children: TableRowNode[] }
+export type TableColumnType = 'text' | 'number' | 'currency' | 'date' | 'checkbox'
+export type TableColumnAggregation = 'none' | 'count' | 'sum' | 'avg' | 'min' | 'max' | 'checked'
+export type TableMetadata = {
+  columnTypes?: TableColumnType[]
+  columnColors?: (string | null)[]
+  columnAggregations?: TableColumnAggregation[]
+}
+export type TableNode     = {
+  type: 'table'
+  align: ('left'|'center'|'right'|null)[]
+  children: TableRowNode[]
+  data?: {
+    holoTable?: TableMetadata
+    [key: string]: unknown
+  }
+}
 
 export type BlockNode =
   | ParagraphNode | HeadingNode | CodeNode | BlockquoteNode

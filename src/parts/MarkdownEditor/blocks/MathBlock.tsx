@@ -39,6 +39,8 @@ export const MathBlock = forwardRef<InlineEditorHandle, MathBlockProps>(
       },
       clear: () => { setDraft('') },
       clearSlash: () => [],
+      flush: () => { commit() },
+      getContent: () => [],
     }))
 
     // Sync si le nœud change depuis l'extérieur

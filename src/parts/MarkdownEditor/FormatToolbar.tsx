@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bold, Code2, FileText, Italic, Link2, Link2Off, Strikethrough, Underline } from 'lucide-react'
+import { Bold, Code2, FileText, Italic, Link2, Link2Off, Quote, Strikethrough, Subscript, Superscript, Underline } from 'lucide-react'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
@@ -25,6 +25,8 @@ export interface FormatToolbarState {
   strike: boolean
   code: boolean
   underline: boolean
+  superscript: boolean
+  subscript: boolean
   link: string | null
 }
 
@@ -35,6 +37,9 @@ interface FormatToolbarProps {
   onStrike: () => void
   onCode: () => void
   onUnderline: () => void
+  onSuperscript: () => void
+  onSubscript: () => void
+  onFootnote: () => void
   onLink: (url: string) => void
   onUnlink: () => void
 }
@@ -43,7 +48,7 @@ interface FormatToolbarProps {
 
 export function FormatToolbar({
   state,
-  onBold, onItalic, onStrike, onCode, onUnderline, onLink, onUnlink,
+  onBold, onItalic, onStrike, onCode, onUnderline, onSuperscript, onSubscript, onFootnote, onLink, onUnlink,
 }: FormatToolbarProps) {
   const [linkMode, setLinkMode] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
@@ -229,6 +234,13 @@ export function FormatToolbar({
             <Italic size={14} />
           </Btn>
           <Btn
+            active={false}
+            onMouseDown={(e) => { e.preventDefault(); onFootnote() }}
+            label="Créer une note de bas de page"
+          >
+            <Quote size={14} />
+          </Btn>
+          <Btn
             active={state.strike}
             onMouseDown={(e) => { e.preventDefault(); onStrike() }}
             label="Barré (Ctrl+Shift+S)"
@@ -248,6 +260,20 @@ export function FormatToolbar({
             label="Souligné (Ctrl+U)"
           >
             <Underline size={14} />
+          </Btn>
+          <Btn
+            active={state.superscript}
+            onMouseDown={(e) => { e.preventDefault(); onSuperscript() }}
+            label="Exposant (Ctrl+.)"
+          >
+            <Superscript size={14} />
+          </Btn>
+          <Btn
+            active={state.subscript}
+            onMouseDown={(e) => { e.preventDefault(); onSubscript() }}
+            label="Indice (Ctrl+,)"
+          >
+            <Subscript size={14} />
           </Btn>
 
           <div className="mx-1 h-4 w-px shrink-0 bg-holo-border-soft" />

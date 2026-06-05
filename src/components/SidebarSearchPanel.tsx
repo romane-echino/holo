@@ -44,7 +44,7 @@ export function SidebarSearchPanel({
         <input
           autoFocus
           className="w-full rounded-lg border border-white/10 bg-white/5 pl-8 pr-3 py-2 text-sm text-white outline-none focus:border-[#7B61FF]/50 placeholder:text-white/25"
-          placeholder="Rechercher… ou #tag"
+          placeholder="Rechercher… ou #tag ou @mention"
           value={searchQuery}
           onChange={(e) => onSearchInput(e.target.value)}
         />
@@ -60,7 +60,7 @@ export function SidebarSearchPanel({
 
       {!searchQuery && (
         <p className="text-xs text-white/25 leading-relaxed">
-          Tape du texte pour chercher dans le contenu, ou <span className="text-[#9d8bff]">#tag</span> pour filtrer par étiquette.
+          Tape du texte pour chercher dans le contenu, <span className="text-[#9d8bff]">#tag</span> pour filtrer par étiquette, ou <span className="text-[#9d8bff]">@mention</span> pour retrouver une personne.
         </p>
       )}
 

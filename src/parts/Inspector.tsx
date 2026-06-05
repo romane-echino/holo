@@ -396,16 +396,32 @@ export function Inspector({ markdown, filePath, rootPath, onOpenLinkedFile }: In
     if (el) scrollHeadingWithOffset(el, 64)
   }, [])
 
+  const loadActivities = useCallback(async (targetPath: string) => {
+    try {
+      const result = await window.holo?.gitGetFileActivity(targetPath, 10)
+      setActivities(result ?? [])
+    } catch {
+      setActivities([])
+    }
+  }, [])
+
   useEffect(() => {
     if (!filePath || !gitState.isRepo) {
       setActivities([])
       return
     }
 
-    window.holo?.gitGetFileActivity(filePath, 10)
-      .then((result) => setActivities(result ?? []))
-      .catch(() => setActivities([]))
-  }, [filePath, gitState.isRepo])
+    void loadActivities(filePath)
+
+    const handleActivityRefresh = (event: Event) => {
+      const path = (event as CustomEvent<{ path?: string }>).detail?.path
+      if (!path || path !== filePath) return
+      void loadActivities(filePath)
+    }
+
+    window.addEventListener('holo:file-activity-updated', handleActivityRefresh)
+    return () => window.removeEventListener('holo:file-activity-updated', handleActivityRefresh)
+  }, [filePath, gitState.isRepo, loadActivities])
 
   useEffect(() => {
     const localImageEntries = links

@@ -96,6 +96,8 @@ function inlineNodesToPlainText(nodes: InlineNode[]): string {
         case 'emphasis':
         case 'delete':
         case 'underline':
+        case 'superscript':
+        case 'subscript':
         case 'link':
           return inlineNodesToPlainText(node.children)
         case 'break':
@@ -133,6 +135,8 @@ function stripNoteMarkerFromInlineNodes(nodes: InlineNode[]): InlineNode[] {
       node.type === 'emphasis' ||
       node.type === 'delete' ||
       node.type === 'underline' ||
+      node.type === 'superscript' ||
+      node.type === 'subscript' ||
       node.type === 'link'
     ) {
       const children = stripNoteMarkerFromInlineNodes(node.children)
@@ -155,6 +159,8 @@ function replaceFirstInlineText(nodes: InlineNode[], replacer: (value: string) =
       node.type === 'emphasis' ||
       node.type === 'delete' ||
       node.type === 'underline' ||
+      node.type === 'superscript' ||
+      node.type === 'subscript' ||
       node.type === 'link'
     ) {
       const [children, replaced] = replaceFirstInlineText(node.children, replacer)
@@ -234,6 +240,8 @@ export const FootnoteBlock = forwardRef<InlineEditorHandle, FootnoteBlockProps>(
       focus: (cursor) => editorRef.current?.focus(cursor),
       clear: () => editorRef.current?.clear(),
       clearSlash: () => editorRef.current?.clearSlash() ?? [],
+      flush: () => editorRef.current?.flush(),
+      getContent: () => editorRef.current?.getContent() ?? [],
     }), [])
 
     const handleSave = (newChildren: InlineNode[], toneKey: NoteToneKey = noteTone.key) => {

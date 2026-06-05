@@ -23,6 +23,10 @@ async function gotoEditor(page: Page, markdown?: string) {
   await page.waitForSelector('[data-testid="block-editor"]', { timeout: 10_000 })
 }
 
+async function openColumnSubmenu(page: Page, name: RegExp | string) {
+  await page.getByRole('button', { name }).click()
+}
+
 async function waitForMd(page: Page, predicate: (md: string) => boolean, timeout = 5000): Promise<string> {
   let md = ''
   await expect(async () => {
@@ -30,6 +34,12 @@ async function waitForMd(page: Page, predicate: (md: string) => boolean, timeout
     expect(predicate(md)).toBe(true)
   }).toPass({ timeout })
   return md
+}
+
+function findTableRowIndex(markdown: string, label: string, value: string) {
+  const rowPattern = new RegExp(`\\|\\s*${label}\\s*\\|\\s*${value}\\s*\\|`)
+  const match = markdown.match(rowPattern)
+  return match?.index ?? -1
 }
 
 /** Clique fin de bloc, Entrée pour créer un bloc vide, ouvre le popup slash */
@@ -244,6 +254,323 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
     )
     expect(md).toContain('Colonne 1')
     expect(md).toContain('Arrière-plan')
+  })
+
+  test('Tableau : tri de colonne réordonne les lignes complètes', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Valeur |',
+      '| --- | --- |',
+      '| Charlie | 3 |',
+      '| Alpha | 1 |',
+      '| Bravo | 2 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Nom' }).click()
+    await page.getByRole('button', { name: /Trier A-Z/ }).click()
+
+    const ascMd = await waitForMd(page, (s) => {
+      const alphaIndex = findTableRowIndex(s, 'Alpha', '1')
+      const bravoIndex = findTableRowIndex(s, 'Bravo', '2')
+      const charlieIndex = findTableRowIndex(s, 'Charlie', '3')
+      return alphaIndex !== -1 && bravoIndex !== -1 && charlieIndex !== -1
+        && alphaIndex < bravoIndex && bravoIndex < charlieIndex
+    })
+    expect(ascMd).toContain('Arrière-plan')
+
+    await page.getByRole('button', { name: 'Options colonne Nom' }).click()
+    await page.getByRole('button', { name: /Trier Z-A/ }).click()
+
+    const descMd = await waitForMd(page, (s) => {
+      const alphaIndex = findTableRowIndex(s, 'Alpha', '1')
+      const bravoIndex = findTableRowIndex(s, 'Bravo', '2')
+      const charlieIndex = findTableRowIndex(s, 'Charlie', '3')
+      return alphaIndex !== -1 && bravoIndex !== -1 && charlieIndex !== -1
+        && charlieIndex < bravoIndex && bravoIndex < alphaIndex
+    })
+    expect(descMd).toContain('Arrière-plan')
+  })
+
+  test('Tableau : type de colonne nombre est persisté et pilote le tri numérique', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Valeur |',
+      '| --- | --- |',
+      '| Charlie | 10 |',
+      '| Alpha | 2 |',
+      '| Bravo | 3 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Valeur' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Nombre' }).click()
+
+    const metadataMd = await waitForMd(page, (s) => s.includes('<!-- holo:table {"columnTypes":["text","number"]} -->'))
+    expect(metadataMd).toContain('Arrière-plan')
+
+    await page.getByRole('button', { name: 'Options colonne Valeur' }).click()
+    await page.getByRole('button', { name: /Trier A-Z/ }).click()
+
+    const ascMd = await waitForMd(page, (s) => {
+      const twoIndex = findTableRowIndex(s, 'Alpha', '2')
+      const threeIndex = findTableRowIndex(s, 'Bravo', '3')
+      const tenIndex = findTableRowIndex(s, 'Charlie', '10')
+      return twoIndex !== -1 && threeIndex !== -1 && tenIndex !== -1
+        && twoIndex < threeIndex && threeIndex < tenIndex
+    })
+    expect(ascMd).toContain('<!-- holo:table {"columnTypes":["text","number"]} -->')
+  })
+
+  test('Tableau : type checkbox rend les cellules interactives et trie unchecked avant checked', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Tache | Fait |',
+      '| --- | --- |',
+      '| Alpha |  |',
+      '| Bravo | x |',
+      '| Charlie |  |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Fait' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Checkbox' }).click()
+
+    await expect(page.locator('tbody input[type="checkbox"]')).toHaveCount(3)
+    await expect(page.locator('tbody input[type="checkbox"]').nth(1)).toBeChecked()
+
+    await page.locator('tbody input[type="checkbox"]').first().click()
+
+    const toggledMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnTypes":["text","checkbox"]} -->')
+      && findTableRowIndex(s, 'Alpha', 'x') !== -1,
+    )
+    expect(toggledMd).toContain('Arrière-plan')
+
+    await page.locator('tbody input[type="checkbox"]').first().click()
+
+    const untoggledMd = await waitForMd(page, (s) => {
+      const alphaUnchecked = /\|\s*Alpha\s*\|\s*\|/.test(s)
+      return s.includes('<!-- holo:table {"columnTypes":["text","checkbox"]} -->') && alphaUnchecked
+    })
+    expect(untoggledMd).toContain('Arrière-plan')
+
+    await page.getByRole('button', { name: 'Options colonne Fait' }).click()
+    await page.getByRole('button', { name: /Trier A-Z/ }).click()
+
+    const ascMd = await waitForMd(page, (s) => {
+      const alphaIndex = findTableRowIndex(s, 'Alpha', '')
+      const charlieIndex = findTableRowIndex(s, 'Charlie', '')
+      const bravoIndex = findTableRowIndex(s, 'Bravo', 'x')
+      return alphaIndex !== -1 && charlieIndex !== -1 && bravoIndex !== -1
+        && alphaIndex < bravoIndex && charlieIndex < bravoIndex
+    })
+    expect(ascMd).toContain('<!-- holo:table {"columnTypes":["text","checkbox"]} -->')
+  })
+
+  test('Tableau : couleur de colonne est rendue et persistée invisiblement', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Statut |',
+      '| --- | --- |',
+      '| Alpha | En cours |',
+      '| Bravo | Fait |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Statut' }).click()
+    await openColumnSubmenu(page, /^Couleur /)
+    await page.getByRole('button', { name: 'Ambre' }).click()
+
+    const coloredMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnColors":[null,"amber"]} -->')
+      && s.includes('Arrière-plan'),
+    )
+    expect(coloredMd).toMatch(/\|\s*Bravo\s*\|\s*Fait\s*\|/)
+
+    await expect(page.locator('th[data-column-color="amber"]').filter({ has: page.locator('input[value="Statut"]') })).toHaveCount(1)
+    await expect(page.locator('tbody td[data-column-color="amber"]')).toHaveCount(2)
+  })
+
+  test('Tableau : colonne checkbox supporte Space et Tab au clavier', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Fait |',
+      '| --- |',
+      '|  |',
+      '| x |',
+      '|  |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Fait' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Checkbox' }).click()
+
+    const checkboxes = page.locator('tbody input[type="checkbox"]')
+    await checkboxes.first().focus()
+    await expect(checkboxes.first()).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(checkboxes.nth(1)).toBeFocused()
+
+    await checkboxes.first().focus()
+    await expect(checkboxes.first()).toBeFocused()
+    await page.keyboard.press('Space')
+
+    const firstToggleMd = await waitForMd(page, (s) => {
+      const checkedRows = (s.match(/^\|\s*x\s*\|$/gm) ?? []).length
+      return s.includes('<!-- holo:table {"columnTypes":["checkbox"]} -->')
+        && checkedRows >= 2
+    })
+    expect(firstToggleMd).toContain('Arrière-plan')
+
+    await checkboxes.nth(1).focus()
+    await expect(checkboxes.nth(1)).toBeFocused()
+    await page.keyboard.press('Space')
+
+    const keyboardMd = await waitForMd(page, (s) => {
+      const checkedRows = (s.match(/^\|\s*x\s*\|$/gm) ?? []).length
+      return s.includes('<!-- holo:table {"columnTypes":["checkbox"]} -->')
+        && checkedRows === 1
+    })
+    expect(keyboardMd).toContain('Arrière-plan')
+  })
+
+  test('Tableau : aggregation moyenne est persistée et calcule un footer numérique', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Valeur |',
+      '| --- | --- |',
+      '| Alpha | 10 |',
+      '| Bravo | 20 |',
+      '| Charlie | 30 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Valeur' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Nombre' }).click()
+
+    await page.getByRole('button', { name: 'Options colonne Valeur' }).click()
+    await openColumnSubmenu(page, /^Résumé/)
+    await page.getByRole('button', { name: 'Moyenne' }).click()
+
+    const aggregatedMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnTypes":["text","number"],"columnAggregations":["none","avg"]} -->')
+      && s.includes('Arrière-plan'),
+    )
+    expect(aggregatedMd).toMatch(/\|\s*Charlie\s*\|\s*30\s*\|/)
+
+    await expect(page.locator('[data-summary-aggregation="avg"]').last()).toHaveText('Moyenne : 20')
+  })
+
+  test('Tableau : cliquer dans une cellule texte sélectionne tout son contenu', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Valeur |',
+      '| --- | --- |',
+      '| Alpha | 10 |',
+      '| Bravo | 20 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    const firstTextCell = page.locator('tbody [data-block-type="table-cell"][contenteditable="true"]').first()
+    await firstTextCell.click()
+    await page.keyboard.type('Zulu')
+
+    const replacedMd = await waitForMd(page, (s) =>
+      findTableRowIndex(s, 'Zulu', '10') !== -1 && findTableRowIndex(s, 'AlphaZulu', '10') === -1,
+    )
+    expect(replacedMd).toContain('Arrière-plan')
+  })
+
+  test('Tableau : type date est persisté, assiste la saisie et pilote le tri chronologique', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Nom | Echeance |',
+      '| --- | --- |',
+      '| Bravo | 12/03/2026 |',
+      '| Alpha | 01/02/2026 |',
+      '| Charlie | 05/01/2027 |',
+      '| Delta |  |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Echeance' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Date' }).click()
+
+    const metadataMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnTypes":["text","date"]} -->'),
+    )
+    expect(metadataMd).toContain('Arrière-plan')
+
+    await expect(page.locator('tbody input[type="date"]')).toHaveCount(4)
+    await expect(page.locator('[data-date-placeholder="jj/mm/aaaa"]')).toHaveCount(1)
+    await page.locator('tbody input[type="date"]').nth(1).fill('2026-04-22')
+
+    const assistedMd = await waitForMd(page, (s) =>
+      findTableRowIndex(s, 'Alpha', '22/04/2026') !== -1,
+    )
+    expect(assistedMd).toContain('<!-- holo:table {"columnTypes":["text","date"]} -->')
+
+    await page.getByRole('button', { name: 'Options colonne Echeance' }).click()
+    await openColumnSubmenu(page, /^Résumé/)
+    await page.getByRole('button', { name: 'Max' }).click()
+    await expect(page.locator('[data-summary-aggregation="max"]').last()).toHaveText('Max : 05/01/2027')
+
+    await page.getByRole('button', { name: 'Options colonne Echeance' }).click()
+    await openColumnSubmenu(page, /^Résumé/)
+    await page.getByRole('button', { name: 'Min' }).click()
+    await expect(page.locator('[data-summary-aggregation="min"]').last()).toHaveText('Min : 12/03/2026')
+
+    await page.getByRole('button', { name: 'Options colonne Echeance' }).click()
+    await page.getByRole('button', { name: /Trier A-Z/ }).click()
+
+    const ascMd = await waitForMd(page, (s) => {
+      const alphaIndex = findTableRowIndex(s, 'Alpha', '22/04/2026')
+      const bravoIndex = findTableRowIndex(s, 'Bravo', '12/03/2026')
+      const charlieIndex = findTableRowIndex(s, 'Charlie', '05/01/2027')
+      return alphaIndex !== -1 && bravoIndex !== -1 && charlieIndex !== -1
+        && bravoIndex < alphaIndex && alphaIndex < charlieIndex
+    })
+    expect(ascMd).toContain('<!-- holo:table {"columnTypes":["text","date"],"columnAggregations":["none","min"]} -->')
+  })
+
+  test('Tableau : type monetaire normalise les valeurs et supporte aggregation max', async ({ page }) => {
+    await gotoEditor(page, [
+      '| Poste | Montant |',
+      '| --- | --- |',
+      '| A | 0 |',
+      '| B | 5.5 |',
+      '| C | 1250 |',
+      '',
+      'Arrière-plan',
+    ].join('\n'))
+
+    await page.getByRole('button', { name: 'Options colonne Montant' }).click()
+    await openColumnSubmenu(page, /^Type /)
+    await page.getByRole('button', { name: 'Monetaire' }).click()
+
+    const currencyMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnTypes":["text","currency"]} -->')
+      && /\|\s*A\s*\|\s*0\.\-\s*\|/.test(s)
+      && /\|\s*B\s*\|\s*5\.50\s*\|/.test(s)
+      && /\|\s*C\s*\|\s*1'250\.\-\s*\|/.test(s),
+    )
+    expect(currencyMd).toContain('Arrière-plan')
+
+    await page.getByRole('button', { name: 'Options colonne Montant' }).click()
+    await openColumnSubmenu(page, /^Résumé/)
+    await page.getByRole('button', { name: 'Max' }).click()
+
+    const aggregatedMd = await waitForMd(page, (s) =>
+      s.includes('<!-- holo:table {"columnTypes":["text","currency"],"columnAggregations":["none","max"]} -->'),
+    )
+    expect(aggregatedMd).toContain("1'250.-")
+    await expect(page.locator('[data-summary-aggregation="max"]').last()).toHaveText("Max : 1'250.-")
   })
 
   test('Paragraphe : conversion depuis un autre type, intégrité', async ({ page }) => {

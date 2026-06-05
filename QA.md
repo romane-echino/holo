@@ -170,27 +170,28 @@ Sur windows, lors de la sauvegarde dans l'editeur, une erreur pop index-wojeKxRt
 - ✅ Si j'ouvre un fichier (via un lien par exemple) -> ouvrir l'arboresence et développer les dossiers pour le voir dans l'arbo
 
 # Phase 13
-- CTRL+A Dans un bloc de code (editeur) dois sélectionné tout le texte (exception a la sélection de tout les blocs)
-- Si un tableau a plus que 3 colonnes les colonnes doivent s'adapté au contenu
-- Quand je sauvegarde doit rafraichir les activité si repo git
-- Quand j'ouvre un fichier d'un autre espace j'ai cette erreur qui vient
+- ✅ CTRL+A Dans un bloc de code (editeur) dois sélectionné tout le texte (exception a la sélection de tout les blocs)
+- ✅ Si un tableau a plus que 3 colonnes les colonnes doivent s'adapté au contenu
+- ✅ Quand je sauvegarde doit rafraichir les activité si repo git
+- ✅ Quand j'ouvre un fichier d'un autre espace j'ai cette erreur qui vient
 <span class="text-xs text-holo-danger" title="fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros test.md' est hors du dépôt à '/home/romane/Bureau/Dev/documentation'">Erreur : fatal: ../../../Notes3/Gros test.md : '../../../Notes3/Gros </span>
-- Dans le popup création d'un fichier a partir d'un modèle changer l'ux 
+- ✅ Dans le popup création d'un fichier a partir d'un modèle changer l'ux 
     - D'abord on sélectionn un modèle (on voit rien d'autre)
     - Après le titre
     - Après les variables
-- Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
-- Dans la frame onboarding les données Nom, prénom, email ne se sauvegarder pas, du coup la frame aparait a chaque lancement
+- ✅ Est-ce que c'est une bonne idée dans le fichier d'indexation d'ajouter des keywords ? Exemple les "Titre 1", les textes en gras?
+- ✅ Dans la frame onboarding les données Nom, prénom, email ne se sauvegarder pas, du coup la frame aparait a chaque lancement
+- ✅ Dans le bloc de code marqué qqpart CTRL+ENTER pour valider
 
 # Phase 13.1
 Solidification de l'historique UNDO/REDO
-- Vraiment faire un système solide pour détecter les changement du markdown et pouvoir annuler / refaire une 20aine d'actions 
+- ✅ Vraiment faire un système solide pour détecter les changement du markdown et pouvoir annuler / refaire une 20aine d'actions 
 
 
 # Phase 14
 Amélioration des tables
-- Pouvoir Trier la colonne A-z Z-a (Et ça adapte les donnée des autre colonnes)
-- Ajouter des metadonnée YAML invisible au rendu pour stocker des personnalisation de la table
+- ✅Pouvoir Trier la colonne A-z Z-a (Et ça adapte les donnée des autre colonnes)
+- ✅ Ajouter des metadonnée YAML invisible au rendu pour stocker des personnalisation de la table
     - Type de colonnes
         - Texte (par défaut)
         - Nombre

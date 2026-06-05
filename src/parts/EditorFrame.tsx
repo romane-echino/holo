@@ -463,6 +463,10 @@ export function EditorFrame({
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState('')
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const documentHistoryRef = useRef<{ stack: string[]; pos: number }>({ stack: [markdown], pos: 0 })
+  const documentHistoryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastPublishedFilepathRef = useRef(filepath)
+  const lastPublishedMarkdownRef = useRef(markdown)
   const [shareCopied, setShareCopied] = useState(false)
 
   const handleShareClick = useCallback(() => {
@@ -523,7 +527,69 @@ export function EditorFrame({
   const bodyRef = useRef(body)
   bodyRef.current = body
 
+  const buildDocumentMarkdown = useCallback((nextFm: FrontmatterData, nextBody: string) => {
+    return serializeFrontmatter(nextFm) + nextBody
+  }, [])
+
+  const emitMarkdownChange = useCallback((nextMarkdown: string) => {
+    lastPublishedFilepathRef.current = filepath
+    lastPublishedMarkdownRef.current = nextMarkdown
+    onMarkdownChange?.(nextMarkdown)
+  }, [filepath, onMarkdownChange])
+
+  const getCurrentDocumentSnapshot = useCallback(() => {
+    return rawMode ? rawValue : buildDocumentMarkdown(fmRef.current, bodyRef.current)
+  }, [buildDocumentMarkdown, rawMode, rawValue])
+
+  const pushDocumentHistorySnapshot = useCallback((snapshot: string) => {
+    const history = documentHistoryRef.current
+    if (history.stack[history.pos] === snapshot) return
+    history.stack = history.stack.slice(0, history.pos + 1)
+    history.stack.push(snapshot)
+    history.pos = history.stack.length - 1
+    if (history.stack.length > 100) {
+      history.stack.shift()
+      history.pos -= 1
+    }
+  }, [])
+
+  const scheduleDocumentHistorySnapshot = useCallback((snapshot: string) => {
+    if (documentHistoryTimerRef.current) clearTimeout(documentHistoryTimerRef.current)
+    documentHistoryTimerRef.current = setTimeout(() => {
+      pushDocumentHistorySnapshot(snapshot)
+      documentHistoryTimerRef.current = null
+    }, 250)
+  }, [pushDocumentHistorySnapshot])
+
+  const applyDocumentSnapshot = useCallback((snapshot: string) => {
+    const { fm: nextFm, body: nextBody } = parseFrontmatter(snapshot)
+    fmRef.current = nextFm
+    bodyRef.current = nextBody
+    setFm(nextFm)
+    setBody(nextBody)
+    setRawValue(snapshot)
+    emitMarkdownChange(snapshot)
+  }, [emitMarkdownChange])
+
   const displayTitle = (fm.title as string | undefined) || filename.replace(/\.[^/.]+$/, '')
+
+  useEffect(() => {
+    const initialSnapshot = markdown.trim() === '' ? buildDocumentMarkdown(fmRef.current, bodyRef.current) : markdown
+    if (filepath === lastPublishedFilepathRef.current && initialSnapshot === lastPublishedMarkdownRef.current) {
+      return
+    }
+    lastPublishedFilepathRef.current = filepath
+    lastPublishedMarkdownRef.current = initialSnapshot
+    documentHistoryRef.current = { stack: [initialSnapshot], pos: 0 }
+    if (documentHistoryTimerRef.current) {
+      clearTimeout(documentHistoryTimerRef.current)
+      documentHistoryTimerRef.current = null
+    }
+  }, [buildDocumentMarkdown, filepath, markdown])
+
+  useEffect(() => () => {
+    if (documentHistoryTimerRef.current) clearTimeout(documentHistoryTimerRef.current)
+  }, [])
 
   const handleFmChange = useCallback((updates: Partial<FrontmatterData>) => {
     const next: FrontmatterData = {}
@@ -531,16 +597,33 @@ export function EditorFrame({
       if (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== '') next[k] = v
     }
     setFm(next)
-    onMarkdownChange?.(serializeFrontmatter(next) + bodyRef.current)
-  }, [onMarkdownChange])
+    fmRef.current = next
+    const nextMarkdown = buildDocumentMarkdown(next, bodyRef.current)
+    scheduleDocumentHistorySnapshot(nextMarkdown)
+    emitMarkdownChange(nextMarkdown)
+  }, [buildDocumentMarkdown, emitMarkdownChange, scheduleDocumentHistorySnapshot])
 
   const handleBodyChange = useCallback((newBody: string) => {
     const updatedFm = { ...fmRef.current, updated: nowDateStr() }
     fmRef.current = updatedFm
     setFm(updatedFm)
     setBody(newBody)
-    onMarkdownChange?.(serializeFrontmatter(updatedFm) + newBody)
-  }, [onMarkdownChange])
+    bodyRef.current = newBody
+    emitMarkdownChange(serializeFrontmatter(updatedFm) + newBody)
+  }, [emitMarkdownChange])
+
+  useEffect(() => {
+    const handleFlushEditor = () => {
+      if (rawMode) {
+        emitMarkdownChange(rawValue)
+        return
+      }
+      blockEditorRef.current?.flushPendingChanges()
+    }
+
+    window.addEventListener('holo:flush-editor', handleFlushEditor)
+    return () => window.removeEventListener('holo:flush-editor', handleFlushEditor)
+  }, [emitMarkdownChange, rawMode, rawValue])
 
   const enterRawMode = useCallback(() => {
     setRawValue(serializeFrontmatter(fmRef.current) + bodyRef.current)
@@ -550,23 +633,62 @@ export function EditorFrame({
 
   const exitRawMode = useCallback(() => {
     const { fm: newFm, body: newBody } = parseFrontmatter(rawValue)
+    fmRef.current = newFm
+    bodyRef.current = newBody
     setFm(newFm)
     setBody(newBody)
     setRawMode(false)
     setMenuAnchorEl(null)
+    pushDocumentHistorySnapshot(rawValue)
     // Notifie le parent pour rester en sync (évite désynchronisation si BlockEditor émet une version dégradée)
-    onMarkdownChange?.(rawValue)
-  }, [rawValue, onMarkdownChange])
+    emitMarkdownChange(rawValue)
+  }, [emitMarkdownChange, pushDocumentHistorySnapshot, rawValue])
 
   const handleRawChange = useCallback((value: string) => {
     setRawValue(value)
-    onMarkdownChange?.(value)
-  }, [onMarkdownChange])
+    scheduleDocumentHistorySnapshot(value)
+    emitMarkdownChange(value)
+  }, [emitMarkdownChange, scheduleDocumentHistorySnapshot])
+
+  const handleDocumentHistoryKeyDownCapture = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement | null
+    if (!target) return
+    const tagName = target.tagName
+    if (tagName !== 'INPUT' && tagName !== 'TEXTAREA') return
+
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+      event.preventDefault()
+      if (documentHistoryTimerRef.current) {
+        clearTimeout(documentHistoryTimerRef.current)
+        documentHistoryTimerRef.current = null
+      }
+      const history = documentHistoryRef.current
+      pushDocumentHistorySnapshot(getCurrentDocumentSnapshot())
+      if (history.pos > 0) {
+        history.pos -= 1
+        applyDocumentSnapshot(history.stack[history.pos])
+      }
+      return
+    }
+
+    if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey) || event.key === 'Z')) {
+      event.preventDefault()
+      if (documentHistoryTimerRef.current) {
+        clearTimeout(documentHistoryTimerRef.current)
+        documentHistoryTimerRef.current = null
+      }
+      const history = documentHistoryRef.current
+      if (history.pos < history.stack.length - 1) {
+        history.pos += 1
+        applyDocumentSnapshot(history.stack[history.pos])
+      }
+    }
+  }, [applyDocumentSnapshot, getCurrentDocumentSnapshot, pushDocumentHistorySnapshot])
 
   // ── Écriture initiale du frontmatter sur les nouveaux fichiers ─────────────
   useEffect(() => {
     if (markdown.trim() === '') {
-      onMarkdownChange?.(serializeFrontmatter(fmRef.current))
+      emitMarkdownChange(serializeFrontmatter(fmRef.current))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -694,6 +816,7 @@ export function EditorFrame({
       ref={sectionRef}
       className="relative min-h-full"
       data-editor
+      onKeyDownCapture={handleDocumentHistoryKeyDownCapture}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -702,7 +825,7 @@ export function EditorFrame({
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-holo-lg border-2 border-dashed border-holo-primary/60 bg-holo-primary-surface/30 backdrop-blur-sm">
           <span className="rounded-holo-lg bg-holo-bg/80 px-4 py-2 text-sm font-medium text-holo-primary-soft shadow">
-            Déposer pour insérer l'image
+            Déposer pour insérer l'image ou le GIF
           </span>
         </div>
       )}
