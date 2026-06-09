@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import WindowControls from "./WindowControls";
-import { ALargeSmall, Settings, Bug, Monitor, RefreshCw, Lock } from 'lucide-react'
+import { ALargeSmall, Settings, Bug, Monitor, RefreshCw, Lock, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useAppUpdates } from '../hooks'
 import { cn } from '../utils/global'
@@ -34,10 +34,14 @@ export function Header({
   editorFontSize = 100,
   onEditorFontSizeChange,
   onOpenSettings,
+  isDesktopMainSidebarCollapsed = false,
+  onToggleDesktopMainSidebar,
 }: {
   editorFontSize?: number
   onEditorFontSizeChange?: (v: number) => void
   onOpenSettings?: () => void
+  isDesktopMainSidebarCollapsed?: boolean
+  onToggleDesktopMainSidebar?: () => void
 }) {
   const { rootPath } = useWorkspace()
   const { appVersion } = useAppUpdates()
@@ -87,6 +91,15 @@ export function Header({
       <div className="holo-no-drag flex items-center gap-1 text-sm text-holo-text-faint sm:gap-2">
         {/* Statut du workspace : local / git-readonly / git-sync */}
         {status && <WorkspaceStatusIcon status={status} />}
+
+        <button
+          className="hidden rounded-holo-md px-2 py-1.5 hover:bg-holo-glass-hover hover:text-holo-text-muted lg:inline-flex sm:px-3"
+          onClick={onToggleDesktopMainSidebar}
+          title={isDesktopMainSidebarCollapsed ? 'Afficher le menu principal' : 'Masquer le menu principal'}
+          aria-label={isDesktopMainSidebarCollapsed ? 'Afficher le menu principal' : 'Masquer le menu principal'}
+        >
+          {isDesktopMainSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
 
         <div className="relative" ref={fontSizeRef}>
           <button

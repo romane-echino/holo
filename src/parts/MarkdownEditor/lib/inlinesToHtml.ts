@@ -55,6 +55,10 @@ function inlineToHtml(node: InlineNode): string {
     case 'footnoteReference': {
       const identifier = escapeHtml(node.identifier)
       const label = escapeHtml(node.label ?? node.identifier)
+      if (node.anchorText) {
+        const anchor = escapeHtml(node.anchorText)
+        return `<span data-footnote-anchor="${identifier}" data-footnote-label="${label}" contenteditable="false" class="holo-footnote-anchor">${anchor}<sup class="holo-footnote-badge">[${identifier}]</sup></span>`
+      }
       return `<sup data-footnote-ref="${identifier}" data-footnote-label="${label}" contenteditable="false">[${identifier}]</sup>`
     }
 

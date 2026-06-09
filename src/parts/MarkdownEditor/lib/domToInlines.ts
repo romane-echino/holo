@@ -26,6 +26,19 @@ function nodeToInlines(node: Node): InlineNode[] {
   const children = Array.from(el.childNodes).flatMap(nodeToInlines)
 
   switch (tag) {
+    case 'span':
+      if (el.hasAttribute('data-footnote-anchor')) {
+        const identifier = el.getAttribute('data-footnote-anchor') ?? ''
+        const label = el.getAttribute('data-footnote-label') ?? identifier
+        // Find the text content (excluding the badge sup)
+        const anchorText = Array.from(el.childNodes)
+          .filter((child) => child.nodeType === Node.TEXT_NODE || (child.nodeType === Node.ELEMENT_NODE && !(child as Element).classList.contains('holo-footnote-badge')))
+          .map((child) => child.textContent ?? '')
+          .join('')
+        return [{ type: 'footnoteReference', identifier, label, anchorText }]
+      }
+      return children
+
     case 'sup':
       if (el.hasAttribute('data-footnote-ref')) {
         return [{ type: 'footnoteReference', identifier: el.getAttribute('data-footnote-ref') ?? '', label: el.getAttribute('data-footnote-label') }]

@@ -8,7 +8,7 @@ import { useWorkspace } from './contexts/WorkspaceContext'
 import { useConfig } from './contexts/ConfigContext'
 import { getBaseName, buildShareableHoloLink, flatTreeFiles } from './lib/appUtils'
 import { remapTrackedPath } from './lib/markdownLinks'
-import { updateMarkdownBooleanHeaderField } from './lib/markdown'
+import { updateMarkdownBooleanHeaderField, updateMarkdownHeaderField } from './lib/markdown'
 import { useSearchIndex, useStartupNavigation, useWorkspaceFolders } from './hooks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
@@ -144,6 +144,7 @@ export default function App2() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [settingsValue, setSettingsValue] = useState<HoloSettingsValue | undefined>(undefined)
   const [settingsSaved, setSettingsSaved] = useState(false)
+  const [isDesktopMainSidebarCollapsed, setIsDesktopMainSidebarCollapsed] = useState(false)
 
   useEffect(() => {
     if (!window.holo) { setOnboardingDone(true); return }
@@ -167,6 +168,7 @@ export default function App2() {
         // Favoris fichiers
         const savedFileFavs = cfg['file-favorites']
         if (Array.isArray(savedFileFavs)) setFavoriteFilePaths(savedFileFavs as string[])
+        setIsDesktopMainSidebarCollapsed(cfg['desktop-main-sidebar-collapsed'] === true)
         // Fichiers récents — purger les chemins qui n'existent plus (archivés, supprimés)
         const savedRecents = cfg['recent-file-paths']
         if (Array.isArray(savedRecents)) {
@@ -315,13 +317,12 @@ export default function App2() {
       // Commit .holo.json via git auto-save
       const holoJsonPath = `${spacePath}/.holo.json`
       window.holo?.gitAutoSave(holoJsonPath, appAuthor || undefined, gitEmail || undefined).catch(() => {})
-      // Identifiants → app config local (non commité), indexés par spacePath
+      // Identifiants → app config local (non commité), indexés par spacePath.
+      // Écriture via la clé atomique `space-credentials` pour ne pas clobberer
+      // les autres clés (recent-file-paths, favoris…) lors d'écritures concurrentes.
       const appCfg = await window.holo?.getHoloConfig().catch(() => ({})) ?? {}
       const allCreds = (appCfg as any)['space-credentials'] ?? {}
-      await window.holo?.setHoloConfig({
-        ...(appCfg as any),
-        'space-credentials': { ...allCreds, [spacePath]: credentials },
-      })
+      await window.holo?.setHoloConfigValue('space-credentials', { ...allCreds, [spacePath]: credentials })
       // Si c'est l'espace actif, mettre à jour le ConfigContext
       if (spacePath === rootPath) {
         setAzureBlobContainerUrl(credentials.azureContainerUrl ?? '')
@@ -357,9 +358,28 @@ export default function App2() {
         ])
         if (cancelled) return
         const mode = (spaceCfg as any)?.imageStorageMode ?? 'local'
-        if (mode === 'local') return
         const allCreds = ((appCfg as any)?.['space-credentials'] ?? {}) as Record<string, Record<string, string>>
         const creds = allCreds[rootPath] ?? {}
+
+        // Hydrate le ConfigContext avec le mode + identifiants de l'espace ouvert.
+        // Sans ça, repoImageStorageMode resterait à 'local' et les images
+        // seraient sauvegardées localement même quand un stockage déporté est
+        // configuré pour ce dépôt.
+        setRepoImageStorageMode(mode as any)
+        setAzureBlobContainerUrl(creds.azureContainerUrl ?? '')
+        setAzureBlobSasToken(creds.azureSasToken ?? '')
+        setS3Region(creds.s3Region ?? '')
+        setS3Bucket(creds.s3Bucket ?? '')
+        setS3AccessKeyId(creds.s3AccessKeyId ?? '')
+        setS3SecretAccessKey(creds.s3SecretAccessKey ?? '')
+        setS3Endpoint(creds.s3Endpoint ?? '')
+        setS3PublicBaseUrl(creds.s3PublicBaseUrl ?? '')
+        setDropboxAccessToken(creds.dropboxAccessToken ?? '')
+        setDropboxFolderPath(creds.dropboxFolderPath ?? '')
+        setGdriveAccessToken(creds.gdriveAccessToken ?? '')
+        setGdriveFolderId(creds.gdriveFolderId ?? '')
+
+        if (mode === 'local') return
         const hasAzure = !!(creds.azureContainerUrl?.trim() && creds.azureSasToken?.trim())
         const hasS3 = !!(creds.s3Region?.trim() && creds.s3Bucket?.trim() && creds.s3AccessKeyId?.trim() && creds.s3SecretAccessKey?.trim())
         const hasDropbox = !!creds.dropboxAccessToken?.trim()
@@ -369,7 +389,7 @@ export default function App2() {
       } catch { /* ignore */ }
     })()
     return () => { cancelled = true }
-  }, [rootPath])
+  }, [rootPath, setRepoImageStorageMode, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId])
 
   // Listener pour le thème "system" (préférence OS)
   useEffect(() => {
@@ -399,6 +419,11 @@ export default function App2() {
     if (recentFilePaths.length === 0) return
     window.holo?.setHoloConfigValue('recent-file-paths', recentFilePaths)
   }, [recentFilePaths])
+
+  useEffect(() => {
+    if (!window.holo) return
+    window.holo.setHoloConfigValue('desktop-main-sidebar-collapsed', isDesktopMainSidebarCollapsed)
+  }, [isDesktopMainSidebarCollapsed])
 
   // ─── Statuts git de tous les espaces ─────────────────────────────────────
   type SpaceStatus = 'local' | 'git-sync' | 'git-readonly'
@@ -557,7 +582,18 @@ export default function App2() {
         await window.holo?.openRecentFolder(owningSpace).catch(() => null)
       }
 
-      const content = await window.holo?.readFile(node.path) ?? ''
+      const content = await window.holo?.readFile(node.path).catch(async () => {
+        // Si le fichier n'existe pas et c'est un .index.md, le créer
+        if (node.name === '.index.md' || node.path.endsWith('/.index.md')) {
+          // Pré-remplir le titre avec le nom du dossier parent
+          const folderPath = node.path.replace(/\/\.index\.md$/, '')
+          const folderName = getBaseName(folderPath)
+          const initialContent = updateMarkdownHeaderField('', 'title', folderName)
+          await window.holo?.writeFile(node.path, initialContent)
+          return initialContent
+        }
+        throw new Error(`Impossible de lire : ${node.path}`)
+      }) ?? ''
       setOpenedFile({ path: node.path, name: node.name, content })
       setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
       setRecentFilePaths(prev => [node.path, ...prev.filter(p => p !== node.path)].slice(0, 50))
@@ -902,6 +938,14 @@ export default function App2() {
     }
   }, [])
 
+  const desktopGridColumns = hasPanel
+    ? (isDesktopMainSidebarCollapsed
+        ? 'lg:grid-cols-[320px_minmax(0,1fr)] 3xl:grid-cols-[320px_minmax(0,1fr)_320px]'
+        : 'lg:grid-cols-[320px_320px_minmax(0,1fr)] 3xl:grid-cols-[320px_320px_minmax(0,1fr)_320px]')
+    : (isDesktopMainSidebarCollapsed
+        ? 'lg:grid-cols-[minmax(0,1fr)] 3xl:grid-cols-[minmax(0,1fr)_320px]'
+        : 'lg:grid-cols-[320px_minmax(0,1fr)] 3xl:grid-cols-[320px_minmax(0,1fr)_320px]')
+
   return (
     <div className="holo-window">
       {onboardingDone === null ? null : !onboardingDone ? (
@@ -913,9 +957,7 @@ export default function App2() {
       <main className={cn(
         'grid h-full overflow-hidden text-holo-text',
         'grid-rows-[56px_minmax(0,1fr)]',
-        hasPanel
-          ? 'lg:grid-cols-[320px_320px_minmax(0,1fr)] 3xl:grid-cols-[320px_320px_minmax(0,1fr)_320px]'
-          : 'lg:grid-cols-[320px_minmax(0,1fr)] 3xl:grid-cols-[320px_minmax(0,1fr)_320px]'
+        desktopGridColumns
       )}>
 
         {/* Header — pleine largeur */}
@@ -924,13 +966,16 @@ export default function App2() {
             editorFontSize={editorFontSize}
             onEditorFontSizeChange={handleEditorFontSizeChange}
             onOpenSettings={() => setSettingsOpen(true)}
+            isDesktopMainSidebarCollapsed={isDesktopMainSidebarCollapsed}
+            onToggleDesktopMainSidebar={() => setIsDesktopMainSidebarCollapsed((previous) => !previous)}
           />
         </div>
 
         {/* Sidebar : visible sur desktop, cachée sur mobile quand un panel est ouvert */}
         <div className={cn(
           'h-full lg:border-r border-holo-border-soft overflow-y-auto holo-scrollbar',
-          hasPanel ? 'hidden lg:block' : 'block'
+          hasPanel ? 'hidden lg:block' : 'block',
+          isDesktopMainSidebarCollapsed && 'lg:hidden'
         )}>
           <Sidebar
             primaryItems={PRIMARY_ITEMS}

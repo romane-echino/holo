@@ -238,6 +238,42 @@
     cursor: text;
   }
 
+  /* ── Footnote anchor highlight ─────────────────────────────────────────── */
+  .holo-footnote-anchor {
+    position: relative;
+    display: inline;
+    cursor: pointer;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--color-holo-primary) 14%, transparent);
+    color: color-mix(in srgb, var(--color-holo-primary-soft) 90%, var(--color-holo-text));
+    padding: 0.05em 0.2em;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--color-holo-primary) 50%, transparent);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .holo-footnote-anchor:hover {
+    background: color-mix(in srgb, var(--color-holo-primary) 22%, transparent);
+    color: var(--color-holo-primary-soft);
+  }
+
+  .holo-footnote-badge {
+    display: inline-block;
+    font-size: 0.68em;
+    font-weight: 600;
+    margin-left: 1px;
+    color: color-mix(in srgb, var(--color-holo-primary-soft) 70%, transparent);
+    user-select: none;
+    vertical-align: super;
+    line-height: 1;
+  }
+
+  .holo-footnote-anchor:hover .holo-footnote-badge {
+    color: var(--color-holo-primary-soft);
+  }
+
   /* Placeholder pour les contentEditable vides (BlockEditor) — uniquement au focus */
   [data-placeholder][data-empty="true"]:focus {
     position: relative;

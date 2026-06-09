@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -29,7 +30,6 @@ import { MermaidBlock } from './blocks/MermaidBlock'
 import { BlockquoteBlock } from './blocks/BlockquoteBlock'
 import { ImageBlock } from './blocks/ImageBlock'
 import { MathBlock } from './blocks/MathBlock'
-import { FootnoteBlock } from './blocks/FootnoteBlock'
 import { SlashCommandPopup } from './SlashCommandPopup'
 import { buildBlockquoteAlertNodes, type BlockquoteAlertType } from './lib/blockquoteAlerts'
 import { domToInlines } from './lib/domToInlines'
@@ -40,9 +40,9 @@ import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
+import { useFootnotes } from '../../contexts/FootnotesContext'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
-import type { FootnoteDefinitionNode } from './blocks/FootnoteBlock'
 import type { InlineEditorHandle } from './InlineEditor'
 
 // ─── Singletons remark ──────────────────────────────────────────────────────
@@ -70,13 +70,20 @@ function remarkUnderlinePlugin(this: any) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return '<sub>' + (state as any).containerPhrasing(node, info) + '</sub>'
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      footnoteReference(node: any) {
+        const ref = `[^${node.identifier}]`
+        return node.anchorText ? `${node.anchorText}${ref}` : ref
+      },
     },
   })
 }
 
 const serializer = unified()
   .use(remarkStringify, { bullet: '-', fence: '`', strong: '*', emphasis: '_' })
-  .use(remarkGfm)
+  // tablePipeAlign:false → les colonnes ne sont plus alignées sur leur largeur,
+  // donc modifier une cellule ne réécrit que sa propre ligne (diff git minimal).
+  .use(remarkGfm, { tablePipeAlign: false })
   .use(remarkMath)
   .use(remarkUnderlinePlugin)
 
@@ -136,6 +143,32 @@ function buildTableMetadataComment(metadata: TableMetadata | undefined): string 
     payload.columnAggregations = metadata.columnAggregations
   }
   return `<!-- holo:table ${JSON.stringify(payload)} -->`
+}
+
+// Au chargement, le markdown standard `mot[^1]` est parsé en [text "mot", footnoteReference]
+// sans information d'ancre. On rattache le mot précédent à la référence pour restaurer
+// le surlignage du mot ancré (et l'aperçu du tooltip au survol).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function reattachFootnoteAnchors(node: any): void {
+  if (!node || typeof node !== 'object') return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const children: any[] | undefined = node.children
+  if (!Array.isArray(children)) return
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    if (child?.type === 'footnoteReference' && !child.anchorText) {
+      const prev = children[i - 1]
+      if (prev?.type === 'text' && typeof prev.value === 'string') {
+        const match = prev.value.match(/(\S+)$/)
+        if (match) {
+          child.anchorText = match[1]
+          prev.value = prev.value.slice(0, prev.value.length - match[1].length)
+        }
+      }
+    } else {
+      reattachFootnoteAnchors(child)
+    }
+  }
 }
 
 function markdownToBlocks(markdown: string): BlockState[] {
@@ -209,11 +242,32 @@ function markdownToBlocks(markdown: string): BlockState[] {
       node.children[0].type === 'inlineMath'
     ) {
       result.push({ id: newId(), node: { type: 'math', value: node.children[0].value, meta: null } as unknown as BlockNode })
+    } else if (node.type === 'footnoteDefinition') {
+      // Skip: footnote definitions are stored in FootnotesContext and appended on save
     } else {
       result.push({ id: newId(), node: convertHtmlUnderline(node) })
     }
   }
+  for (const block of result) reattachFootnoteAnchors(block.node)
   return ensureTrailingParagraph(result.length > 0 ? result : [freshParagraph()])
+}
+
+// Extract footnote definitions from markdown into a Map<identifier, content>
+function extractFootnoteMapFromMarkdown(markdown: string): Map<string, string> {
+  if (!markdown.trim()) return new Map()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tree = parser.parse(markdown) as any
+  const map = new Map<string, string>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const node of tree.children as any[]) {
+    if (node.type === 'footnoteDefinition' && node.identifier) {
+      // Serialize the definition content back to plain text
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const content = serializer.stringify({ type: 'root', children: node.children ?? [] } as any).trim()
+      map.set(String(node.identifier), content)
+    }
+  }
+  return map
 }
 
 // Ensure there is always a trailing empty paragraph so the user can always click below
@@ -297,7 +351,7 @@ function convertHtmlUnderline(node: any): any {
   return node
 }
 
-function blocksToMarkdown(blocks: BlockState[]): string {
+function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string>): string {
   // Développe les listes alpha en [commentaire HTML + liste standard]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const expanded: any[] = []
@@ -325,11 +379,21 @@ function blocksToMarkdown(blocks: BlockState[]): string {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as string
 
-  return markdown.replace(/^> \\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/gim, '> [!$1]')
+  let result = markdown.replace(/^> \\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/gim, '> [!$1]')
+
+  // Append footnote definitions at the end (standard Markdown format)
+  if (footnoteMap && footnoteMap.size > 0) {
+    const defs = Array.from(footnoteMap.entries())
+      .map(([id, content]) => `[^${id}]: ${content}`)
+      .join('\n')
+    result = result.trimEnd() + '\n\n' + defs + '\n'
+  }
+
+  return result
 }
 
-function blocksToClipboardPayload(blocks: BlockState[]) {
-  const markdown = blocksToMarkdown(blocks)
+function blocksToClipboardPayload(blocks: BlockState[], footnoteMap?: Map<string, string>) {
+  const markdown = blocksToMarkdown(blocks, footnoteMap)
   return {
     html: parseMarkdownToClipboardHtml(markdown, newClipboardTableId),
     markdown,
@@ -394,44 +458,30 @@ function isEmptyBlock(node: BlockNode): boolean {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return !(firstPara.children as any[]).map((n: any) => n.value ?? '').join('').trim()
   }
-  // Note de bas de page avec contenu vide
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((node as any).type === 'footnoteDefinition') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fn = node as any
-    const firstPara = fn.children?.[0]
-    if (!firstPara || firstPara.type !== 'paragraph') return true
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return !(firstPara.children ?? []).map((n: any) => n.value ?? (n.type === 'footnoteReference' ? `[^${n.identifier ?? ''}]` : '')).join('').trim()
-  }
   return false
 }
 
-function slugifyFootnoteIdentifier(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function buildNextFootnoteIdentifier(blocks: BlockState[], selectedText = ''): string {
-  const existing = new Set(
-    blocks
-      .filter((block) => block.node?.type === 'footnoteDefinition')
-      .map((block) => String(block.node.identifier ?? '').trim())
-      .filter(Boolean),
-  )
-
-  const preferredBase = slugifyFootnoteIdentifier(selectedText)
-  const base = preferredBase || 'note'
-
-  if (!existing.has(base)) return base
-
-  let index = 1
-  while (existing.has(`${base}-${index}`)) index += 1
-  return `${base}-${index}`
+function buildNextFootnoteIdentifier(blocks: BlockState[], _selectedText = ''): string {
+  // Find all used footnote identifiers from inline footnoteReference nodes
+  const existing = new Set<string>()
+  for (const block of blocks) {
+    const collectFootnoteIds = (nodes: InlineNode[]) => {
+      for (const node of nodes) {
+        if (node.type === 'footnoteReference') {
+          existing.add(String(node.identifier).trim())
+        } else if ('children' in node && Array.isArray(node.children)) {
+          collectFootnoteIds(node.children)
+        }
+      }
+    }
+    if (block.node.type === 'paragraph' || block.node.type === 'heading' || block.node.type === 'blockquote') {
+      collectFootnoteIds((block.node as {children?: InlineNode[]}).children ?? [])
+    }
+  }
+  
+  let n = 1
+  while (existing.has(String(n))) n += 1
+  return String(n)
 }
 
 // ─── BlockEditor ─────────────────────────────────────────────────────────────
@@ -450,11 +500,18 @@ export interface BlockEditorProps {
 }
 
 export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale, onOpenLinkedFile }: BlockEditorProps, ref) {
+  const { footnotes, setFootnote, removeFootnote: removeFootnoteCtx, initFootnotes } = useFootnotes()
+
+  // Keep a ref so closures (history snapshots etc.) always see current footnotes
+  const footnotesRef = useRef(footnotes)
+  footnotesRef.current = footnotes
+
   const [blocks, setBlocks] = useState<BlockState[]>(() => markdownToBlocks(markdown))
   const [slashCommand, setSlashCommand] = useState<{ blockId: string } | null>(null)
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set())
   const [isLinkActivationModifierPressed, setIsLinkActivationModifierPressed] = useState(false)
   const [hoveredLinkTooltip, setHoveredLinkTooltip] = useState<{ href: string; x: number; y: number } | null>(null)
+  const [hoveredFootnote, setHoveredFootnote] = useState<{ identifier: string; rect: DOMRect } | null>(null)
   const dragAnchorRef = useRef<string | null>(null)
   const { rootPath } = useWorkspace()
   const currentFilePath = useEditorFilePath()
@@ -523,7 +580,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       blocksDirtyRef.current = true
 
       if (!isHistoryMovingRef.current) {
-        const snapshot = blocksToMarkdown(next)
+        const snapshot = blocksToMarkdown(next, footnotesRef.current)
         if (historyMode === 'immediate') pushHistorySnapshot(snapshot)
         else scheduleHistorySnapshot(snapshot)
       }
@@ -575,11 +632,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
       setBlocks(markdownToBlocks(markdown))
+      initFootnotes(extractFootnoteMapFromMarkdown(markdown))
       // Réinitialise l'historique quand le document change de l'extérieur
       historyRef.current = { stack: [markdown], pos: 0 }
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
     }
-  }, [markdown])
+  }, [markdown, initFootnotes])
 
   useEffect(() => {
     const handleModifierChange = (event: KeyboardEvent | MouseEvent) => {
@@ -605,7 +663,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   useEffect(() => {
     if (!blocksDirtyRef.current) return
     blocksDirtyRef.current = false
-    const md = blocksToMarkdown(blocks)
+    const md = blocksToMarkdown(blocks, footnotes)
     lastEmittedRef.current = md
     onChangeRef.current(md)
 
@@ -613,6 +671,19 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       isHistoryMovingRef.current = false
     }
   }, [blocks])
+
+  // Ré-émet le markdown quand le contenu d'une note change (édition via tooltip)
+  const footnotesEmitMountRef = useRef(false)
+  useEffect(() => {
+    if (!footnotesEmitMountRef.current) {
+      footnotesEmitMountRef.current = true
+      return
+    }
+    const md = blocksToMarkdown(blocksRef.current, footnotes)
+    if (md === lastEmittedRef.current) return
+    lastEmittedRef.current = md
+    onChangeRef.current(md)
+  }, [footnotes])
 
   const handleBlockChange = useCallback(
     (id: string, node: BlockNode) => {
@@ -918,9 +989,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             type: 'blockquote',
             children: [{ type: 'paragraph', children: buildBlockquoteAlertNodes(alertType, kids) }],
           } as unknown as BlockNode
-        } else if (targetType === 'footnote') {
-          const id = 'note-' + Math.random().toString(36).slice(2, 6)
-          newNode = { type: 'footnoteDefinition', identifier: id, label: id, children: [{ type: 'paragraph', children: kids }] } as unknown as BlockNode
         } else if (targetType === 'separator') {
           newNode = { type: 'thematicBreak' } as unknown as BlockNode
         } else {
@@ -928,8 +996,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         }
 
         let updated = prev.map((b) => b.id === id ? { ...b, node: newNode } : b)
-        // Si tableau/liste/math/blockquote/separator/heading/footnote est inséré en dernière position, ajouter un paragraphe vide
-        if ((targetType === 'table' || targetType === 'code' || targetType === 'mermaid' || targetType === 'details' || targetType === 'youtube' || targetType === 'html' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType.startsWith('blockquote-alert:') || targetType === 'separator' || targetType.startsWith('heading-') || targetType === 'footnote') && idx === prev.length - 1) {
+        // Si tableau/liste/math/blockquote/separator/heading est inséré en dernière position, ajouter un paragraphe vide
+        if ((targetType === 'table' || targetType === 'code' || targetType === 'mermaid' || targetType === 'details' || targetType === 'youtube' || targetType === 'html' || targetType === 'list-bullet' || targetType === 'list-ordered' || targetType === 'list-alpha' || targetType === 'checklist' || targetType === 'math' || targetType.startsWith('math-value:') || targetType === 'blockquote' || targetType.startsWith('blockquote-alert:') || targetType === 'separator' || targetType.startsWith('heading-')) && idx === prev.length - 1) {
           updated = [...updated, freshParagraph()]
         }
         return updated
@@ -970,32 +1038,20 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     [slashCommand, handleConvert],
   )
 
-  const handleCreateFootnoteFromSelection = useCallback((blockId: string, selectedText: string) => {
+  // Seed footnotes from initial markdown on first mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { initFootnotes(extractFootnoteMapFromMarkdown(markdown)) }, [])
+
+  const handleCreateFootnoteFromSelection = useCallback((_blockId: string, selectedText: string) => {
     const identifier = buildNextFootnoteIdentifier(blocksRef.current, selectedText)
-    let footnoteBlockId = ''
-
-    applyBlocksMutation((prev) => {
-      const index = prev.findIndex((block) => block.id === blockId)
-      if (index === -1) return prev
-
-      footnoteBlockId = crypto.randomUUID()
-      const footnoteBlock: BlockState = {
-        id: footnoteBlockId,
-        node: {
-          type: 'footnoteDefinition',
-          identifier,
-          label: identifier,
-          children: [{ type: 'paragraph', children: [] }],
-        } as unknown as BlockNode,
-      }
-
-      pendingFocusRef.current = footnoteBlockId
-      return [...prev.slice(0, index + 1), footnoteBlock, ...prev.slice(index + 1)]
-    }, 'immediate')
-
+    // Initialize footnote with empty content in context
+    setFootnote(identifier, '')
     return identifier
-  }, [applyBlocksMutation])
+  }, [setFootnote])
 
+  const removeFootnote = useCallback((identifier: string) => {
+    removeFootnoteCtx(identifier)
+  }, [removeFootnoteCtx])
   const containerRef = useRef<HTMLDivElement>(null)
   const lastFocusedBlockIdRef = useRef<string | null>(null)
 
@@ -1039,9 +1095,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       }, 'immediate')
     },
     flushPendingChanges() {
-      for (const handle of blockRefs.current.values()) {
-        handle.flush?.()
-      }
+      // no-op: changes are emitted via useEffect after render
     },
   }), [applyBlocksMutation])
 
@@ -1153,6 +1207,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           preview: h.stack[h.pos]?.slice(0, 120),
         })
         const nextBlocks = markdownToBlocks(h.stack[h.pos])
+        initFootnotes(extractFootnoteMapFromMarkdown(h.stack[h.pos]))
         restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
         blocksDirtyRef.current = true
@@ -1174,6 +1229,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           preview: h.stack[h.pos]?.slice(0, 120),
         })
         const nextBlocks = markdownToBlocks(h.stack[h.pos])
+        initFootnotes(extractFootnoteMapFromMarkdown(h.stack[h.pos]))
         restoreFocusAfterHistoryMove(nextBlocks)
         isHistoryMovingRef.current = true
         blocksDirtyRef.current = true
@@ -1263,7 +1319,44 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     return `${currentFilePath.replace(/\\/g, '/').startsWith('/') ? '/' : ''}${resolvedParts.join('/')}`
   }, [currentFilePath, rootPath])
 
+  const footnoteHideTimerRef = useRef<number | null>(null)
+
+  const cancelFootnoteHide = useCallback(() => {
+    if (footnoteHideTimerRef.current !== null) {
+      window.clearTimeout(footnoteHideTimerRef.current)
+      footnoteHideTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleFootnoteHide = useCallback(() => {
+    cancelFootnoteHide()
+    footnoteHideTimerRef.current = window.setTimeout(() => {
+      footnoteHideTimerRef.current = null
+      setHoveredFootnote(null)
+    }, 180)
+  }, [cancelFootnoteHide])
+
+  useEffect(() => cancelFootnoteHide, [cancelFootnoteHide])
+
   const handleContainerMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const footnoteAnchor = (e.target as HTMLElement | null)?.closest('.holo-footnote-anchor, sup[data-footnote-ref]') as HTMLElement | null
+    if (footnoteAnchor) {
+      const identifier = footnoteAnchor.getAttribute('data-footnote-anchor') ?? footnoteAnchor.getAttribute('data-footnote-ref') ?? ''
+      if (identifier) {
+        cancelFootnoteHide()
+        setHoveredFootnote({ identifier, rect: footnoteAnchor.getBoundingClientRect() })
+        setHoveredLinkTooltip(null)
+        return
+      }
+    }
+    // Le tooltip est rendu via un portail React : ses événements remontent jusqu'ici.
+    // Si on survole le tooltip lui-même, garder ouvert au lieu de programmer le masquage.
+    if ((e.target as HTMLElement | null)?.closest('[data-testid="footnote-editor-tooltip"]')) {
+      cancelFootnoteHide()
+      return
+    }
+    scheduleFootnoteHide()
+
     const anchor = (e.target as HTMLElement | null)?.closest('a[href]') as HTMLAnchorElement | null
     if (!anchor) {
       setHoveredLinkTooltip(null)
@@ -1273,11 +1366,12 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     if (!href) return
     anchor.removeAttribute('title')
     setHoveredLinkTooltip({ href, x: e.clientX, y: e.clientY })
-  }, [buildLinkTooltip])
+  }, [buildLinkTooltip, cancelFootnoteHide, scheduleFootnoteHide])
 
   const handleContainerMouseLeave = useCallback(() => {
     setHoveredLinkTooltip(null)
-  }, [])
+    scheduleFootnoteHide()
+  }, [scheduleFootnoteHide])
 
   const handleContainerMouseMoveWithTooltip = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     handleContainerMouseMove(e)
@@ -1459,6 +1553,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
             onSplit={(after) => handleSplit(block.id, after)}
             onSmartPaste={(before, after, md) => handleSmartPaste(block.id, before, after, md)}
             onCreateFootnote={(selectedText) => handleCreateFootnoteFromSelection(block.id, selectedText)}
+            onRemoveFootnote={removeFootnote}
             onTabExit={() => handleArrowDown(block.id, 0)}
           />
         </div>
@@ -1478,6 +1573,36 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
           <div className="mt-1 text-holo-text-faint">{buildLinkTooltip(hoveredLinkTooltip.href).split('\n')[1] ?? ''}</div>
         </div>
       )}
+      {hoveredFootnote && (() => {
+        const content = footnotes.get(hoveredFootnote.identifier) ?? ''
+        const { rect } = hoveredFootnote
+        const top = rect.bottom + 8 + window.scrollY
+        const left = Math.max(12, Math.min(rect.left, window.innerWidth - 320))
+
+        return createPortal(
+          <div
+            data-testid="footnote-editor-tooltip"
+            className="pointer-events-auto fixed z-[120] max-w-[300px] rounded-holo-xl border border-holo-primary/25 bg-holo-bg-elevated shadow-[0_8px_32px_rgba(0,0,0,.32)]"
+            style={{ top, left }}
+            onMouseEnter={cancelFootnoteHide}
+            onMouseLeave={scheduleFootnoteHide}
+          >
+            <div className="mb-1 flex items-center gap-2 border-b border-holo-border-soft px-3.5 pt-2.5 pb-2">
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-holo-primary/30 bg-holo-primary/10 px-1.5 text-[10px] font-semibold leading-none text-holo-primary-soft">{hoveredFootnote.identifier}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-holo-text-faint">Note</span>
+            </div>
+            <textarea
+              autoFocus
+              value={content}
+              onChange={(e) => setFootnote(hoveredFootnote.identifier, e.target.value)}
+              placeholder="Ajouter une note…"
+              className="w-full resize-none bg-transparent p-2.5 text-xs text-holo-text outline-none"
+              rows={3}
+            />
+          </div>,
+          document.body
+        )
+      })()}
     </div>
   )
 })
@@ -1505,6 +1630,7 @@ function BlockDispatcher({
   onSplit,
   onSmartPaste,
   onCreateFootnote,
+    onRemoveFootnote,
   onTabExit,
 }: {
   block: BlockState
@@ -1525,6 +1651,7 @@ function BlockDispatcher({
   onSplit: (after: InlineNode[]) => void
   onSmartPaste: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
   onCreateFootnote: (selectedText: string) => string | null
+    onRemoveFootnote?: (identifier: string) => void
   onTabExit: () => void
 }) {
   switch (block.node.type) {
@@ -1550,6 +1677,7 @@ function BlockDispatcher({
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
           onCreateFootnote={onCreateFootnote}
+          onRemoveFootnote={onRemoveFootnote}
           alwaysShowPlaceholder={isFirst}
         />
       )
@@ -1600,6 +1728,8 @@ function BlockDispatcher({
           onEnterAtEnd={onEnterAtEnd}
           onBackspaceAtStart={onBackspaceAtStart}
           onLiftItemAtStart={onLiftListItemAtStart}
+                    onRemoveFootnote={onRemoveFootnote}
+          onCreateFootnote={onCreateFootnote}
         />
       )
 
@@ -1667,20 +1797,7 @@ function BlockDispatcher({
         />
       )
 
-    case 'footnoteDefinition':
-      return (
-        <FootnoteBlock
-          ref={blockRef}
-          node={block.node as unknown as FootnoteDefinitionNode}
-          onChange={(node) => onChange(node as unknown as BlockNode)}
-          onEnterAtEnd={onEnterAtEnd}
-          onBackspaceAtStart={onBackspaceAtStart}
-          onArrowUp={onArrowUp}
-          onArrowDown={onArrowDown}
-          onSplit={onSplit}
-          onSmartPaste={onSmartPaste}
-        />
-      )
+
 
     case 'html':
       if (isDetailsHtmlNode(block.node)) {

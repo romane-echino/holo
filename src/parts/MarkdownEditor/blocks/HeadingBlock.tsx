@@ -26,11 +26,12 @@ interface HeadingBlockProps {
   onSplit?: (after: InlineNode[]) => void
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
   onCreateFootnote?: (selectedText: string) => string | null
+  onRemoveFootnote?: (identifier: string) => void
   alwaysShowPlaceholder?: boolean
 }
 
 export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
-  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, alwaysShowPlaceholder }, ref) {
+  function HeadingBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, onRemoveFootnote, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -54,6 +55,7 @@ export const HeadingBlock = forwardRef<InlineEditorHandle, HeadingBlockProps>(
         onSplit={onSplit}
         onSmartPaste={onSmartPaste}
         onCreateFootnote={onCreateFootnote}
+        onRemoveFootnote={onRemoveFootnote}
         blockType={`heading-${node.depth}`}
         placeholder="Titre…"
         alwaysShowPlaceholder={alwaysShowPlaceholder}

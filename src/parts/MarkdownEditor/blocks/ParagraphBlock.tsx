@@ -26,11 +26,12 @@ interface ParagraphBlockProps {
   onSplit?: (after: InlineNode[]) => void
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], pastedMd: string) => void
   onCreateFootnote?: (selectedText: string) => string | null
+  onRemoveFootnote?: (identifier: string) => void
   alwaysShowPlaceholder?: boolean
 }
 
 export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps>(
-  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, alwaysShowPlaceholder }, ref) {
+  function ParagraphBlock({ node, mode = 'view', onChange, onEnterAtStart, onEnterAtEnd, onBackspaceAtStart, onDeleteAtEnd, onArrowUp, onArrowDown, onConvert, onSlashCommand, onSplit, onSmartPaste, onCreateFootnote, onRemoveFootnote, alwaysShowPlaceholder }, ref) {
     const handleSave = (children: InlineNode[]) => onChange({ ...node, children })
 
     if (mode === 'export') {
@@ -57,6 +58,7 @@ export const ParagraphBlock = forwardRef<InlineEditorHandle, ParagraphBlockProps
         onSplit={onSplit}
         onSmartPaste={onSmartPaste}
         onCreateFootnote={onCreateFootnote}
+        onRemoveFootnote={onRemoveFootnote}
         blockType="paragraph"
         placeholder={alwaysShowPlaceholder ? 'Commencez à taper  —  / ou Ctrl+Espace pour les commandes' : 'Commencez à taper…'}
         alwaysShowPlaceholder={alwaysShowPlaceholder}

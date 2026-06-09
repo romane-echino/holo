@@ -467,7 +467,11 @@ test.describe('BlockEditor — intégrité du document', () => {
     await expectHistoryState(page, 'Avant A', ['Avant A B', 'Avant A B C'])
 
     await pressUndo(page)
-    const restoredInitialMd = await waitForMd(page, (snapshot) => snapshot.includes('Avant\n\n[^1]: Note stable'))
+    // Les définitions de note sont désormais masquées du flux et ré-ajoutées en fin de document.
+    const restoredInitialMd = await waitForMd(
+      page,
+      (snapshot) => snapshot.includes('[^1]: Note stable') && !snapshot.includes('Avant A'),
+    )
     expect(restoredInitialMd).toContain('[^1]: Note stable')
     expect(restoredInitialMd).toContain("console.log('hello')")
     expect(restoredInitialMd).not.toContain('Avant A')

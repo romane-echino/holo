@@ -40,7 +40,6 @@ const COMMANDS: SlashCommand[] = [
   { id: 'blockquote-alert-important', label: 'Alerte importante', description: 'Citation GitHub [!IMPORTANT]', icon: '!', blockType: 'blockquote-alert:important', keywords: ['alert', 'important', 'github', 'admonition', 'callout'] },
   { id: 'blockquote-alert-warning', label: 'Alerte attention', description: 'Citation GitHub [!WARNING]', icon: '⚠', blockType: 'blockquote-alert:warning', keywords: ['alert', 'warning', 'attention', 'github', 'admonition', 'callout'] },
   { id: 'blockquote-alert-caution', label: 'Alerte prudence', description: 'Citation GitHub [!CAUTION]', icon: '⛔', blockType: 'blockquote-alert:caution', keywords: ['alert', 'caution', 'prudence', 'github', 'admonition', 'callout'] },
-  { id: 'footnote',     label: 'Note de bas de page', description: 'Note référencée [^id]',   icon: '†',  blockType: 'footnote',     keywords: ['note', 'footnote', 'reference', 'bas', 'page'] },
   { id: 'separator',    label: 'Séparateur',       description: 'Ligne de séparation (---)',  icon: '—',  blockType: 'separator',    keywords: ['hr', 'separateur', 'divider', 'ligne', 'horizontal', 'rule'] },
 ]
 

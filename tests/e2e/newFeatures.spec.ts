@@ -273,7 +273,8 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
 
     const popupOption = page.getByRole('button', { name: 'Définir le type Citation simple' })
     await expect(popupOption).toBeVisible({ timeout: 3_000 })
-    const popup = popupOption.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
+    // Le popup est rendu via React portal dans document.body (position: fixed, z-index: 9999)
+    const popup = popupOption.locator('xpath=ancestor::div[2]')
     await expect(popup).toHaveCSS('z-index', '9999')
 
     await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()
@@ -804,11 +805,11 @@ test.describe('Mentions — autocomplete repo', () => {
   })
 })
 
-// ─── 2. FootnoteBlock ─────────────────────────────────────────────────────────
+// ─── 2. Footnotes (références inline + définitions masquées) ──────────────────
 
-test.describe('FootnoteBlock — édition et sérialisation', () => {
+test.describe('Footnotes — référence inline, tooltip et sérialisation', () => {
 
-  test('sélectionner un mot permet de créer une note via la toolbar inline', async ({ page }) => {
+  test('sélectionner un mot crée une référence inline et une définition masquée', async ({ page }) => {
     await gotoEditor(page, contextMd())
 
     const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
@@ -816,124 +817,86 @@ test.describe('FootnoteBlock — édition et sérialisation', () => {
 
     await page.getByTitle('Créer une note de bas de page').click()
 
-    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
-    await expect(fnEditor).toBeVisible({ timeout: 3_000 })
-    await fnEditor.click()
-    await page.keyboard.type('Note créée depuis sélection')
-    await page.keyboard.press('Tab')
+    // Une ancre inline avec badge doit apparaître, et aucun bloc de définition visible
+    const anchor = page.locator('.holo-footnote-anchor').first()
+    await expect(anchor).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator('[data-block-type="footnoteDefinition"]')).toHaveCount(0)
 
+    // Le markdown stocke la référence inline + la définition (vide) en fin de document
     const md = await waitForMd(page, (s) =>
-      /Beta\[\^[^\]]+\]-milieu/.test(s)
-      && /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Note créée depuis sélection/m.test(s)
-      && s.includes('Gamma-dernier'),
+      /Beta\[\^[^\]]+\]-milieu/.test(s) && /\n\[\^[^\]]+\]:/.test(s) && s.includes('Gamma-dernier'),
       6000,
     )
     expect(md).toContain('Alpha-premier')
   })
 
-  test('l auto-save d une note ne doit pas faire perdre le focus pendant la saisie', async ({ page }) => {
+  test('éditer le contenu via le tooltip met à jour la définition markdown', async ({ page }) => {
     await gotoEditor(page, contextMd())
 
     const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
-    await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note de bas de page')
+    await selectTextRange(milieu, 0, 4)
+    await page.getByTitle('Créer une note de bas de page').click()
 
-    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
-    await expect(fnEditor).toBeVisible({ timeout: 3_000 })
-    await fnEditor.click()
-    await page.keyboard.type('Premier')
-    await waitForMd(page, (s) => /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Premier/m.test(s), 5000)
-    await expect(fnEditor).toBeFocused()
-    await page.keyboard.type(' second')
-    await page.keyboard.press('Tab')
+    const anchor = page.locator('.holo-footnote-anchor').first()
+    await expect(anchor).toBeVisible({ timeout: 3_000 })
+    await anchor.hover()
+
+    const tooltip = page.getByTestId('footnote-editor-tooltip')
+    await expect(tooltip).toBeVisible({ timeout: 3_000 })
+    const textarea = tooltip.locator('textarea')
+    await textarea.click()
+    await textarea.fill('Contenu de la note de bas de page')
 
     const md = await waitForMd(page, (s) =>
-      /\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Premier second/m.test(s) && s.includes('Gamma-dernier'),
+      /\[\^[^\]]+\]:\s*Contenu de la note de bas de page/m.test(s) && s.includes('Gamma-dernier'),
       6000,
     )
+    expect(md).toMatch(/Beta\[\^[^\]]+\]-milieu/)
     expect(md).toContain('Alpha-premier')
   })
 
-  test('création via slash command, saisie et sérialisation markdown', async ({ page }) => {
-    await gotoEditor(page, contextMd())
-
-    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
-    await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note de bas de page')
-
-    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
-    await expect(fnEditor).toBeVisible({ timeout: 3_000 })
-    await fnEditor.click()
-    await page.keyboard.type('Contenu de la note de bas de page')
-    await page.keyboard.press('Tab')
-
-    const md = await waitForMd(page, (s) =>
-      s.includes('Contenu de la note de bas de page') && s.includes('Gamma-dernier'),
-      6000,
-    )
-    // Le markdown footnoteDefinition : [^id]: contenu
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Contenu de la note de bas de page/m)
-    expect(md).toContain('Gamma-dernier')
-    await expectContextIntact(page)
-  })
-
-  test('le badge d\'identifiant est affiché', async ({ page }) => {
-    await gotoEditor(page, contextMd())
-
-    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
-    await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note de bas de page')
-
-    // Le badge [id] doit être visible dans le bloc
-    // Il est rendu dans un <span> avec font-mono
-    await expect(page.locator('[data-block-type="footnoteDefinition"]')).toBeVisible()
-    await expect(page.locator('span.font-mono').first()).toBeVisible()
-  })
-
-  test('Enter à la fin crée un nouveau bloc après la note', async ({ page }) => {
-    await gotoEditor(page, contextMd())
-
-    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
-    await enterAndSlash(page, milieu)
-    await selectCmd(page, 'Note de bas de page')
-
-    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
-    await fnEditor.click()
-    await page.keyboard.type('Ma note')
-    await page.keyboard.press('Enter')
-
-    // Tape dans le nouveau bloc après la note
-    await page.keyboard.type('Après note')
-    await page.keyboard.press('Tab')
-
-    const md = await waitForMd(page, (s) =>
-      s.includes('Ma note') && s.includes('Après note'), 6000,
-    )
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Ma note/m)
-    expect(md).toContain('Après note')
-  })
-
-  test('note pré-existante dans le markdown est éditable', async ({ page }) => {
+  test('note pré-existante : définition masquée, tooltip affiche le contenu', async ({ page }) => {
     await gotoEditor(page, [
       'Alpha-premier',
       '',
-      '[^1]: Note pré-existante',
+      'Texte avec note[^1] ici.',
       '',
       'Gamma-dernier',
+      '',
+      '[^1]: Note pré-existante',
     ].join('\n'))
 
-    const fnEditor = page.locator('[data-block-type="footnoteDefinition"][contenteditable]')
-    await expect(fnEditor).toBeVisible()
+    // La définition n'apparaît pas comme bloc éditable
+    await expect(page.locator('[data-block-type="footnoteDefinition"]')).toHaveCount(0)
 
-    await fnEditor.click()
-    await page.keyboard.press('End')
-    await page.keyboard.type(' éditée')
-    await page.keyboard.press('Tab')
+    // La référence inline est visible et son tooltip montre le contenu existant
+    const anchor = page.locator('sup[data-footnote-ref]').first()
+    await expect(anchor).toBeVisible()
+    await anchor.hover()
+
+    const tooltip = page.getByTestId('footnote-editor-tooltip')
+    await expect(tooltip).toBeVisible({ timeout: 3_000 })
+    await expect(tooltip.locator('textarea')).toHaveValue('Note pré-existante')
+
+    // Édition via le tooltip
+    const textarea = tooltip.locator('textarea')
+    await textarea.click()
+    await textarea.fill('Note pré-existante éditée')
 
     const md = await waitForMd(page, (s) => s.includes('Note pré-existante éditée'), 6000)
-    expect(md).toMatch(/\[\^[^\]]+\]:\s*(?:ℹ️\s*)?Note pré-existante éditée/m)
+    expect(md).toMatch(/\[\^[^\]]+\]:\s*Note pré-existante éditée/m)
     expect(md).toContain('Alpha-premier')
     expect(md).toContain('Gamma-dernier')
+  })
+
+  test('le badge d\'identifiant est affiché dans l\'ancre', async ({ page }) => {
+    await gotoEditor(page, contextMd())
+
+    const milieu = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Beta-milieu' })
+    await selectTextRange(milieu, 0, 4)
+    await page.getByTitle('Créer une note de bas de page').click()
+
+    await expect(page.locator('.holo-footnote-anchor .holo-footnote-badge').first()).toBeVisible({ timeout: 3_000 })
   })
 })
 

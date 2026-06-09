@@ -17,6 +17,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useMemo,
   type ElementType,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -256,19 +257,6 @@ function formatDateValue(timestamp: number): string {
   return `${day}/${month}/${year}`
 }
 
-function formatDateInputValue(timestamp: number): string {
-  const date = new Date(timestamp)
-  const day = String(date.getDate()).padStart(2, '0')
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const year = date.getFullYear()
-  return `${year}-${month}-${day}`
-}
-
-function getDateInputValue(nodes: InlineNode[] | undefined): string {
-  const timestamp = parseDateLikeValue(inlineNodesToPlainText(nodes ?? []))
-  return timestamp === null ? '' : formatDateInputValue(timestamp)
-}
-
 function formatCurrencyValue(value: number): string {
   const sign = value < 0 ? '-' : ''
   const absoluteValue = Math.abs(value)
@@ -317,10 +305,111 @@ function checkboxCellNodes(checked: boolean): InlineNode[] {
   return checked ? [{ type: 'text', value: 'x' }] : []
 }
 
-function dateCellNodes(value: string): InlineNode[] {
-  const timestamp = parseDateLikeValue(value)
-  if (timestamp === null) return []
-  return plainTextToInlineNodes(formatDateValue(timestamp))
+// ─── DateCellInput ─────────────────────────────────────────────────────────────
+// Champ texte libre qui formate la date on-blur.
+// Accepte "01051988" (ddmmyyyy), "01/05/1988", "2025-05-01", etc.
+function parseDateFreeText(raw: string): number | null {
+  const digits = raw.replace(/\D/g, '')
+  // Format compact ddmmyyyy (8 chiffres)
+  if (digits.length === 8) {
+    const day = Number(digits.slice(0, 2))
+    const month = Number(digits.slice(2, 4))
+    const year = Number(digits.slice(4, 8))
+    const date = new Date(year, month - 1, day)
+    if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
+      return date.getTime()
+    }
+  }
+  // Format jour.mois sans année (ex. "01.05", "1.1") → année courante
+  const dayMonth = raw.trim().match(/^(\d{1,2})[-/.](\d{1,2})$/)
+  if (dayMonth) {
+    const day = Number(dayMonth[1])
+    const month = Number(dayMonth[2])
+    const year = new Date().getFullYear()
+    const date = new Date(year, month - 1, day)
+    if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
+      return date.getTime()
+    }
+  }
+  return parseDateLikeValue(raw)
+}
+
+interface DateCellInputProps {
+  storedNodes: InlineNode[] | undefined
+  onSave: (nodes: InlineNode[]) => void
+  onTab: () => void
+  onShiftTab: () => void
+  onEscape?: () => void
+  cellRefKey: string
+  cellRefs: React.MutableRefObject<Map<string, { focus(): void; clear(): void; clearSlash(): InlineNode[]; flush(): void; getContent(): InlineNode[] }>>
+  ariaLabel: string
+  alignClassName: string
+}
+
+function DateCellInput({ storedNodes, onSave, onTab, onShiftTab, onEscape, cellRefKey, cellRefs, ariaLabel, alignClassName }: DateCellInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const displayValue = useMemo(() => {
+    const text = inlineNodesToPlainText(storedNodes ?? [])
+    const ts = parseDateLikeValue(text)
+    return ts === null ? text : formatDateValue(ts)
+  }, [storedNodes])
+
+  const [localValue, setLocalValue] = useState(displayValue)
+  const [isFocused, setIsFocused] = useState(false)
+
+  // Sync display when stored value changes externally
+  const prevDisplayRef = useRef(displayValue)
+  if (!isFocused && prevDisplayRef.current !== displayValue) {
+    prevDisplayRef.current = displayValue
+    setLocalValue(displayValue)
+  }
+
+  useEffect(() => {
+    const cellRefEntry = {
+      focus() { inputRef.current?.focus({ preventScroll: true }) },
+      clear() { onSave([]); setLocalValue('') },
+      clearSlash() { return [] as InlineNode[] },
+      flush() {},
+      getContent() { return [] as InlineNode[] },
+    }
+    cellRefs.current.set(cellRefKey, cellRefEntry)
+    return () => { cellRefs.current.delete(cellRefKey) }
+  }, [cellRefKey, cellRefs, onSave])
+
+  const commitValue = useCallback((value: string) => {
+    const ts = parseDateFreeText(value)
+    if (!value.trim()) {
+      onSave([])
+    } else if (ts !== null) {
+      onSave(plainTextToInlineNodes(formatDateValue(ts)))
+    }
+    // Si non parseable, ne pas écraser la valeur existante
+  }, [onSave])
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="numeric"
+      value={isFocused ? localValue : displayValue}
+      placeholder="jj/mm/aaaa"
+      aria-label={ariaLabel}
+      onFocus={() => { setLocalValue(displayValue); setIsFocused(true) }}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={() => { setIsFocused(false); commitValue(localValue) }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commitValue(localValue); inputRef.current?.blur() }
+        if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); commitValue(localValue); requestAnimationFrame(onTab) }
+        if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); commitValue(localValue); requestAnimationFrame(onShiftTab) }
+        if (e.key === 'Escape' && onEscape) { e.preventDefault(); onEscape() }
+      }}
+      className={cn(
+        'w-full min-w-0 rounded-holo-sm border border-white/10 bg-white/[0.03] px-2.5 py-2 text-sm text-holo-text-soft outline-none transition',
+        'hover:bg-white/[0.05] focus:border-holo-border-soft focus:bg-white/[0.06] placeholder:text-holo-text-faint/50',
+        alignClassName,
+      )}
+    />
+  )
 }
 
 function getColumnColorStyles(color: string | null): { header: CSSProperties; cell: CSSProperties; summary: CSSProperties } {
@@ -1699,7 +1788,6 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                       const isCheckboxColumn = col.type === 'checkbox'
                       const isDateColumn = col.type === 'date'
                       const isChecked = isCheckboxCellChecked(row.cells[col.id])
-                      const dateInputValue = getDateInputValue(row.cells[col.id])
                       const columnColorStyles = getColumnColorStyles(col.color)
 
                       return (
@@ -1860,71 +1948,24 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                               </label>
                             ) : isDateColumn ? (
                               <div className="relative flex min-h-11 w-full items-center px-3 py-2">
-                                {!dateInputValue && (
-                                  <span
-                                    className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-xs text-holo-text-faint/80"
-                                    data-date-placeholder="jj/mm/aaaa"
-                                  >
-                                    jj/mm/aaaa
-                                  </span>
-                                )}
-                                <input
-                                  ref={(el) => {
-                                    if (el) {
-                                      cellRefs.current.set(cellKey, {
-                                        focus() {
-                                          el.focus({ preventScroll: true })
-                                        },
-                                        clear() {
-                                          el.value = ''
-                                        },
-                                        clearSlash() {
-                                          return []
-                                        },
-                                        flush() {},
-                                        getContent() {
-                                          return []
-                                        },
-                                      })
-                                    } else {
-                                      cellRefs.current.delete(cellKey)
-                                    }
+                                <DateCellInput
+                                  storedNodes={row.cells[col.id]}
+                                  onSave={(nodes) => saveCell(row.id, col.id, nodes)}
+                                  onTab={() => {
+                                    if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
+                                    else if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, 0)
+                                    else if (onTabExit) onTabExit()
+                                    else addRowAt(table.rows.length)
                                   }}
-                                  type="date"
-                                  value={dateInputValue}
-                                  aria-label={`${col.title || `Colonne ${colIdx + 1}`} ligne ${rowIdx + 1}`}
-                                  onChange={(event) => saveCell(row.id, col.id, dateCellNodes(event.currentTarget.value))}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Tab' && !e.shiftKey) {
-                                      e.preventDefault()
-                                      requestAnimationFrame(() => {
-                                        if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
-                                        else if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, 0)
-                                        else if (onTabExit) onTabExit()
-                                        else addRowAt(table.rows.length)
-                                      })
-                                      return
-                                    }
-
-                                    if (e.key === 'Tab' && e.shiftKey) {
-                                      e.preventDefault()
-                                      requestAnimationFrame(() => {
-                                        if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
-                                        else if (rowIdx > 0) focusCell(rowIdx - 1, table.columns.length - 1)
-                                      })
-                                      return
-                                    }
-
-                                    if (e.key === 'Escape' && onTabExit) {
-                                      e.preventDefault()
-                                      onTabExit()
-                                    }
+                                  onShiftTab={() => {
+                                    if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
+                                    else if (rowIdx > 0) focusCell(rowIdx - 1, table.columns.length - 1)
                                   }}
-                                  className={cn(
-                                    'w-full min-w-0 rounded-holo-sm border border-white/10 bg-white/[0.03] px-2.5 py-2 text-sm text-holo-text-soft outline-none transition',
-                                    'hover:bg-white/[0.05] focus:border-holo-border-soft focus:bg-white/[0.06]',
-                                    alignClass(col.align),
-                                  )}
+                                  onEscape={onTabExit}
+                                  cellRefKey={cellKey}
+                                  cellRefs={cellRefs}
+                                  ariaLabel={`${col.title || `Colonne ${colIdx + 1}`} ligne ${rowIdx + 1}`}
+                                  alignClassName={alignClass(col.align)}
                                 />
                               </div>
                             ) : (

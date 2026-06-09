@@ -15,6 +15,7 @@ import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { useEditorFilePath } from './EditorFileContext'
 import { flatTreeFiles, getRelativeLinkPath, getBaseName } from '../../lib/appUtils'
+import type { SearchIndexEntry } from '../../types/app'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ export interface FormatToolbarState {
   superscript: boolean
   subscript: boolean
   link: string | null
+  footnote: string | null  // footnote identifier when cursor is on a footnote
 }
 
 interface FormatToolbarProps {
@@ -42,13 +44,14 @@ interface FormatToolbarProps {
   onFootnote: () => void
   onLink: (url: string) => void
   onUnlink: () => void
+  onUnlinkFootnote?: () => void
 }
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
 export function FormatToolbar({
   state,
-  onBold, onItalic, onStrike, onCode, onUnderline, onSuperscript, onSubscript, onFootnote, onLink, onUnlink,
+  onBold, onItalic, onStrike, onCode, onUnderline, onSuperscript, onSubscript, onFootnote, onLink, onUnlink, onUnlinkFootnote = () => {},
 }: FormatToolbarProps) {
   const [linkMode, setLinkMode] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
@@ -56,26 +59,106 @@ export function FormatToolbar({
   // Range sauvegardée avant de passer en link mode (le focus quitte le contentEditable)
   const savedRangeRef = useRef<Range | null>(null)
 
-  // Recherche de pages de l'espace courant
-  const { tree, rootPath, fileMetaByPath } = useWorkspace()
+  // Recherche de pages : d'abord l'espace courant, puis tous les espaces via l'index
+  const { tree, rootPath, fileMetaByPath, recentFolders } = useWorkspace()
   const currentFilePath = useEditorFilePath()
+  
+  // Charger l'index pour les suggestions inter-espace
+  const [indexEntries, setIndexEntries] = useState<Map<string, SearchIndexEntry>>(new Map())
+  
+  useEffect(() => {
+    const loadAllSpaceFiles = async () => {
+      const allFiles = new Map<string, SearchIndexEntry>()
+      
+      // Scanner tous les espaces récents pour trouver les fichiers .md
+      if (recentFolders && recentFolders.length > 0) {
+        for (const folder of recentFolders) {
+          try {
+            const mdFiles = await window.holo?.scanMdFiles(folder)
+            if (Array.isArray(mdFiles)) {
+              for (const filePath of mdFiles) {
+                if (!allFiles.has(filePath)) {
+                  // Créer une entrée minimale avec le path et spaceRoot
+                  // Les métadonnées complètes (title, etc.) seront chargées au besoin
+                  const stats = await window.holo?.getPathStats(filePath).catch(() => ({ modifiedAt: new Date().toISOString() }))
+                  allFiles.set(filePath, {
+                    path: filePath,
+                    name: getBaseName(filePath),
+                    title: '',
+                    description: '',
+                    tags: [],
+                    headings: [],
+                    content: '',
+                    linkedPaths: [],
+                    spaceRoot: folder,
+                    mtime: stats?.modifiedAt ?? new Date().toISOString(),
+                  })
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`[FormatToolbar] Error scanning space ${folder}:`, err)
+          }
+        }
+      }
+
+      setIndexEntries(allFiles)
+    }
+
+    loadAllSpaceFiles()
+  }, [recentFolders])
 
   const allMdFiles = useMemo(() => {
-    if (!tree) return []
-    return flatTreeFiles(tree).filter((p) => p.toLowerCase().endsWith('.md'))
-  }, [tree])
+    if (tree) return flatTreeFiles(tree).filter((p) => p.toLowerCase().endsWith('.md'))
+    // Fallback : si le tree n'est pas encore chargé, utiliser les clés de fileMetaByPath
+    return Object.keys(fileMetaByPath).filter((p) => p.toLowerCase().endsWith('.md'))
+  }, [tree, fileMetaByPath])
 
-  const pageSuggestions = useMemo(() => {
+  // Type pour une suggestion avec l'espace d'origine
+  type FileSuggestion = { path: string; label: string; spaceName?: string; spaceRoot?: string }
+
+  const pageSuggestions = useMemo((): FileSuggestion[] => {
     if (!linkMode) return []
     const q = linkUrl.trim().toLowerCase()
     // N'afficher les suggestions que si l'URL n'est pas déjà une URL externe
     if (q.startsWith('http://') || q.startsWith('https://') || q.startsWith('mailto:')) return []
-    const candidates = allMdFiles.filter((p) => p !== currentFilePath)
-    if (!q) return candidates.slice(0, 8)
-    return candidates
-      .filter((p) => getBaseName(p).toLowerCase().includes(q) || p.toLowerCase().includes(q))
-      .slice(0, 8)
-  }, [linkMode, linkUrl, allMdFiles, currentFilePath])
+
+    const results: FileSuggestion[] = []
+    const seen = new Set<string>()
+
+    // Phase 1: fichiers de l'espace courant (priorité haute)
+    const currentSpaceFiles = allMdFiles.filter((p) => p !== currentFilePath)
+    for (const filePath of currentSpaceFiles) {
+      const baseName = getBaseName(filePath).replace(/\.md$/i, '')
+      if (!q || baseName.toLowerCase().includes(q) || filePath.toLowerCase().includes(q)) {
+        results.push({ path: filePath, label: baseName })
+        seen.add(filePath)
+        if (results.length >= 8) return results
+      }
+    }
+
+    // Phase 2: fichiers d'autres espaces (via index de tous les espaces)
+    if (indexEntries.size > 0 && results.length < 8) {
+      const entries = Array.from(indexEntries.values())
+        .filter((entry) => !seen.has(entry.path) && entry.path !== currentFilePath && entry.path.toLowerCase().endsWith('.md'))
+        .filter((entry) => {
+          const baseName = getBaseName(entry.path)
+          const fileNameLower = baseName.toLowerCase()
+          const titleLower = entry.title?.toLowerCase() ?? ''
+          return !q || fileNameLower.includes(q) || titleLower.includes(q) || entry.path.toLowerCase().includes(q)
+        })
+        .slice(0, 8 - results.length)
+        .map((entry) => ({
+          path: entry.path,
+          label: entry.title || getBaseName(entry.path).replace(/\.md$/i, ''),
+          spaceName: entry.spaceRoot ? getBaseName(entry.spaceRoot) : undefined,
+          spaceRoot: entry.spaceRoot,
+        }))
+      results.push(...entries)
+    }
+
+    return results.slice(0, 8)
+  }, [linkMode, linkUrl, allMdFiles, currentFilePath, indexEntries, rootPath, recentFolders])
 
   // Quand linkMode s'active, pré-remplir l'URL et focus l'input
   useEffect(() => {
@@ -112,8 +195,8 @@ export function FormatToolbar({
     setLinkMode(false)
   }
 
-  const pickPageSuggestion = (filePath: string) => {
-    const relativePath = getRelativeLinkPath(currentFilePath, filePath, rootPath ?? null)
+  const pickPageSuggestion = (suggestion: FileSuggestion) => {
+    const relativePath = getRelativeLinkPath(currentFilePath, suggestion.path, rootPath ?? null)
     setLinkUrl(relativePath)
     setTimeout(() => inputRef.current?.focus(), 0)
   }
@@ -157,7 +240,7 @@ export function FormatToolbar({
                   e.preventDefault()
                   if (pageSuggestions.length === 1) {
                     const onlySuggestion = pageSuggestions[0]
-                    const relativePath = getRelativeLinkPath(currentFilePath, onlySuggestion, rootPath ?? null)
+                    const relativePath = getRelativeLinkPath(currentFilePath, onlySuggestion.path, rootPath ?? null)
                     if (linkUrl.trim() !== relativePath) {
                       pickPageSuggestion(onlySuggestion)
                       return
@@ -185,27 +268,29 @@ export function FormatToolbar({
           </div>
           {pageSuggestions.length > 0 && (
             <div className="border-t border-holo-border-soft pb-1">
-              {pageSuggestions.map((filePath) => {
-                const rel = getRelativeLinkPath(currentFilePath, filePath, rootPath ?? null)
-                const label = getBaseName(filePath).replace(/\.md$/i, '')
-                const title = fileMetaByPath[filePath]?.title?.trim()
-                const secondaryLabel = title && title !== label ? title : null
+              {pageSuggestions.map((suggestion) => {
+                const rel = getRelativeLinkPath(currentFilePath, suggestion.path, rootPath ?? null)
+                const title = fileMetaByPath[suggestion.path]?.title?.trim()
+                const secondaryLabel = title && title !== suggestion.label ? title : null
                 return (
                   <button
-                    key={filePath}
+                    key={suggestion.path}
                     type="button"
                     onMouseDown={(e) => {
                       e.preventDefault()
-                      pickPageSuggestion(filePath)
+                      pickPageSuggestion(suggestion)
                     }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-holo-glass-hover"
                   >
                     <FileText size={11} className="shrink-0 text-holo-text-faint" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="truncate text-xs text-holo-text">{label}</span>
+                        <span className="truncate text-xs text-holo-text">{suggestion.label}</span>
                         {secondaryLabel && (
                           <span className="truncate text-[10px] text-holo-text-faint/80">{secondaryLabel}</span>
+                        )}
+                        {suggestion.spaceName && (
+                          <span className="shrink-0 rounded-full bg-holo-primary/15 px-1.5 py-px text-[9px] font-medium text-holo-primary-soft">{suggestion.spaceName}</span>
                         )}
                       </div>
                       <div className="truncate text-[10px] text-holo-text-faint">{rel}</div>
@@ -282,7 +367,7 @@ export function FormatToolbar({
             <Btn
               active
               onMouseDown={(e) => { e.preventDefault(); onUnlink() }}
-              label="Supprimer le lien"
+              label="Supprimer le lien (Ctrl+Shift+K)"
             >
               <Link2Off size={14} />
             </Btn>
@@ -293,6 +378,16 @@ export function FormatToolbar({
               label="Ajouter un lien (Ctrl+K)"
             >
               <Link2 size={14} />
+            </Btn>
+          )}
+
+          {state.footnote !== null && (
+            <Btn
+              active
+              onMouseDown={(e) => { e.preventDefault(); onUnlinkFootnote() }}
+              label="Supprimer la note"
+            >
+              <Link2Off size={14} />
             </Btn>
           )}
         </div>

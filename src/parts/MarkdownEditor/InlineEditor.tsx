@@ -185,6 +185,16 @@ function getLinkHref(range: Range, boundary: HTMLElement): string | null {
   return null
 }
 
+function getFootnoteIdentifier(range: Range, boundary: HTMLElement): string | null {
+  let node: Node | null = range.commonAncestorContainer
+  while (node && node !== boundary) {
+    if ((node as Element).hasAttribute?.('data-footnote-anchor')) {
+      return (node as Element).getAttribute('data-footnote-id') ?? null
+    }
+    node = node.parentNode
+  }
+  return null
+}
 function isMarkdownTable(text: string): boolean {
   const lines = text
     .split('\n')
@@ -244,6 +254,9 @@ export interface InlineEditorProps {
   /** Crée une note de bas de page depuis la sélection courante et retourne son identifiant. */
   onCreateFootnote?: (selectedText: string) => string | null
   /** Au focus/clic, sélectionne tout le contenu du bloc. Utile pour les cellules de tableau. */
+    /** Supprime une note de bas de page en gardant le texte d'ancre. */
+    onRemoveFootnote?: (identifier: string) => void
+    /** Au focus/clic, sélectionne tout le contenu du bloc. Utile pour les cellules de tableau. */
   selectAllOnFocus?: boolean
   className?: string
 }
@@ -265,6 +278,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   onSplit,
   onSmartPaste,
   onCreateFootnote,
+    onRemoveFootnote,
   selectAllOnFocus,
   className,
 }, ref) {
@@ -439,16 +453,51 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (document.activeElement?.closest('[data-format-toolbar]')) return
       const sel = window.getSelection()
       const el = divRef.current
-      if (!sel || sel.isCollapsed || !sel.rangeCount || !el) {
+      if (!sel || !sel.rangeCount || !el) {
         selectionRangeRef.current = null
         setToolbar(null)
-        if (sel?.rangeCount && el) {
-          refreshMentionPopup()
+        setMentionPopup(null)
+        return
+      }
+
+      // Curseur collapsed dans un lien → afficher la toolbar avec l'action unlink
+      if (sel.isCollapsed) {
+        selectionRangeRef.current = null
+        const range = sel.getRangeAt(0)
+        if (el.contains(range.startContainer)) {
+          const linkHref = getLinkHref(range, el)
+          if (linkHref !== null) {
+            const linkNode = (() => {
+              let n: Node | null = range.commonAncestorContainer
+              while (n && n !== el) {
+                if ((n as Element).tagName?.toLowerCase() === 'a') return n as Element
+                n = n.parentNode
+              }
+              return null
+            })()
+            const rect = linkNode ? linkNode.getBoundingClientRect() : range.getBoundingClientRect()
+            setToolbar({
+              rect,
+              bold: false, italic: false, strike: false, code: false,
+              underline: false, superscript: false, subscript: false,
+              link: linkHref,
+              footnote: null,
+            })
+          } else {
+            setToolbar(null)
+          }
+          if (sel?.rangeCount && el) {
+            refreshMentionPopup()
+          } else {
+            setMentionPopup(null)
+          }
         } else {
+          setToolbar(null)
           setMentionPopup(null)
         }
         return
       }
+
       const range = sel.getRangeAt(0)
       if (!el.contains(range.commonAncestorContainer)) {
         selectionRangeRef.current = null
@@ -470,11 +519,20 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         superscript: isInsideTag(range, el, 'sup'),
         subscript: isInsideTag(range, el, 'sub'),
         link:   getLinkHref(range, el),
+        footnote: getFootnoteIdentifier(range, el),
       })
     }
     document.addEventListener('selectionchange', handleSelectionChange)
     return () => document.removeEventListener('selectionchange', handleSelectionChange)
   }, [refreshMentionPopup])
+
+  // Fermer la toolbar si scroll
+  useEffect(() => {
+    if (!toolbar) return
+    const dismiss = () => setToolbar(null)
+    window.addEventListener('scroll', dismiss, true)
+    return () => window.removeEventListener('scroll', dismiss, true)
+  }, [toolbar])
 
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -676,17 +734,25 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     const identifier = onCreateFootnote(selectedText)
     if (!identifier) return
 
-    const refNode = document.createElement('sup')
-    refNode.setAttribute('data-footnote-ref', identifier)
-    refNode.setAttribute('data-footnote-label', identifier)
-    refNode.setAttribute('contenteditable', 'false')
-    refNode.textContent = `[${identifier}]`
+    // Wrap selected text in a highlighted anchor span with the footnote badge
+    const anchorSpan = document.createElement('span')
+    anchorSpan.setAttribute('data-footnote-anchor', identifier)
+      anchorSpan.setAttribute('data-footnote-id', identifier)
+    anchorSpan.setAttribute('data-footnote-label', identifier)
+    anchorSpan.setAttribute('contenteditable', 'false')
+    anchorSpan.className = 'holo-footnote-anchor'
+    anchorSpan.textContent = selectedText
 
-    range.collapse(false)
-    range.insertNode(refNode)
+    const badgeSup = document.createElement('sup')
+    badgeSup.className = 'holo-footnote-badge'
+    badgeSup.textContent = `[${identifier}]`
+    anchorSpan.appendChild(badgeSup)
+
+    range.deleteContents()
+    range.insertNode(anchorSpan)
 
     const after = document.createRange()
-    after.setStartAfter(refNode)
+    after.setStartAfter(anchorSpan)
     after.collapse(true)
     sel.removeAllRanges()
     sel.addRange(after)
@@ -697,6 +763,48 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     save()
   }, [onCreateFootnote, save, syncEmpty])
 
+  const removeFootnoteReference = useCallback(() => {
+    const el = divRef.current
+    const sel = window.getSelection()
+    if (!el || !sel || !onRemoveFootnote) return
+
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null
+    if (!range || !el.contains(range.commonAncestorContainer)) return
+
+    // Find the footnote anchor span containing the cursor
+    let node: Node | null = range.commonAncestorContainer
+    let footnoteSpan: Element | null = null
+    while (node && node !== el) {
+      if ((node as Element).hasAttribute?.('data-footnote-anchor')) {
+        footnoteSpan = node as Element
+        break
+      }
+      node = node.parentNode
+    }
+
+    if (!footnoteSpan) return
+
+    const identifier = footnoteSpan.getAttribute('data-footnote-anchor')
+    if (!identifier) return
+
+    // Get the anchor text (all text content except the badge)
+    const anchorText = Array.from(footnoteSpan.childNodes)
+      .filter(n => n.nodeType !== Node.ELEMENT_NODE || (n as Element).tagName !== 'SUP')
+      .map(n => n.textContent)
+      .join('')
+
+    // Call the parent to remove the footnote
+    onRemoveFootnote(identifier)
+
+    // Replace the span with plain text
+    const textNode = document.createTextNode(anchorText)
+    footnoteSpan.replaceWith(textNode)
+
+    selectionRangeRef.current = null
+    syncEmpty(el)
+    savedRef.current = false
+    save()
+  }, [onRemoveFootnote, save, syncEmpty])
   // Vérifie si le curseur est au tout début du contenu
   // Mesure le texte entre le début de l'élément et le curseur
   const isAtStart = (): boolean => {
@@ -787,6 +895,14 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         setMentionPopup(null)
         return
       }
+    }
+
+    // ESC : ferme la toolbar de formatage si ouverte
+    if (e.key === 'Escape' && toolbar) {
+      e.preventDefault()
+      setToolbar(null)
+      window.getSelection()?.collapseToStart()
+      return
     }
 
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y' || e.key === 'Z')) {
@@ -1015,10 +1131,12 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (e.key === 'b') { e.preventDefault(); document.execCommand('bold');              return }
       if (e.key === 'i') { e.preventDefault(); document.execCommand('italic');            return }
       if (e.key === 'e') { e.preventDefault(); toggleCode();                              return }
-      if (e.key === 'u') { e.preventDefault(); toggleUnderline();                        return }
+      if (e.key === 'u' && !e.shiftKey) { e.preventDefault(); toggleUnderline();         return }
       if (e.key === '.') { e.preventDefault(); toggleSuperscript();                       return }
       if (e.key === ',') { e.preventDefault(); toggleSubscript();                         return }
       if (e.key === 's' && e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); return }
+      // Ctrl+Shift+K → supprimer le lien sous le curseur/sélection
+      if (e.key === 'k' && e.shiftKey) { e.preventDefault(); document.execCommand('unlink'); setToolbar(null); return }
     }
   }
 
@@ -1033,7 +1151,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           savedRef.current = false
           if (selectAllOnFocus) {
             const target = e.currentTarget
-            requestAnimationFrame(() => selectAllContents(target))
+            selectAllContents(target)
           }
         }}
         onMouseDown={(e) => {
@@ -1046,7 +1164,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           pendingPointerSelectAllRef.current = true
           const target = e.currentTarget
           target.focus({ preventScroll: true })
-          requestAnimationFrame(() => selectAllContents(target))
+          selectAllContents(target)
         }}
         onMouseUp={(e) => {
           if (!pendingPointerSelectAllRef.current) return
@@ -1199,6 +1317,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           onFootnote={insertFootnoteReference}
           onLink={(url) => document.execCommand('createLink', false, url)}
           onUnlink={()  => document.execCommand('unlink')}
+                  onUnlinkFootnote={removeFootnoteReference}
         />
       )}
     </>

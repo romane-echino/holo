@@ -224,7 +224,9 @@ function TreeNode({
   const isFolder = node.type === 'folder'
   const isExpanded = expanded.has(node.path)
   const isSelected = activePath === node.path
+  // Un dossier est aussi "ouvert" si son .index.md est le fichier actif
   const isOpenedFile = !isFolder && selectedFilePath === node.path
+  const isFolderIndexOpen = isFolder && selectedFilePath === (node.path.replace(/\\/g, '/') + '/.index.md')
   const hasChildren = Boolean(node.children?.length)
   const FileIcon = isFolder ? (isExpanded ? FolderOpen : Folder) : (isOpenedFile ? FileUser : File)
   const isDragOver = drag?.dragOverPath === node.path && isFolder
@@ -241,6 +243,9 @@ function TreeNode({
     if (isFolder) {
       onToggle(node.path)
       onSelectFolder?.(isSelected ? '' : node.path)
+      // Ouvrir le .index.md du dossier (contenu markdown du dossier)
+      const indexPath = node.path.replace(/\\/g, '/') + '/.index.md'
+      onSelectFile?.({ id: indexPath, name: node.name, type: 'file', path: indexPath })
       return
     }
     onSelectFolder?.('')
@@ -265,6 +270,7 @@ function TreeNode({
             ? 'bg-holo-primary-surface text-holo-primary-soft ring-1 ring-holo-primary/20'
             : 'text-holo-text-muted',
           isOpenedFile && 'bg-white/[0.045] text-holo-text ring-1 ring-white/[0.06]',
+          isFolderIndexOpen && 'bg-white/[0.045] text-holo-text ring-1 ring-white/[0.06]',
           isDragOver && 'ring-1 ring-holo-primary/50 bg-holo-primary-surface/60 text-holo-primary-soft',
         )}
         style={{ paddingLeft: `${10 + level * 14}px` }}
@@ -311,7 +317,7 @@ function TreeNode({
 
       {isFolder && isExpanded && hasChildren && (
         <div className="mt-0.5 space-y-0.5">
-          {node.children!.map((child) => (
+          {node.children!.filter((child) => child.name !== '.index.md').map((child) => (
             <TreeNode
               key={child.path}
               node={child}

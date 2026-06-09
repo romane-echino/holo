@@ -136,12 +136,14 @@ export interface ListBlockProps {
   onEnterAtEnd?: () => void
   onBackspaceAtStart?: () => void
   onLiftItemAtStart?: (id: string, items: ListBlockItem[], node: ListNode) => void
+  onCreateFootnote?: (selectedText: string) => string | null
+  onRemoveFootnote?: (identifier: string) => void
 }
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
 export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
-  function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart, onLiftItemAtStart }, ref) {
+  function ListBlock({ node, onChange, onArrowUp, onArrowDown, onEnterAtEnd, onBackspaceAtStart, onLiftItemAtStart, onCreateFootnote, onRemoveFootnote }, ref) {
     const [items, setItems] = useState<ListBlockItem[]>(() => nodeToItems(node))
     const listStyle = (node.data?.listStyle as string | undefined) ?? (node.ordered ? 'ordered' : 'bullet')
     const labels = computeLabels(items, listStyle)
@@ -367,6 +369,8 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
               if (idx === items.length - 1) onArrowDown?.(x)
               else focusItem(items[idx + 1].id, 'start')
             }}
+            onCreateFootnote={onCreateFootnote}
+            onRemoveFootnote={onRemoveFootnote}
           />
         ))}
       </div>
@@ -391,6 +395,8 @@ function ListItemRow({
   onLiftItemAtStart,
   onArrowUp,
   onArrowDown,
+  onCreateFootnote,
+  onRemoveFootnote,
 }: {
   item: ListBlockItem
   idx: number
@@ -406,9 +412,12 @@ function ListItemRow({
   onLiftItemAtStart: (currentInlines: InlineNode[]) => void
   onArrowUp: (x: number) => void
   onArrowDown: (x: number) => void
+  onCreateFootnote?: (selectedText: string) => string | null
+  onRemoveFootnote?: (identifier: string) => void
 }) {
   const divRef = useRef<HTMLDivElement>(null)
   const savedRef = useRef(false)
+  const selectionRangeRef = useRef<Range | null>(null)
   const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
 
   // Initialiser le contenu une seule fois au mount
@@ -431,10 +440,12 @@ function ListItemRow({
 
       const range = sel.getRangeAt(0)
       if (!el.contains(range.commonAncestorContainer)) {
+        selectionRangeRef.current = null
         setToolbar(null)
         return
       }
 
+      selectionRangeRef.current = range.cloneRange()
       const rect = range.getBoundingClientRect()
       if (!rect.width && !rect.height) {
         setToolbar(null)
@@ -451,12 +462,21 @@ function ListItemRow({
         superscript: isInsideTag(range, el, 'sup'),
         subscript: isInsideTag(range, el, 'sub'),
         link: getLinkHref(range, el),
+        footnote: null,
       })
     }
 
     document.addEventListener('selectionchange', handleSelectionChange)
     return () => document.removeEventListener('selectionchange', handleSelectionChange)
   }, [])
+
+  // Fermer la toolbar si scroll
+  useEffect(() => {
+    if (!toolbar) return
+    const dismiss = () => setToolbar(null)
+    window.addEventListener('scroll', dismiss, true)
+    return () => window.removeEventListener('scroll', dismiss, true)
+  }, [toolbar])
 
   const toggleCode = useCallback(() => {
     const sel = window.getSelection()
@@ -604,6 +624,74 @@ function ListItemRow({
     return el.getBoundingClientRect().bottom - rect.bottom < rect.height
   }
 
+  const insertFootnoteReference = useCallback(() => {
+    const el = divRef.current
+    const sel = window.getSelection()
+    if (!el || !sel || !onCreateFootnote) return
+
+    const liveRange = sel.rangeCount ? sel.getRangeAt(0) : null
+    const range = liveRange && !liveRange.collapsed && el.contains(liveRange.commonAncestorContainer)
+      ? liveRange.cloneRange()
+      : selectionRangeRef.current?.cloneRange() ?? null
+    if (!range || range.collapsed || !el.contains(range.commonAncestorContainer)) return
+
+    const selectedText = range.toString().trim()
+    const identifier = onCreateFootnote(selectedText)
+    if (!identifier) return
+
+    const refNode = document.createElement('sup')
+    refNode.setAttribute('data-footnote-ref', identifier)
+    refNode.setAttribute('data-footnote-label', identifier)
+    refNode.setAttribute('contenteditable', 'false')
+    refNode.textContent = `[${identifier}]`
+
+    range.collapse(false)
+    range.insertNode(refNode)
+
+    const after = document.createRange()
+    after.setStartAfter(refNode)
+    after.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(after)
+    selectionRangeRef.current = null
+
+    savedRef.current = false
+    if (el) {
+      savedRef.current = true
+      onSave(domToInlines(el))
+    }
+  }, [onCreateFootnote, onSave])
+
+  const removeFootnoteReference = useCallback(() => {
+    const el = divRef.current
+    const sel = window.getSelection()
+    if (!el || !sel || !onRemoveFootnote) return
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null
+    if (!range || !el.contains(range.commonAncestorContainer)) return
+
+    let node: Node | null = range.commonAncestorContainer
+    let footnoteEl: Element | null = null
+    while (node && node !== el) {
+      if ((node as Element).hasAttribute?.('data-footnote-ref')
+          || (node as Element).hasAttribute?.('data-footnote-anchor')) {
+        footnoteEl = node as Element
+        break
+      }
+      node = node.parentNode
+    }
+    if (!footnoteEl) return
+
+    const identifier = footnoteEl.getAttribute('data-footnote-ref')
+      ?? footnoteEl.getAttribute('data-footnote-anchor')
+    if (!identifier) return
+
+    onRemoveFootnote(identifier)
+    footnoteEl.remove()
+
+    savedRef.current = true
+    onSave(domToInlines(el))
+  }, [onRemoveFootnote, onSave])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const el = divRef.current
     if (!el) return
@@ -668,12 +756,19 @@ function ListItemRow({
       return
     }
     // Formatage inline
+    if (e.key === 'Escape' && toolbar) {
+      e.preventDefault()
+      setToolbar(null)
+      window.getSelection()?.collapseToStart()
+      return
+    }
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); return }
       if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); return }
       if (e.key === '.') { e.preventDefault(); toggleSuperscript(); return }
       if (e.key === ',') { e.preventDefault(); toggleSubscript(); return }
       if (e.key === 's' && e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); return }
+      if (e.key === 'k' && e.shiftKey) { e.preventDefault(); document.execCommand('unlink'); setToolbar(null); return }
     }
   }
 
@@ -682,10 +777,10 @@ function ListItemRow({
       <button
         onMouseDown={(e) => { e.preventDefault(); onToggle() }}
         className={cn(
-          'mt-[0.25em] flex size-[1.05em] shrink-0 items-center justify-center rounded-sm border transition-colors',
+          'mt-[0.5em] flex size-[1.05em] shrink-0 items-center justify-center rounded-sm border transition-colors',
           item.checked
             ? 'border-holo-primary-soft bg-holo-primary-soft'
-            : 'border-holo-border-muted bg-transparent hover:border-holo-primary-soft/60',
+            : 'border-white/30 bg-transparent hover:border-holo-primary-soft/60 cursor-pointer',
         )}
       >
         {item.checked && <Check size={9} strokeWidth={3} className="text-white" />}
@@ -751,9 +846,10 @@ function ListItemRow({
           onUnderline={toggleUnderline}
           onSuperscript={toggleSuperscript}
           onSubscript={toggleSubscript}
-          onFootnote={() => {}}
+          onFootnote={insertFootnoteReference}
           onLink={(url) => document.execCommand('createLink', false, url)}
           onUnlink={() => document.execCommand('unlink')}
+          onUnlinkFootnote={removeFootnoteReference}
         />
       )}
     </div>

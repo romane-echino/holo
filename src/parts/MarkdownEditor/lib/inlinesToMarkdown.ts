@@ -35,7 +35,8 @@ function inlineToMarkdown(node: InlineNode): string {
     case 'subscript':
       return `<sub>${node.children.map(inlineToMarkdown).join('')}</sub>`
     case 'footnoteReference':
-      return `[^${node.identifier}]`
+      // anchorText is regular text in markdown, followed by the footnote reference
+      return node.anchorText ? `${node.anchorText}[^${node.identifier}]` : `[^${node.identifier}]`
     case 'break':
       return '  \n'
     case 'image':

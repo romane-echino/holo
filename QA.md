@@ -262,18 +262,73 @@ Nouveau composants :
 - ✅ Ctrl+A bloc de code sélectionn tout les bloc -> j'aimerais que ça sélectionne que le code
 - ✅ Selection bloc + entrer = nouvelle ligne en dessous ()
 - ✅ Au moment de la saisie d'un lien youtube dans le composant correspondant si je fais CTRL+A dans l'input ça me sélectionne tout les blocs
+ 
+ # Phase 18.2
+ - ✅ Pouvoir collapse le menu principal (pour gagner de la place en desktop)
+ 
+ 
+ - ✅ Ajout d'un espace via repo git fait clignoter le menu de gauche
+ - ✅ J'ai ajouter 4 repo et d'un coup mes espace ont disparu du menu (on dirait qu'il s'est foutu dedans) (j'ai appelé un repo codenotch.dev je me demande si le "." pose pas problème pour holo mais ça devrait pas). Du coup j'ai ajouter les 5 espace a la main "Dossier locale" et ça a recommencer a clignoter et d'un coup ça m'a supprimer 3 des 5 espace tout en clignotant dans tout les sens
+ - Bien regarder que quand on ouvre un fichier qui sur git est en status "merge" l'interface de diff aparaisse
+ - ✅ Trouver un moyen de unlink un lien facilement (Raccourci clavier souris en plus, autre solution)
+ - Sur windows dans le space panel il y'a un bug d'affichage avec les icones des fichier qui se masque quand on sort du fichier
+ - Sur windows j'ai encore eu le problème de l'onboarding qui apparait a chaque démarrage -> bien vérifié que quand on valide le on boarding on sauvegarde les informations nom,prenom,email -> bien verifier que au démarage de l'app on charge le bon fichier et APRES on affiche l'onboarding si LES TROIS info sont manquante
+ Déplacement de modèle vers un autre dossier puis revenir sur le même dossier -> KO
 - Youtube marche pas erreur 153 ( en prod sur windows constaté)
-- PopUp citation overlap -> Quand je perd le focus de la citation faudrai que le popup se ferme + le popup devrait avoir un z-index 9999
-- J'arrive pas a créer de Note de bas de page dans les listes
-- Faire disparaitre le menu format (FormatToolbar) si ESC + si on scroll
-- identifiant footnote plutot en numéro (1,2,3,...) + Le design des Note de bas de page est a revoir complet -> l'idée c'est que ce soit un tooltip editable
-- Notes dans l'inspecteur on voit pas ID
-- Les dates dans les tableau sont un peu moche a cause d'un overlap entre le placeholder et le texte par défaut
- 
- 
+
+- ✅ J'arrive pas a créer de Note de bas de page dans les listes
+- ✅ Faire disparaitre le menu format (FormatToolbar) si ESC + si on scroll
+- ✅ identifiant footnote plutot en numéro (1,2,3,...) + Le design des Note de bas de page est a revoir complet -> l'idée c'est que ce soit un tooltip editable
+- ✅Notes dans l'inspecteur on voit pas ID
+- ✅Les dates dans les tableau sont un peu moche a cause d'un overlap entre le placeholder et le texte par défaut
+- ✅Dans les blocs citation le logo (a droite) overlap avec le texte quand il est très long
+
+
+ # Phase 18.3
+- /!\ Hyper grave : Je relance holo mes espaces on disparu! Il faut pas que ça arrive!
+- ✅ Les dossier sont cliquable et éditable comme fichier (.index.md dans le dossier)
+    -> je ne vois pas la fonctionnalité laisse moi reformuler -> Je dois pouvoir sélectionner un dossier et comme les fichiers l'editeur s'ouvre. Sauf que je tiens a garder l'arboresence de fichier standard (dossier/fichier). Je me disais que le contenu markdown de quand on clique sur un dossier pourrait être stocké a la racine de celui ci dans un fichier caché ".index.md"
+- Trouver un moyen de unlink un lien facilement (Raccourci clavier souris en plus, autre solution)
+    -> j'aime le bouton mais pour finir le raccourci clavier est innutile le bouton unline suffit et c'est tres bien
+- ✅Pouvoir ajouter des liens inter-espace (Choix dropdown de l'espace en premier, par défaut a l'espace courant)
+    -> La recherche de document semble cassé et il faudrai mieux voir l'espace de chaque fichier (highlight purple ?)
+- ✅ PopUp citation overlap -> Quand je perd le focus de la citation faudrai que le popup se ferme + le popup devrait avoir un z-index 9999
+    -> Toujours le cas, le popup pour choisir le type de citation rentre en collision avec la citation du dessous (je vois le bouton a travers et en plus je peux cliquer dessus alors que le menu est ouvert) et je peux ouvrir plusieurs de ces popup en meme temps
+- ✅Quand j'ai ouvert un fichier d'un espace et que je vais dans un autre espace et que j'ouvre un fichier j'ai toujours dans l'entête "Erreur fatale" c'est très désagréable 
+- ✅ Le design des footnote n'a pas été refait voici l'ux attendu : je sélectionne un mot, je clique footnote, le mot viens avec une couleur highlight (genre bleu) et la y'a un tooltip editable qui apparait. Quand je survol ce mot le tooltip editable réaparait
+- ✅ Notes dans l'inspecteur on voit pas ID
+    -> Dans l'inspecteur les ID des notes ne sont toujours pas visible
+- Dans les date de tableau -> si je sélectionne le champ et que je tappe -> "01051988" a la suite la saisie ne se fait pas correctement (jj/mm/0988)
+
+# Phase 18.4
+- Le .index.md généré pour un dossier doit avoir le titre deja défini au nom du dossier
+- Modifications git dans les tableau : Quand je modifie un champ dans un tableau ça adapte tout le markdown du tableau. Ce qui rend très joli en brute mais du coup provoque un commit qui contient tout le tableau ce qui, si deux utilisateur modifie le meme tableau, peux provoquer un merge inutile voici un exemple :
+    avant
+    | sadsa  | sdffdsfds |    |
+    | :----- | :-------- | :- |
+    | fdsfds | fds       |    |
+    | fsdfsd | fsd       |    |
+    | adsfds | fsdfds    |    |
+    | fgdgdf | dfgfdgfd  |    |
+    après
+    | sadsa  | sdffdsfds   |    |
+    | :----- | :---------- | :- |
+    | fdsfds | fds fsdf ds |    |
+    | fsdfsd | fsd         |    |
+    | adsfds | fsdfds      |    |
+    | fgdgdf | dfgfdgfd    |    |
+    Est-ce qu'il a une façon de faire pour eviter ça?
+- Dans les bloc citation si je change le type il faudrai ajouter un titre correspondant invisible dans le code brute. Dans github le code
+    > [!NOTE]
+    > dsadas sdffds f sdfdksjf ldsklfks dlk fdslkjf dslkjdsf jlljk fdsl kj ljkl jk jlkl jkjl  ljk klj kjlkljljkjlkljkljkljjllkljkjlkljk jlkjljlklkj jlk jlk ljk lkjjl klljk lk j lkjljkjlk
+    Affiche un petit titre "Note" avec l'icone i
+- Dans les date dans le tableau si je tape jour.mois en ommettan l'année faudrai que ça passe et mettre l'année courante (ex. 01.05 -> TAB et ça autocomplète 01.05.2026, pareil si je tape 1.1 -> TAB)
+
+# Phase 18.5
+- Exportation PDF
 
 # Phase 19
-- Documentation global sur toutes les fonctionnalités du projet
-
+- Documentation global sur toutes les fonctionnalités du projet en markdown github Documentation.md
+ 
 # Phase 20
 - Site internet du projet

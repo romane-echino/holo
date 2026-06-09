@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { CircleCheck, CircleX, ExternalLink, Image, Info, Link2, TriangleAlert } from 'lucide-react'
+import { CircleCheck, ExternalLink, Image, Info, Link2 } from 'lucide-react'
 import { cn } from '../utils/global'
 import { useConfig } from '../contexts/ConfigContext'
 import { ActivityCard } from './Activity'
@@ -214,18 +214,6 @@ function isExternalUrl(url: string): boolean {
 
 function isImageLikePath(url: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(url)
-}
-
-function getNoteTone(content: string) {
-  const normalized = content.trim()
-  if (/^(✅|✔️|☑️)/.test(normalized)) return { label: 'Success', Icon: CircleCheck, className: 'border-emerald-400/25 bg-emerald-400/8 text-emerald-200' }
-  if (/^(⚠️|⚠|🚧)/.test(normalized)) return { label: 'Warning', Icon: TriangleAlert, className: 'border-amber-400/25 bg-amber-400/8 text-amber-100' }
-  if (/^(❌|⛔|🛑)/.test(normalized)) return { label: 'Error', Icon: CircleX, className: 'border-rose-400/25 bg-rose-400/8 text-rose-100' }
-  return { label: 'Info', Icon: Info, className: 'border-sky-400/25 bg-sky-400/8 text-sky-100' }
-}
-
-function stripNoteMarkerText(content: string): string {
-  return content.replace(/^\s*(?:ℹ️|ℹ|✅|✔️|☑️|⚠️|⚠|🚧|❌|⛔|🛑)\s*/, '').trimStart()
 }
 
 
@@ -563,23 +551,18 @@ export function Inspector({ markdown, filePath, rootPath, onOpenLinkedFile }: In
             ) : (
               <ol className="space-y-2.5 text-sm text-holo-text-muted">
                 {footnotes.map((footnote) => {
-                  const tone = getNoteTone(footnote.content)
-                  const displayedContent = stripNoteMarkerText(footnote.content)
                   return (
                     <li key={footnote.domId}>
                       <button
                         type="button"
                         onClick={() => handleFootnoteClick(footnote.domId)}
-                        className={cn(
-                          'w-full rounded-holo-2xl border px-3.5 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.025)] transition hover:brightness-110 active:scale-[0.995]',
-                          tone.className,
-                        )}
+                        className="w-full rounded-holo-2xl border border-holo-border-soft bg-white/[0.02] px-3.5 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.025)] transition hover:border-holo-primary/30 hover:bg-holo-primary/[0.06] active:scale-[0.995]"
                       >
                         <div className="mb-2 flex items-center gap-2">
-                          <tone.Icon size={15} />
-                          <span className="text-xs font-semibold uppercase tracking-[0.12em]">{tone.label}</span>
+                          <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-holo-primary/30 bg-holo-primary/10 px-1.5 text-[10px] font-semibold leading-none text-holo-primary-soft">{footnote.label}</span>
+                          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-holo-text-faint">Note</span>
                         </div>
-                        <p className="text-sm leading-relaxed text-inherit">{displayedContent}</p>
+                        <p className="text-sm leading-relaxed text-holo-text-muted">{footnote.content}</p>
                       </button>
                     </li>
                   )

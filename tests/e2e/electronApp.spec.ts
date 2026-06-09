@@ -274,4 +274,29 @@ test.describe('Electron app — critical flows', () => {
       await fs.rm(launched.configHome, { recursive: true, force: true })
     }
   })
+
+  test('le menu principal desktop peut etre masque puis reaffiche depuis le header', async () => {
+    const workspace = await createStructuredWorkspace({
+      'doc.md': '# Test\n',
+    })
+
+    const launched = await launchHolo([`--holo-root=${workspace.rootPath}`])
+
+    try {
+      await launched.page.setViewportSize({ width: 1440, height: 900 })
+
+      const sidebarSearchButton = launched.page.getByRole('button', { name: 'Rechercher...' })
+      await expect(sidebarSearchButton).toBeVisible({ timeout: 20_000 })
+
+      await launched.page.getByRole('button', { name: 'Masquer le menu principal' }).click()
+      await expect(sidebarSearchButton).toBeHidden({ timeout: 10_000 })
+
+      await launched.page.getByRole('button', { name: 'Afficher le menu principal' }).click()
+      await expect(sidebarSearchButton).toBeVisible({ timeout: 10_000 })
+    } finally {
+      await launched.app.close()
+      await fs.rm(workspace.rootPath, { recursive: true, force: true })
+      await fs.rm(launched.configHome, { recursive: true, force: true })
+    }
+  })
 })

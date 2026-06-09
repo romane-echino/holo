@@ -3,12 +3,15 @@
  */
 
 import { AlertCircle, ChevronDown, CircleX, FileText, Info, Sparkles, TriangleAlert, type LucideIcon } from 'lucide-react'
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { InlineEditor } from '../InlineEditor'
 import type { InlineEditorHandle } from '../InlineEditor'
 import type { BlockquoteNode, ParagraphNode, InlineNode } from '../lib/types'
 import { BLOCKQUOTE_ALERT_LABELS, buildBlockquoteAlertNodes, parseBlockquoteAlert, type BlockquoteAlertType } from '../lib/blockquoteAlerts'
 import { cn } from '../../../utils/global'
+
+const BLOCKQUOTE_MENU_OPEN_EVENT = 'blockquote-type-menu-open'
 
 export interface BlockquoteBlockProps {
   node: BlockquoteNode
@@ -21,16 +24,21 @@ export interface BlockquoteBlockProps {
   onSplit?: (after: InlineNode[]) => void
   onSmartPaste?: (before: InlineNode[], after: InlineNode[], md: string) => void
   onCreateFootnote?: (selectedText: string) => string | null
+  onRemoveFootnote?: (identifier: string) => void
 }
 
 export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockProps>(
-  function BlockquoteBlock({ node, className, onChange, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onSplit, onSmartPaste, onCreateFootnote }, ref) {
+  function BlockquoteBlock({ node, className, onChange, onEnterAtEnd, onBackspaceAtStart, onArrowUp, onArrowDown, onSplit, onSmartPaste, onCreateFootnote, onRemoveFootnote }, ref) {
     const firstPara = node.children[0] as ParagraphNode | undefined
     const inlines: InlineNode[] = firstPara?.type === 'paragraph' ? firstPara.children : []
     const editorRef = useRef<InlineEditorHandle | null>(null)
     const menuRef = useRef<HTMLDivElement | null>(null)
+    const buttonRef = useRef<HTMLButtonElement | null>(null)
+    const popupRef = useRef<HTMLDivElement | null>(null)
     const alert = useMemo(() => parseBlockquoteAlert(inlines), [inlines])
     const [isTypeMenuOpen, setIsTypeMenuOpen] = useState(false)
+    const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null)
+    const instanceId = useId()
 
     const alertOptions: Array<{ value: BlockquoteAlertType | null; label: string; Icon: LucideIcon; iconClassName: string }> = [
       { value: null, label: 'Citation simple', Icon: FileText, iconClassName: 'text-holo-text-faint' },
@@ -77,12 +85,23 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
 
       const handlePointerDown = (event: MouseEvent) => {
         if (menuRef.current?.contains(event.target as Node)) return
+        if (popupRef.current?.contains(event.target as Node)) return
         setIsTypeMenuOpen(false)
       }
 
       document.addEventListener('mousedown', handlePointerDown)
       return () => document.removeEventListener('mousedown', handlePointerDown)
     }, [isTypeMenuOpen])
+
+    // Fermer ce menu quand un autre blockquote ouvre le sien
+    useEffect(() => {
+      const handler = (e: Event) => {
+        const custom = e as CustomEvent<{ instanceId: string }>
+        if (custom.detail.instanceId !== instanceId) setIsTypeMenuOpen(false)
+      }
+      window.addEventListener(BLOCKQUOTE_MENU_OPEN_EVENT, handler)
+      return () => window.removeEventListener(BLOCKQUOTE_MENU_OPEN_EVENT, handler)
+    }, [instanceId])
 
     const handleSave = (newChildren: InlineNode[]) => {
       if (!onChange) return
@@ -115,14 +134,16 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
         className={cn(
           'group/blockquote relative my-3 border-l-[3px] pl-4 py-2',
           alert
-            ? cn('rounded-r-holo-xl', currentAlertStyles?.wrapper)
-            : 'border-holo-primary/50 italic text-holo-text-muted',
+            ? cn('rounded-r-holo-xl pr-10', currentAlertStyles?.wrapper)
+            : 'border-holo-primary/50 italic text-holo-text-muted pr-10',
           className,
         )}
         data-blockquote-alert={alert?.type}
         onBlurCapture={(event) => {
           const nextFocused = event.relatedTarget as Node | null
           if (nextFocused && event.currentTarget.contains(nextFocused)) return
+          // Ne pas fermer si le focus part vers le popup (portail hors du DOM blockquote)
+          if (nextFocused && popupRef.current?.contains(nextFocused)) return
           setIsTypeMenuOpen(false)
         }}
         onMouseDown={(event) => {
@@ -135,12 +156,20 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
       >
         <div ref={menuRef} className="absolute right-1 top-1 z-10 flex items-center gap-2">
           <button
+            ref={buttonRef}
             type="button"
             onMouseDown={(event) => {
               event.preventDefault()
               event.stopPropagation()
             }}
-            onClick={() => setIsTypeMenuOpen((current) => !current)}
+            onClick={() => {
+              if (!isTypeMenuOpen) {
+                const rect = buttonRef.current?.getBoundingClientRect()
+                if (rect) setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+                window.dispatchEvent(new CustomEvent(BLOCKQUOTE_MENU_OPEN_EVENT, { detail: { instanceId } }))
+              }
+              setIsTypeMenuOpen((current) => !current)
+            }}
             aria-label={`Type de citation ${currentTypeLabel}`}
             aria-expanded={isTypeMenuOpen}
             className={cn(
@@ -170,8 +199,12 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
             </span>
           </button>
 
-          {isTypeMenuOpen && (
-            <div className="absolute right-0 top-10 z-[9999] w-[8.5rem] rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl">
+          {isTypeMenuOpen && menuPosition && createPortal(
+            <div
+              ref={popupRef}
+              style={{ position: 'fixed', top: menuPosition.top, right: menuPosition.right, zIndex: 9999 }}
+              className="w-[8.5rem] rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 p-1.5 shadow-[0_18px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl"
+            >
               <div className="grid grid-cols-3 justify-items-center gap-1">
               {alertOptions.map((option) => {
                 const isActive = (alert?.type ?? null) === option.value
@@ -198,9 +231,16 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
                 )
               })}
               </div>
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
+        {alert && (
+          <div className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold leading-none">
+            <currentTypeOption.Icon size={15} className={currentTypeOption.iconClassName} />
+            <span>{currentTypeLabel}</span>
+          </div>
+        )}
         <InlineEditor
           ref={editorRef}
           initialContent={visibleInlines}
@@ -212,6 +252,7 @@ export const BlockquoteBlock = forwardRef<InlineEditorHandle, BlockquoteBlockPro
           onSplit={onSplit}
           onSmartPaste={onSmartPaste}
           onCreateFootnote={onCreateFootnote}
+          onRemoveFootnote={onRemoveFootnote}
           blockType="blockquote"
           placeholder={alert ? 'Contenu de l’alerte…' : 'Citation…'}
           className={cn(alert && 'text-holo-text [&_[data-placeholder]]:text-holo-text-faint/70')}

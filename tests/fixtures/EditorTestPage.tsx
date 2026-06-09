@@ -14,6 +14,7 @@ import { createRoot } from 'react-dom/client'
 import { BlockEditor } from '../../src/parts/MarkdownEditor/BlockEditor'
 import { WorkspaceContext, type WorkspaceContextType } from '../../src/contexts/WorkspaceContext'
 import { EditorFileContext } from '../../src/parts/MarkdownEditor/EditorFileContext'
+import { FootnotesProvider } from '../../src/contexts/FootnotesContext'
 import '../../src/index.css'
 
 declare global {
@@ -89,7 +90,9 @@ function TestApp() {
             style={{ display: 'none' }}
           >{md}</pre>
 
-          <BlockEditor markdown={md} onChange={setMd} />
+          <FootnotesProvider>
+            <BlockEditor markdown={md} onChange={setMd} />
+          </FootnotesProvider>
         </div>
       </EditorFileContext>
     </WorkspaceContext.Provider>

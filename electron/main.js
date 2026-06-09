@@ -159,19 +159,30 @@ async function writeHoloConfig(config) {
   await fs.writeFile(getHoloConfigPath(), JSON.stringify(config, null, 2), 'utf8')
 }
 
+// Sérialise toutes les mutations de la config pour éviter les pertes de mises à jour
+// (read-modify-write concurrents qui se clobberent mutuellement).
+let configWriteChain = Promise.resolve()
+function withConfigLock(task) {
+  const result = configWriteChain.then(task, task)
+  configWriteChain = result.then(() => undefined, () => undefined)
+  return result
+}
+
 async function getHoloConfigValue(key) {
   const config = await readHoloConfig()
   return config[key] ?? null
 }
 
 async function setHoloConfigValue(key, value) {
-  const config = await readHoloConfig()
-  if (value === null || value === undefined) {
-    delete config[key]
-  } else {
-    config[key] = value
-  }
-  await writeHoloConfig(config)
+  return withConfigLock(async () => {
+    const config = await readHoloConfig()
+    if (value === null || value === undefined) {
+      delete config[key]
+    } else {
+      config[key] = value
+    }
+    await writeHoloConfig(config)
+  })
 }
 
 async function getHoloConfig() {
@@ -179,7 +190,9 @@ async function getHoloConfig() {
 }
 
 async function setHoloConfig(cfg) {
-  await writeHoloConfig(typeof cfg === 'object' && cfg !== null ? cfg : {})
+  return withConfigLock(async () => {
+    await writeHoloConfig(typeof cfg === 'object' && cfg !== null ? cfg : {})
+  })
 }
 
 function normalizeMarkdownFilename(name) {
@@ -2084,7 +2097,21 @@ ipcMain.handle('git:get-contributors', async () => {
 })
 
 ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail) => {
-  const cwd = currentRootPath
+  let cwd = currentRootPath
+  // Si le fichier n'est pas dans l'espace courant (race condition lors d'un switch),
+  // trouver l'espace qui contient ce fichier parmi les espaces enregistrés.
+  if (filePath && cwd) {
+    const normalizedFile = path.normalize(filePath)
+    const normalizedCwd = path.normalize(cwd)
+    if (!normalizedFile.startsWith(normalizedCwd + path.sep) && normalizedFile !== normalizedCwd) {
+      const spaces = await getRecentFolders().catch(() => [])
+      const owningSpace = spaces
+        .map(s => path.normalize(s))
+        .sort((a, b) => b.length - a.length) // espace le plus spécifique en premier
+        .find(s => normalizedFile.startsWith(s + path.sep))
+      if (owningSpace) cwd = owningSpace
+    }
+  }
   if (!cwd) return { ok: true, committed: false, reason: 'no-root-path' }
 
   const isRepo = await isGitRepository(cwd)
@@ -2577,6 +2604,16 @@ ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions)
   const destPath = path.join(imagesDir, uniqueName)
   await fs.writeFile(destPath, buffer)
 
+  // Stage l'image dans git pour qu'elle soit incluse dans le prochain commit
+  // auto-save du document (le commit auto-save commite tout l'index).
+  try {
+    if (await isGitRepository(currentRootPath)) {
+      await runGit(['add', '--', path.relative(currentRootPath, destPath)], currentRootPath)
+    }
+  } catch (err) {
+    console.error('[main] fs:save-image git add', err)
+  }
+
   return { ok: true, relativePath: `images/${uniqueName}`, absolutePath: destPath }
 })
 
@@ -2620,9 +2657,6 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
-
-  // Purge unique au démarrage des dossiers récents invalides
-  cleanupRecentFolders().catch(() => { })
 
   // Pré-charger tous les espaces récents dans knownRootPaths (pour la lecture cross-espace)
   getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => { })

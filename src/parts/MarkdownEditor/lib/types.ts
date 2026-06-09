@@ -17,7 +17,7 @@ export type BreakNode     = { type: 'break' }
 export type UnderlineNode = { type: 'underline';  children: InlineNode[] }
 export type SuperscriptNode = { type: 'superscript'; children: InlineNode[] }
 export type SubscriptNode = { type: 'subscript'; children: InlineNode[] }
-export type FootnoteReferenceNode = { type: 'footnoteReference'; identifier: string; label?: string | null }
+export type FootnoteReferenceNode = { type: 'footnoteReference'; identifier: string; label?: string | null; anchorText?: string }
 
 export type InlineNode =
   | TextNode | StrongNode | EmphasisNode | InlineCodeNode

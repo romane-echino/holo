@@ -5,6 +5,7 @@ import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
+import { FootnotesProvider } from '../contexts/FootnotesContext'
 import { useConfig } from '../contexts/ConfigContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { ContextMenu } from '../components/ContextMenu'
@@ -1202,7 +1203,9 @@ export function EditorFrame({
               </div>
             )}
             <EditorFileContext.Provider value={{ currentFilePath: filepath }}>
-              <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} onOpenLinkedFile={onOpenLinkedFile} fontScale={contentFontScale} />
+              <FootnotesProvider key={filepath}>
+                <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} onOpenLinkedFile={onOpenLinkedFile} fontScale={contentFontScale} />
+              </FootnotesProvider>
             </EditorFileContext.Provider>
           </article>
         )}

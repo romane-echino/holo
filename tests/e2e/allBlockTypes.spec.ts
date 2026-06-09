@@ -533,9 +533,9 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
     )
     expect(metadataMd).toContain('Arrière-plan')
 
-    await expect(page.locator('tbody input[type="date"]')).toHaveCount(4)
-    await expect(page.locator('[data-date-placeholder="jj/mm/aaaa"]')).toHaveCount(1)
-    await page.locator('tbody input[type="date"]').nth(1).fill('2026-04-22')
+    await expect(page.locator('tbody input[type="text"][placeholder="jj/mm/aaaa"]')).toHaveCount(4)
+    await page.locator('tbody input[type="text"][placeholder="jj/mm/aaaa"]').nth(1).fill('22042026')
+    await page.locator('tbody input[type="text"][placeholder="jj/mm/aaaa"]').nth(1).blur()
 
     const assistedMd = await waitForMd(page, (s) =>
       findTableRowIndex(s, 'Alpha', '22/04/2026') !== -1,
