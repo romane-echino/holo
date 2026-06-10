@@ -9,12 +9,13 @@ import { useConfig } from './contexts/ConfigContext'
 import { getBaseName, buildShareableHoloLink, flatTreeFiles } from './lib/appUtils'
 import { remapTrackedPath } from './lib/markdownLinks'
 import { updateMarkdownBooleanHeaderField, updateMarkdownHeaderField } from './lib/markdown'
+import { normalizeGitState } from './lib/gitUtils'
 import { useSearchIndex, useStartupNavigation, useWorkspaceFolders } from './hooks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
 import type { SpaceFileNode, TreeFileMeta } from './parts/SpacePanel'
-import { Clock, Star, Bot, Archive, Folder, FileText, X } from 'lucide-react'
+import { Clock, Star, Bot, Archive, Folder, FileText, X, GitPullRequestArrow } from 'lucide-react'
 import { EditorFrame } from './parts/EditorFrame'
 import { SpaceCredentialsModal } from './parts/SpaceCredentialsModal'
 import type { SpaceCredentials } from './parts/Settings'
@@ -98,6 +99,7 @@ export default function App2() {
     setDropboxAccessToken, setDropboxFolderPath,
     setGdriveAccessToken, setGdriveFolderId,
     setRepoImageStorageMode,
+    setGitState,
     shareGatewayBaseUrl,
   } = useConfig()
 
@@ -845,6 +847,112 @@ export default function App2() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
+  // ─── Synchronisation distante en arrière-plan (fetch récurrent) ─────────────
+  // Nonce pour forcer le remontage de l'éditeur quand on recharge le fichier
+  // ouvert avec une version distante (stratégie C).
+  const [reloadNonce, setReloadNonce] = useState(0)
+  // Bannière douce affichée quand des modifications distantes existent mais
+  // n'ont pas pu être rapatriées sans risque (stratégie B).
+  const [remoteBanner, setRemoteBanner] = useState<{ message: string } | null>(null)
+  const rootPathRef = useRef(rootPath)
+  rootPathRef.current = rootPath
+
+  const samePath = useCallback((a?: string | null, b?: string | null) => {
+    if (!a || !b) return false
+    return a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
+  }, [])
+
+  const reloadOpenFileFromDisk = useCallback(async () => {
+    const holo = window.holo
+    const openPath = openedFileRef.current?.path
+    if (!holo || !openPath) return
+    const fresh = await holo.readFile(openPath).catch(() => null)
+    if (fresh == null || !samePath(openedFileRef.current?.path, openPath)) return
+    setOpenedFile((prev) => (prev && samePath(prev.path, openPath) ? { ...prev, content: fresh } : prev))
+    setLiveMarkdown(null)
+    setReloadNonce((n) => n + 1)
+  }, [samePath])
+
+  const runBackgroundGitSync = useCallback(async () => {
+    const holo = window.holo
+    if (!holo?.gitPullIfSafe) return
+    if (!rootPathRef.current) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    try {
+      const result = await holo.gitPullIfSafe()
+      if (!result) return
+      // Rafraîchir badges (incoming / conflits) sans refetch supplémentaire
+      const nextState = await holo.gitGetState(false).catch(() => null)
+      if (nextState) setGitState(normalizeGitState(nextState))
+
+      const openPath = openedFileRef.current?.path
+      const openFileChangedRemotely = Boolean(
+        openPath && result.changedFiles?.some((f) => samePath(f, openPath)),
+      )
+
+      if (result.pulled) {
+        // Avance rapide silencieuse réussie (arbre propre garanti). On recharge
+        // le document ouvert s'il a été mis à jour côté distant.
+        if (openFileChangedRemotely) await reloadOpenFileFromDisk()
+        setRemoteBanner(null)
+      } else if ((result.reason === 'dirty' || result.reason === 'diverged') && result.incoming > 0) {
+        // Changements distants présents mais rapatriement non sûr → bannière douce.
+        setRemoteBanner({
+          message: openFileChangedRemotely
+            ? 'Ce document a été modifié ailleurs. Récupérez la dernière version.'
+            : 'Des modifications sont disponibles. Récupérez-les quand vous voulez.',
+        })
+      } else {
+        setRemoteBanner(null)
+      }
+    } catch {
+      // La synchronisation de fond ne doit jamais perturber l'utilisateur.
+    }
+  }, [reloadOpenFileFromDisk, samePath, setGitState])
+
+  const runBackgroundGitSyncRef = useRef(runBackgroundGitSync)
+  runBackgroundGitSyncRef.current = runBackgroundGitSync
+
+  // Récupère les changements distants à la demande (clic sur la bannière) :
+  // commit des éditions en cours puis sync complète (pull --rebase), avec
+  // gestion douce des conflits.
+  const handlePullRemoteChanges = useCallback(async () => {
+    const holo = window.holo
+    if (!holo) return
+    setRemoteBanner(null)
+    try {
+      window.dispatchEvent(new CustomEvent('holo:flush-editor'))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await performGitSaveRef.current()
+      const result = await holo.gitSync()
+      const nextState = await holo.gitGetState(false).catch(() => null)
+      if (nextState) setGitState(normalizeGitState(nextState))
+      if (result?.hadConflicts) {
+        setRemoteBanner({ message: 'Conflit détecté : ouvrez le panneau Git pour choisir la version à garder.' })
+        return
+      }
+      await reloadOpenFileFromDisk()
+    } catch (err) {
+      setRemoteBanner({ message: err instanceof Error ? err.message : 'Échec de la récupération.' })
+    }
+  }, [reloadOpenFileFromDisk, setGitState])
+
+  // Timer 60 s + vérification au retour de focus de la fenêtre
+  useEffect(() => {
+    if (!rootPath) return
+    void runBackgroundGitSyncRef.current()
+    const interval = window.setInterval(() => { void runBackgroundGitSyncRef.current() }, 60_000)
+    const onFocus = () => { void runBackgroundGitSyncRef.current() }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [rootPath])
+
+  // La bannière concerne le document affiché : on la masque au changement de fichier.
+  useEffect(() => { setRemoteBanner(null) }, [openedFile?.path])
+
   // Fermer le fichier ouvert s'il est supprimé ou archivé depuis SpacePanel
   const handleToggleTemplate = useCallback(async () => {
     const path = openedFile?.path
@@ -1031,9 +1139,32 @@ export default function App2() {
 
         {/* Zone éditeur — visible sur desktop et sur mobile quand un fichier est sélectionné */}
         <div className={cn('overflow-y-auto holo-scrollbar', mobileEditorOpen ? 'block' : 'hidden lg:block')}>
+          {openedFile && remoteBanner && (
+            <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-amber-400/30 bg-amber-500/10 px-4 py-2 text-[13px] text-holo-text">
+              <span className="flex items-center gap-2">
+                <GitPullRequestArrow size={15} className="shrink-0 text-amber-500" />
+                {remoteBanner.message}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => void handlePullRemoteChanges()}
+                  className="rounded-md bg-amber-500/90 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-amber-500"
+                >
+                  Récupérer
+                </button>
+                <button
+                  onClick={() => setRemoteBanner(null)}
+                  className="rounded-md p-1 text-holo-text-faint hover:text-holo-text"
+                  aria-label="Ignorer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
           {openedFile ? (
             <EditorFrame
-              key={openedFile.path}
+              key={`${openedFile.path}#${reloadNonce}`}
               filepath={openedFile.path}
               markdown={openedFile.content}
               onMarkdownChange={handleMarkdownChange}

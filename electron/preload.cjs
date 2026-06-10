@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('holo', {
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitSync: () => ipcRenderer.invoke('git:sync'),
   gitPull: () => ipcRenderer.invoke('git:pull'),
+  gitPullIfSafe: () => ipcRenderer.invoke('git:pull-if-safe'),
   gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
   gitResolveConflict: (filePath, strategy) => ipcRenderer.invoke('git:resolve-conflict', filePath, strategy),
   saveImage: (name, dataBase64, options) => ipcRenderer.invoke('fs:save-image', name, dataBase64, options),

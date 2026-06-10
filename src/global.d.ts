@@ -66,6 +66,16 @@ type HoloGitSyncResult = {
   error: string | null
 }
 
+type HoloGitPullIfSafeResult = {
+  ok: boolean
+  pulled: boolean
+  reason: 'no-root' | 'not-a-repo' | 'no-remote' | 'fetch-failed' | 'up-to-date' | 'dirty' | 'diverged' | 'ff-failed' | 'pulled'
+  incoming: number
+  outgoing: number
+  changedFiles: string[]
+  error?: string
+}
+
 type HoloGitClonePayload = {
   repoUrl: string
   username?: string
@@ -187,6 +197,7 @@ interface HoloApi {
   gitCommit: (message: string) => Promise<HoloGitCommitResult>
   gitSync: () => Promise<HoloGitSyncResult>
   gitPull: () => Promise<{ ok: true; output: string }>
+  gitPullIfSafe: () => Promise<HoloGitPullIfSafeResult>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
   gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs' }>
   saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>

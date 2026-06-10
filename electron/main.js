@@ -2469,6 +2469,65 @@ ipcMain.handle('git:pull', async () => {
   }
 })
 
+// Récupération récurrente en arrière-plan : fetch puis pull en avance rapide
+// (fast-forward) UNIQUEMENT si c'est totalement sans risque, c.-à-d. :
+//   - l'arbre de travail est propre (aucune édition locale non commitée), et
+//   - aucun commit local en attente (pas de divergence).
+// Dans tous les autres cas on ne touche à rien et on renvoie la raison, afin
+// que le renderer affiche une bannière douce plutôt que de risquer un conflit.
+ipcMain.handle('git:pull-if-safe', async () => {
+  const cwd = currentRootPath
+  if (!cwd) return { ok: true, pulled: false, reason: 'no-root', incoming: 0, outgoing: 0, changedFiles: [] }
+
+  const isRepo = await isGitRepository(cwd)
+  if (!isRepo) return { ok: true, pulled: false, reason: 'not-a-repo', incoming: 0, outgoing: 0, changedFiles: [] }
+
+  const hasOrigin = await hasRemoteNamed(cwd, 'origin')
+  if (!hasOrigin) return { ok: true, pulled: false, reason: 'no-remote', incoming: 0, outgoing: 0, changedFiles: [] }
+
+  const fetchResult = await runGit(['fetch', '--all', '--prune'], cwd)
+  if (!fetchResult.ok) {
+    return { ok: false, pulled: false, reason: 'fetch-failed', error: fetchResult.stderr, incoming: 0, outgoing: 0, changedFiles: [] }
+  }
+
+  const { incoming, outgoing } = await getAheadBehind(cwd)
+
+  // Liste des fichiers qui diffèrent entre l'état local et le distant.
+  const diffResult = await runGit(['diff', '--name-only', 'HEAD', '@{upstream}'], cwd)
+  const changedFiles = diffResult.ok
+    ? diffResult.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((rel) => path.join(cwd, rel))
+    : []
+
+  if (incoming === 0) {
+    return { ok: true, pulled: false, reason: 'up-to-date', incoming, outgoing, changedFiles: [] }
+  }
+
+  // Y a-t-il des modifications locales non commitées ? → pas sûr, on diffère.
+  const statusResult = await runGit(['status', '--porcelain'], cwd)
+  const hasLocalChanges = statusResult.ok
+    && statusResult.stdout.split('\n').map((line) => line.trim()).filter(Boolean).length > 0
+  if (hasLocalChanges) {
+    return { ok: true, pulled: false, reason: 'dirty', incoming, outgoing, changedFiles }
+  }
+
+  // Commits locaux non poussés → divergence → un rebase pourrait créer un conflit.
+  if (outgoing > 0) {
+    return { ok: true, pulled: false, reason: 'diverged', incoming, outgoing, changedFiles }
+  }
+
+  // Cas sûr : avance rapide garantie sans conflit ni commit de merge.
+  const ffResult = await runGit(['merge', '--ff-only', '@{upstream}'], cwd)
+  if (!ffResult.ok) {
+    return { ok: true, pulled: false, reason: 'ff-failed', incoming, outgoing, changedFiles }
+  }
+
+  return { ok: true, pulled: true, reason: 'pulled', incoming: 0, outgoing, changedFiles }
+})
+
 ipcMain.handle('git:merge', async (_event, branch) => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
