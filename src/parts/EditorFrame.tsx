@@ -615,7 +615,7 @@ export function EditorFrame({
     if (markdown.trim() === '') {
       const today = nowDateStr()
       const title = filenameFromPath(filepath).replace(/\.[^/.]+$/, '')
-      return { title, author: appAuthor || undefined, created: today, updated: today }
+      return { title, author: appAuthor || undefined, created: today }
     }
     return parseFrontmatter(markdown).fm
   })
@@ -627,6 +627,20 @@ export function EditorFrame({
   fmRef.current = fm
   const bodyRef = useRef(body)
   bodyRef.current = body
+
+  // Date de « Modifié » dérivée du mtime disque (l'horodatage n'est plus stocké
+  // dans le frontmatter pour éviter les conflits git à chaque édition concurrente).
+  const [fileModifiedAt, setFileModifiedAt] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    let cancelled = false
+    const loadStats = async () => {
+      if (!filepath) { if (!cancelled) setFileModifiedAt(undefined); return }
+      const stats = await window.holo?.getPathStats(filepath).catch(() => null)
+      if (!cancelled) setFileModifiedAt(stats?.modifiedAt)
+    }
+    void loadStats()
+    return () => { cancelled = true }
+  }, [filepath, saveStatus])
 
   const buildDocumentMarkdown = useCallback((nextFm: FrontmatterData, nextBody: string) => {
     return serializeFrontmatter(nextFm) + nextBody
@@ -694,7 +708,9 @@ export function EditorFrame({
 
   const handleFmChange = useCallback((updates: Partial<FrontmatterData>) => {
     const next: FrontmatterData = {}
-    for (const [k, v] of Object.entries({ ...fmRef.current, updated: nowDateStr(), ...updates })) {
+    const merged: FrontmatterData = { ...fmRef.current, ...updates }
+    delete merged.updated
+    for (const [k, v] of Object.entries(merged)) {
       if (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== '') next[k] = v
     }
     setFm(next)
@@ -705,12 +721,16 @@ export function EditorFrame({
   }, [buildDocumentMarkdown, emitMarkdownChange, scheduleDocumentHistorySnapshot])
 
   const handleBodyChange = useCallback((newBody: string) => {
-    const updatedFm = { ...fmRef.current, updated: nowDateStr() }
-    fmRef.current = updatedFm
-    setFm(updatedFm)
+    // L'horodatage de modification n'est plus persisté dans le frontmatter :
+    // il provoquait un conflit git à chaque édition concurrente (même ligne en
+    // tête de fichier). La date « Modifié » provient désormais du mtime disque.
+    const nextFm = { ...fmRef.current }
+    delete nextFm.updated
+    fmRef.current = nextFm
+    setFm(nextFm)
     setBody(newBody)
     bodyRef.current = newBody
-    emitMarkdownChange(serializeFrontmatter(updatedFm) + newBody)
+    emitMarkdownChange(serializeFrontmatter(nextFm) + newBody)
   }, [emitMarkdownChange])
 
   useEffect(() => {
@@ -1147,7 +1167,7 @@ export function EditorFrame({
               <span className="select-none text-holo-text-faint/30">·</span>
               <ReadOnlyMetaField label="Créé" value={relativeTime(fm.created as string | undefined)} title={fm.created as string | undefined} />
               <span className="select-none text-holo-text-faint/30">·</span>
-              <ReadOnlyMetaField label="Modifié" value={relativeTime(fm.updated as string | undefined)} title={fm.updated as string | undefined} />
+              <ReadOnlyMetaField label="Modifié" value={relativeTime(fileModifiedAt)} title={fileModifiedAt} />
               <span className="select-none text-holo-text-faint/30">·</span>
               <TagsMetaField tags={Array.isArray(fm.tags) ? fm.tags as string[] : []} onChange={(t) => handleFmChange({ tags: t })} />
             </div>
