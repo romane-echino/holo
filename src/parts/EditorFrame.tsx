@@ -12,6 +12,35 @@ import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import { MergeConflictDiffModal } from './MergeConflictDiffModal'
 
+// Coloration des lignes d'un fichier en conflit (mode brut de résolution manuelle).
+// La région « nôtre » (entre <<<<<<< et =======) est teintée en vert, la région
+// « distante » (entre ======= et >>>>>>>) en bleu, et les lignes de marqueurs en gras.
+function highlightConflictLines(text: string) {
+  let region: 'none' | 'ours' | 'theirs' = 'none'
+  return text.split('\n').map((line, index) => {
+    let cls = ''
+    if (line.startsWith('<<<<<<<')) {
+      region = 'ours'
+      cls = 'bg-emerald-500/20 font-semibold text-emerald-300'
+    } else if (region !== 'none' && line.startsWith('=======')) {
+      region = 'theirs'
+      cls = 'bg-holo-glass/60 font-semibold text-holo-text-faint'
+    } else if (region !== 'none' && line.startsWith('>>>>>>>')) {
+      region = 'none'
+      cls = 'bg-sky-500/20 font-semibold text-sky-300'
+    } else if (region === 'ours') {
+      cls = 'bg-emerald-500/[0.06]'
+    } else if (region === 'theirs') {
+      cls = 'bg-sky-500/[0.06]'
+    }
+    return (
+      <span key={index} className={cn('block break-words', cls)}>
+        {line === '' ? '\u200B' : line}
+      </span>
+    )
+  })
+}
+
 type EditorFrameProps = {
   filepath: string
   markdown?: string
@@ -564,6 +593,9 @@ export function EditorFrame({
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState('')
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const [manualResolution, setManualResolution] = useState(false)
+  const [manualError, setManualError] = useState<string | null>(null)
+  const [manualBusy, setManualBusy] = useState(false)
   const documentHistoryRef = useRef<{ stack: string[]; pos: number }>({ stack: [markdown], pos: 0 })
   const documentHistoryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastPublishedFilepathRef = useRef(filepath)
@@ -746,6 +778,14 @@ export function EditorFrame({
     return () => window.removeEventListener('holo:flush-editor', handleFlushEditor)
   }, [emitMarkdownChange, rawMode, rawValue])
 
+  // Permet à l'app d'ouvrir directement le modal de résolution (ex. clic sur
+  // « Résoudre » dans la bannière quand un conflit/rebase est déjà en cours).
+  useEffect(() => {
+    const openResolution = () => setDiffModalOpen(true)
+    window.addEventListener('holo:open-conflict-resolution', openResolution)
+    return () => window.removeEventListener('holo:open-conflict-resolution', openResolution)
+  }, [])
+
   const enterRawMode = useCallback(() => {
     setRawValue(serializeFrontmatter(fmRef.current) + bodyRef.current)
     setRawMode(true)
@@ -764,6 +804,42 @@ export function EditorFrame({
     // Notifie le parent pour rester en sync (évite désynchronisation si BlockEditor émet une version dégradée)
     emitMarkdownChange(rawValue)
   }, [emitMarkdownChange, pushDocumentHistorySnapshot, rawValue])
+
+  // ── Résolution manuelle d'un conflit (mode brut affichant les marqueurs git) ──
+  const enterManualResolution = useCallback(async () => {
+    // On lit les octets exacts du disque (marqueurs <<<<<<< compris) plutôt que de
+    // re-sérialiser le frontmatter/corps, afin de présenter le conflit tel quel.
+    const raw = await window.holo?.readFile(filepath).catch(() => null)
+    setRawValue(raw ?? (serializeFrontmatter(fmRef.current) + bodyRef.current))
+    setManualError(null)
+    setManualResolution(true)
+    setRawMode(true)
+    setMenuAnchorEl(null)
+  }, [filepath])
+
+  const cancelManualResolution = useCallback(() => {
+    setManualResolution(false)
+    setManualError(null)
+    setRawMode(false)
+  }, [])
+
+  const finishManualResolution = useCallback(async () => {
+    setManualBusy(true)
+    setManualError(null)
+    try {
+      await window.holo?.writeFile(filepath, rawValue)
+      const res = await window.holo?.gitResolveConflict(filepath, 'manual')
+      setManualResolution(false)
+      setRawMode(false)
+      window.dispatchEvent(new CustomEvent('holo:conflict-resolved', {
+        detail: { path: filepath, pushError: res?.pushError ?? null },
+      }))
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : 'Échec de la résolution manuelle.')
+    } finally {
+      setManualBusy(false)
+    }
+  }, [filepath, rawValue])
 
   const handleRawChange = useCallback((value: string) => {
     setRawValue(value)
@@ -1197,17 +1273,70 @@ export function EditorFrame({
         </header>
 
         {rawMode ? (
-          <textarea
-            ref={rawTextareaRef}
-            value={rawValue}
-            onChange={(e) => handleRawChange(e.target.value)}
-            className="mt-2 w-full resize-none rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-holo-text-soft outline-none focus:border-holo-primary/30"
-            style={{ minHeight: '200px', overflowY: 'hidden' }}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-          />
+          manualResolution ? (
+            <div className="mt-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-holo-xl border border-amber-600/30 bg-amber-500/10 px-4 py-3">
+                <p className="flex-1 text-sm text-amber-200">
+                  Résolution manuelle : modifiez le texte pour ne garder que ce que vous voulez, puis retirez les
+                  lignes <code className="rounded bg-black/30 px-1 font-mono text-[11px]">&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>,{' '}
+                  <code className="rounded bg-black/30 px-1 font-mono text-[11px]">=======</code> et{' '}
+                  <code className="rounded bg-black/30 px-1 font-mono text-[11px]">&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={cancelManualResolution}
+                    disabled={manualBusy}
+                    className="rounded-holo-lg border border-holo-border-soft bg-transparent px-3 py-1.5 text-xs text-holo-text-muted transition hover:bg-holo-glass disabled:opacity-50"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={() => void finishManualResolution()}
+                    disabled={manualBusy}
+                    className="rounded-holo-lg border border-emerald-600/40 bg-emerald-900/30 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-800/40 disabled:opacity-50"
+                  >
+                    {manualBusy ? 'Résolution…' : 'Terminer la résolution'}
+                  </button>
+                </div>
+              </div>
+              {manualError && (
+                <p className="mb-3 rounded-holo-lg border border-rose-600/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
+                  {manualError}
+                </p>
+              )}
+              <div className="relative">
+                <pre
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words rounded-holo-lg border border-transparent px-1 py-2 font-mono text-sm leading-relaxed"
+                >
+                  {highlightConflictLines(rawValue)}
+                </pre>
+                <textarea
+                  ref={rawTextareaRef}
+                  value={rawValue}
+                  onChange={(e) => handleRawChange(e.target.value)}
+                  className="relative w-full resize-none whitespace-pre-wrap break-words rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-transparent caret-holo-text outline-none selection:bg-holo-primary/30 focus:border-holo-primary/30"
+                  style={{ minHeight: '200px', overflowY: 'hidden' }}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                />
+              </div>
+            </div>
+          ) : (
+            <textarea
+              ref={rawTextareaRef}
+              value={rawValue}
+              onChange={(e) => handleRawChange(e.target.value)}
+              className="mt-2 w-full resize-none rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-holo-text-soft outline-none focus:border-holo-primary/30"
+              style={{ minHeight: '200px', overflowY: 'hidden' }}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+          )
         ) : (
           <article>
             {isConflicted && (
@@ -1242,6 +1371,7 @@ export function EditorFrame({
               detail: { path: filepath, pushError: res?.pushError ?? null },
             }))
           }}
+          onManual={() => void enterManualResolution()}
           onDismiss={() => setDiffModalOpen(false)}
         />
       )}

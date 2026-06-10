@@ -339,6 +339,13 @@ Chez Samra j'ai un message commit local push échoué  mais pas d'erreur dans la
 
 Est-ce que quand on fait une résolution manuelle du merge on pourrait intégrer des composant qui gère l'esthétique de >>>>>>>HEAD <<<<<< ?
 
+Il fait un enregistrement auto au moment du pull et ça fait un commit inutile a cause de l'enregristrerment auto -> explication j'ai commencer a taper une structure de document avec des titre (j'ai fait une pause de 1-2 seconde pour reflechir) et ça a lancer un enregistrement auto et un commit (jusque la pas de soucis), sauf que samra a reçu ce commit ça a pull. Par je sais pas quel mystère ça a fait de son coté a elle un enregistrement auto aussi et du coup elle a eu une resolution de conflit a gérer avec du contenu qu'elle a meme pas saisie (parce que entre temps j'ai fini de taper la structure et que j'ai envoyé un deuxième commit)
+
+Le warning récupéré ne s'adapte pas au sticky header (il est dessous)
+Lors de la résolution de conflit pouvoir prendre "les deux"
+
+Enfaite quand y'a un conflit j'ai eu a chaque fois le bouton récupérer qui est rester et si je clique dessus ça casse vraiment git (j'ai du résoudre via git de vscode)
+
 # Phase 18.5
 - Exportation PDF
 

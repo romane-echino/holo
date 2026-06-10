@@ -774,7 +774,18 @@ export default function App2() {
     const file = openedFileRef.current
     if (!file) return
     const targetPath = file.path
-    
+
+    // Après un rechargement programmatique (pull/résolution de conflit), l'éditeur
+    // se remonte et émet un écho onChange avec un markdown re-normalisé qui peut
+    // différer des octets sur disque. On ignore ce premier écho pour ne pas
+    // réécrire le fichier ni déclencher un commit auto inutile (source de
+    // divergences / faux conflits côté collaborateur).
+    if (lastProgrammaticReloadRef.current > 0 && Date.now() - lastProgrammaticReloadRef.current < 2000) {
+      lastProgrammaticReloadRef.current = 0
+      setLiveMarkdown(markdown)
+      return
+    }
+
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
     if (emptyListItems > 3 && markdown.length < 100) {
@@ -856,9 +867,14 @@ export default function App2() {
   const [reloadNonce, setReloadNonce] = useState(0)
   // Bannière douce affichée quand des modifications distantes existent mais
   // n'ont pas pu être rapatriées sans risque (stratégie B).
-  const [remoteBanner, setRemoteBanner] = useState<{ message: string } | null>(null)
+  const [remoteBanner, setRemoteBanner] = useState<{ message: string; kind?: 'info' | 'conflict' } | null>(null)
   const rootPathRef = useRef(rootPath)
   rootPathRef.current = rootPath
+
+  // Horodatage du dernier rechargement programmatique (pull/résolution). Sert à
+  // ignorer l'« écho » onChange émis par l'éditeur lors de son remontage, qui
+  // réécrirait le fichier et déclencherait un commit automatique inutile.
+  const lastProgrammaticReloadRef = useRef(0)
 
   const samePath = useCallback((a?: string | null, b?: string | null) => {
     if (!a || !b) return false
@@ -871,6 +887,7 @@ export default function App2() {
     if (!holo || !openPath) return
     const fresh = await holo.readFile(openPath).catch(() => null)
     if (fresh == null || !samePath(openedFileRef.current?.path, openPath)) return
+    lastProgrammaticReloadRef.current = Date.now()
     setOpenedFile((prev) => (prev && samePath(prev.path, openPath) ? { ...prev, content: fresh } : prev))
     setLiveMarkdown(null)
     setReloadNonce((n) => n + 1)
@@ -922,6 +939,17 @@ export default function App2() {
   const handlePullRemoteChanges = useCallback(async () => {
     const holo = window.holo
     if (!holo) return
+
+    // Garde-fou critique : si un rebase/merge est déjà en cours ou que des conflits
+    // ne sont pas résolus, NE PAS relancer un commit + sync — cela committerait les
+    // marqueurs de conflit et casserait le dépôt. On ouvre plutôt la résolution.
+    const pre = await holo.gitGetState(false).catch(() => null)
+    if (pre && (pre.operationInProgress !== 'none' || (pre.conflictedFiles?.length ?? 0) > 0)) {
+      setGitState(normalizeGitState(pre))
+      setRemoteBanner({ message: 'Conflit à résoudre : choisissez la version à conserver.', kind: 'conflict' })
+      return
+    }
+
     setRemoteBanner(null)
     try {
       window.dispatchEvent(new CustomEvent('holo:flush-editor'))
@@ -931,7 +959,7 @@ export default function App2() {
       const nextState = await holo.gitGetState(false).catch(() => null)
       if (nextState) setGitState(normalizeGitState(nextState))
       if (result?.hadConflicts) {
-        setRemoteBanner({ message: 'Conflit détecté : ouvrez le panneau Git pour choisir la version à garder.' })
+        setRemoteBanner({ message: 'Conflit détecté : choisissez la version à conserver.', kind: 'conflict' })
         return
       }
       await reloadOpenFileFromDisk()
@@ -1162,20 +1190,29 @@ export default function App2() {
         )}
 
         {/* Zone éditeur — visible sur desktop et sur mobile quand un fichier est sélectionné */}
-        <div className={cn('overflow-y-auto holo-scrollbar', mobileEditorOpen ? 'block' : 'hidden lg:block')}>
+        <div className={cn('flex min-h-0 flex-col', mobileEditorOpen ? 'flex' : 'hidden lg:flex')}>
           {openedFile && remoteBanner && (
-            <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-amber-400/30 bg-amber-500/10 px-4 py-2 text-[13px] text-holo-text">
+            <div className="z-30 flex shrink-0 items-center justify-between gap-3 border-b border-amber-400/30 bg-amber-500/10 px-4 py-2 text-[13px] text-holo-text">
               <span className="flex items-center gap-2">
                 <GitPullRequestArrow size={15} className="shrink-0 text-amber-500" />
                 {remoteBanner.message}
               </span>
               <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => void handlePullRemoteChanges()}
-                  className="rounded-md bg-amber-500/90 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-amber-500"
-                >
-                  Récupérer
-                </button>
+                {remoteBanner.kind === 'conflict' ? (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('holo:open-conflict-resolution'))}
+                    className="rounded-md bg-amber-500/90 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-amber-500"
+                  >
+                    Résoudre
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => void handlePullRemoteChanges()}
+                    className="rounded-md bg-amber-500/90 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-amber-500"
+                  >
+                    Récupérer
+                  </button>
+                )}
                 <button
                   onClick={() => setRemoteBanner(null)}
                   className="rounded-md p-1 text-holo-text-faint hover:text-holo-text"
@@ -1186,6 +1223,7 @@ export default function App2() {
               </div>
             </div>
           )}
+          <div className="min-h-0 flex-1 overflow-y-auto holo-scrollbar">
           {openedFile ? (
             <EditorFrame
               key={`${openedFile.path}#${reloadNonce}`}
@@ -1212,6 +1250,7 @@ export default function App2() {
               <p className="text-sm">Sélectionnez un fichier pour l’éditer</p>
             </div>
           )}
+          </div>
         </div>
 
         {/* Inspecteur — colonne droite, grands écrans */}

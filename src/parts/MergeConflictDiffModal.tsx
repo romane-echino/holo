@@ -92,14 +92,19 @@ export interface MergeConflictDiffModalProps {
    * (`git pull --rebase`), car git y inverse HEAD/ours (= le distant) et theirs (= ma version).
    */
   swapSides?: boolean
-  onResolve: (strategy: 'ours' | 'theirs') => Promise<void>
+  onResolve: (strategy: 'ours' | 'theirs' | 'both') => Promise<void>
+  /**
+   * Bascule vers la résolution manuelle (mode brut affichant les marqueurs git).
+   * Si non fourni, le bouton ferme simplement la modale.
+   */
+  onManual?: () => void
   onDismiss: () => void
 }
 
-export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve, onDismiss }: MergeConflictDiffModalProps) {
+export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve, onManual, onDismiss }: MergeConflictDiffModalProps) {
   const [parsed, setParsed] = useState<ParsedConflicts | null>(null)
   const [activeBlock, setActiveBlock] = useState(0)
-  const [resolving, setResolving] = useState<'ours' | 'theirs' | null>(null)
+  const [resolving, setResolving] = useState<'ours' | 'theirs' | 'both' | null>(null)
 
   const fileName = filePath.replace(/\\/g, '/').split('/').at(-1) ?? filePath
 
@@ -116,7 +121,7 @@ export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve,
   const mineContent = block ? (swapSides ? block.theirs : block.ours) : ''
   const remoteContent = block ? (swapSides ? block.ours : block.theirs) : ''
 
-  async function handleResolve(strategy: 'ours' | 'theirs') {
+  async function handleResolve(strategy: 'ours' | 'theirs' | 'both') {
     setResolving(strategy)
     try {
       await onResolve(strategy)
@@ -214,10 +219,17 @@ export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve,
           </p>
           <div className="flex items-center gap-2">
             <button
-              onClick={onDismiss}
+              onClick={() => { onManual?.(); onDismiss() }}
               className="rounded-holo-lg border border-holo-border-soft bg-transparent px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass"
             >
               Résoudre manuellement
+            </button>
+            <button
+              onClick={() => handleResolve('both')}
+              disabled={!!resolving}
+              className="rounded-holo-lg border border-holo-border-soft bg-holo-glass/40 px-3 py-2 text-sm font-medium text-holo-text transition hover:bg-holo-glass disabled:opacity-50"
+            >
+              {resolving === 'both' ? '…' : 'Garder les deux'}
             </button>
             <button
               onClick={() => handleResolve('ours')}

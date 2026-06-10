@@ -364,4 +364,97 @@ test.describe('Édition concurrente d un fichier (deux instances Holo, même dé
       if (instanceB) await fs.rm(instanceB.configHome, { recursive: true, force: true })
     }
   })
+
+  test('conflit sur la même ligne : « Résoudre manuellement » applique l édition brute et termine le rebase', async () => {
+    const repos = await setupRemoteAndCloneA()
+    let instanceA: { app: ElectronApplication; page: Page; configHome: string } | null = null
+    let instanceB: { app: ElectronApplication; page: Page; configHome: string } | null = null
+    let cloneBDir = ''
+    let fileB = ''
+
+    try {
+      // 1. Instance A : base normalisée poussée.
+      instanceA = await launchHolo(
+        [`--holo-root=${repos.cloneADir}`, `--holo-file=${repos.fileA}`],
+        'Alice', 'alice@example.com',
+      )
+      await expect(paragraph(instanceA.page, LINE_A)).toBeVisible({ timeout: 25_000 })
+      await waitForBaselineSynced(repos.cloneADir, repos.remoteDir, repos.branch)
+
+      // 2. Instance B clone la même base.
+      const cb = await cloneB(repos.base, repos.remoteDir)
+      cloneBDir = cb.cloneBDir
+      fileB = cb.fileB
+      instanceB = await launchHolo(
+        [`--holo-root=${cloneBDir}`, `--holo-file=${fileB}`],
+        'Bob', 'bob@example.com',
+      )
+      await expect(paragraph(instanceB.page, LINE_A)).toBeVisible({ timeout: 25_000 })
+      await expect.poll(() => git(cloneBDir, 'status', '--porcelain'), { timeout: 15_000 }).toBe('')
+
+      // 3. Alice modifie la ligne A et pousse.
+      const remoteTip = await git(repos.remoteDir, 'rev-parse', repos.branch)
+      await appendToParagraph(instanceA.page, LINE_A, ' (version Alice)')
+      await waitForRemoteAdvance(repos.remoteDir, repos.branch, remoteTip)
+
+      // 4. Bob modifie LA MÊME ligne A → divergence.
+      const bobBaseHead = await git(cloneBDir, 'rev-parse', 'HEAD')
+      await appendToParagraph(instanceB.page, LINE_A, ' (version Bob)')
+      await waitForNewLocalCommit(cloneBDir, bobBaseHead)
+
+      // 5. Récupérer → conflit détecté.
+      await fireWindowFocus(instanceB.page)
+      const recuperer = instanceB.page.getByRole('button', { name: 'Récupérer', exact: true })
+      await expect(recuperer).toBeVisible({ timeout: 20_000 })
+      await recuperer.click()
+      await expect(instanceB.page.getByText('Conflit détecté', { exact: false })).toBeVisible({ timeout: 25_000 })
+
+      // 6. Ouvrir la modale puis basculer en résolution manuelle.
+      const resoudre = instanceB.page.getByRole('button', { name: 'Résoudre le conflit', exact: true })
+      await expect(resoudre).toBeVisible({ timeout: 20_000 })
+      await resoudre.click()
+      await expect(instanceB.page.getByText('Conflit de fusion', { exact: false })).toBeVisible({ timeout: 10_000 })
+      await instanceB.page.getByRole('button', { name: 'Résoudre manuellement', exact: true }).click()
+
+      // 7. L éditeur passe en mode brut : on retire les marqueurs en gardant les deux versions.
+      const rawArea = instanceB.page.locator('textarea.font-mono')
+      await expect(rawArea).toBeVisible({ timeout: 10_000 })
+      const raw = await rawArea.inputValue()
+      expect(raw).toContain('<<<<<<<')
+      const resolvedText = raw
+        .split('\n')
+        .filter((l) => !/^(<{7}|={7}|>{7})/.test(l))
+        .join('\n')
+      await rawArea.fill(resolvedText)
+
+      // 8. Terminer la résolution → git add + rebase --continue + push.
+      await instanceB.page.getByRole('button', { name: 'Terminer la résolution', exact: true }).click()
+
+      // 9. L arbre redevient propre.
+      await expect
+        .poll(() => git(cloneBDir, 'status', '--porcelain'), { timeout: 30_000 })
+        .toBe('')
+
+      // 10. Le fichier ne contient plus de marqueurs et garde LES DEUX versions.
+      const resolved = await fs.readFile(fileB, 'utf8')
+      expect(resolved).not.toContain('<<<<<<<')
+      expect(resolved).not.toContain('>>>>>>>')
+      expect(resolved).toContain('(version Bob)')
+      expect(resolved).toContain('(version Alice)')
+
+      // 11. Les deux versions sont poussées sur le distant.
+      await expect
+        .poll(() => git(repos.remoteDir, 'show', `${repos.branch}:doc.md`), { timeout: 30_000 })
+        .toContain('(version Alice)')
+
+      // 12. Plus de bandeau de conflit dans l éditeur.
+      await expect(instanceB.page.getByText('conflits de fusion non résolus', { exact: false })).toHaveCount(0)
+    } finally {
+      if (instanceA) await instanceA.app.close()
+      if (instanceB) await instanceB.app.close()
+      await fs.rm(repos.base, { recursive: true, force: true })
+      if (instanceA) await fs.rm(instanceA.configHome, { recursive: true, force: true })
+      if (instanceB) await fs.rm(instanceB.configHome, { recursive: true, force: true })
+    }
+  })
 })

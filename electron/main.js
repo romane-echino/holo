@@ -855,6 +855,24 @@ async function getInProgressOperation(cwd) {
   return 'none'
 }
 
+// Résout un conflit en conservant les DEUX versions : retire uniquement les lignes
+// de marqueurs (<<<<<<< / ======= / >>>>>>>) situées à l'intérieur des blocs de conflit,
+// en gardant tout le contenu des deux côtés dans l'ordre du fichier.
+function resolveKeepBothSides(content) {
+  const lines = content.split('\n')
+  const out = []
+  let inConflict = false
+
+  for (const line of lines) {
+    if (line.startsWith('<<<<<<<')) { inConflict = true; continue }
+    if (inConflict && line.startsWith('=======')) { continue }
+    if (inConflict && line.startsWith('>>>>>>>')) { inConflict = false; continue }
+    out.push(line)
+  }
+
+  return out.join('\n')
+}
+
 async function getGitState({ fetchRemote = false } = {}) {
   if (!currentRootPath) {
     return createDefaultGitState()
@@ -2173,6 +2191,18 @@ ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail
   const isRepo = await isGitRepository(cwd)
   if (!isRepo) return { ok: true, committed: false, reason: 'not-a-repo' }
 
+  // Sécurité : ne JAMAIS committer pendant un rebase/merge en cours ou tant que des
+  // conflits ne sont pas résolus — sinon on committerait les marqueurs de conflit
+  // (<<<<<<< / ======= / >>>>>>>) et on casserait le dépôt.
+  const autoSaveOperation = await getInProgressOperation(cwd)
+  if (autoSaveOperation !== 'none') {
+    return { ok: true, committed: false, reason: 'operation-in-progress' }
+  }
+  const autoSaveStatus = await runGit(['status', '--porcelain'], cwd)
+  if (autoSaveStatus.ok && getConflictedFilesFromStatusOutput(autoSaveStatus.stdout, cwd).length > 0) {
+    return { ok: true, committed: false, reason: 'conflicts-present' }
+  }
+
   // Si filePath est null/vide → stage tout (utilisé après suppression/déplacement)
   if (!filePath) {
     const addResult = await runGit(['add', '-A'], cwd)
@@ -2603,22 +2633,57 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
     throw new Error('Fichier de conflit invalide.')
   }
 
-  // Sémantique côté utilisateur : 'ours' = « ma version », 'theirs' = « la version distante ».
-  const wantMine = strategy !== 'theirs'
+  // Sémantique côté utilisateur : 'ours' = « ma version », 'theirs' = « la version distante »,
+  // 'both' = « garder les deux » (on retire les marqueurs en conservant les deux côtés).
+  // Sémantique côté utilisateur : 'ours' = « ma version », 'theirs' = « la version distante »,
+  // 'both' = « garder les deux » (on retire les marqueurs en conservant les deux côtés),
+  // 'manual' = l'utilisateur a déjà édité le fichier à la main (on prend l'arbre tel quel).
+  const normalizedStrategy = strategy === 'theirs' ? 'theirs'
+    : strategy === 'both' ? 'both'
+    : strategy === 'manual' ? 'manual'
+    : 'ours'
+  const wantMine = normalizedStrategy === 'ours'
 
   const operation = await getInProgressOperation(cwd)
 
-  // Pendant un `git pull --rebase`, git inverse --ours/--theirs :
-  //   --ours  désigne la branche amont (le distant), --theirs notre commit rejoué.
-  // Pendant un merge classique, c'est l'inverse habituel.
-  const checkoutFlag = operation === 'rebase'
-    ? (wantMine ? '--theirs' : '--ours')
-    : (wantMine ? '--ours' : '--theirs')
+  if (normalizedStrategy === 'both') {
+    // Conserver les deux versions : on supprime uniquement les lignes de marqueurs
+    // (<<<<<<< / ======= / >>>>>>>) à l'intérieur des blocs de conflit.
+    let raw
+    try {
+      raw = await fs.readFile(absoluteFilePath, 'utf8')
+    } catch {
+      throw new Error('Impossible de lire le fichier en conflit.')
+    }
+    const merged = resolveKeepBothSides(raw)
+    await fs.writeFile(absoluteFilePath, merged, 'utf8')
+  } else if (normalizedStrategy === 'manual') {
+    // Résolution manuelle : le renderer a déjà écrit le contenu final sur disque.
+    // On refuse simplement de finaliser s'il reste des marqueurs de conflit non levés
+    // (`<<<<<<<` / `>>>>>>>` ne sont jamais du markdown valide), pour ne pas committer
+    // un fichier cassé.
+    let raw
+    try {
+      raw = await fs.readFile(absoluteFilePath, 'utf8')
+    } catch {
+      throw new Error('Impossible de lire le fichier en conflit.')
+    }
+    if (/^<{7}/m.test(raw) || /^>{7}/m.test(raw)) {
+      throw new Error('Des marqueurs de conflit (<<<<<<< / >>>>>>>) subsistent. Retirez-les avant de terminer la résolution.')
+    }
+  } else {
+    // Pendant un `git pull --rebase`, git inverse --ours/--theirs :
+    //   --ours  désigne la branche amont (le distant), --theirs notre commit rejoué.
+    // Pendant un merge classique, c'est l'inverse habituel.
+    const checkoutFlag = operation === 'rebase'
+      ? (wantMine ? '--theirs' : '--ours')
+      : (wantMine ? '--ours' : '--theirs')
 
-  const checkoutResult = await runGit(['checkout', checkoutFlag, '--', relativePath], cwd)
+    const checkoutResult = await runGit(['checkout', checkoutFlag, '--', relativePath], cwd)
 
-  if (!checkoutResult.ok) {
-    throw new Error(getGitErrorMessage(checkoutResult, 'Impossible de choisir cette version du fichier.'))
+    if (!checkoutResult.ok) {
+      throw new Error(getGitErrorMessage(checkoutResult, 'Impossible de choisir cette version du fichier.'))
+    }
   }
 
   const addResult = await runGit(['add', '--', relativePath], cwd)
@@ -2709,7 +2774,7 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
   return {
     ok: true,
     filePath: absoluteFilePath,
-    strategy: wantMine ? 'ours' : 'theirs',
+    strategy: normalizedStrategy,
     operation,
     completed,
     stillConflicted,
