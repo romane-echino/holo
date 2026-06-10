@@ -49,8 +49,15 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
 
   // ── Ouvrir un dossier local ──────────────────────────────────────────────────
   const handleOpenFolder = async () => {
-    await openFolder()
-    handleClose()
+    try {
+      await openFolder()
+    } catch (error) {
+      window.alert((error as Error).message)
+    } finally {
+      // Toujours refermer la fenêtre, même si l'ouverture a échoué côté git,
+      // pour éviter qu'elle ne reste affichée indéfiniment.
+      handleClose()
+    }
   }
 
   // ── Cloner un dépôt Git ──────────────────────────────────────────────────────

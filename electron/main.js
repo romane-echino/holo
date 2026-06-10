@@ -77,6 +77,16 @@ async function writeRecentFolders(folders) {
   await fs.writeFile(getRecentFoldersFilePath(), JSON.stringify(folders, null, 2), 'utf8')
 }
 
+// Sérialise toutes les mutations de recent-folders.json pour éviter les pertes
+// de mises à jour (read-modify-write concurrents qui se clobberent mutuellement,
+// ce qui faisait disparaître des espaces).
+let recentFoldersWriteChain = Promise.resolve()
+function withRecentFoldersLock(task) {
+  const result = recentFoldersWriteChain.then(task, task)
+  recentFoldersWriteChain = result.then(() => undefined, () => undefined)
+  return result
+}
+
 async function keepOnlyExistingDirectories(folderPaths) {
   const existing = []
 
@@ -106,33 +116,39 @@ async function getRecentFolders() {
 
 // Appelée une seule fois au démarrage pour supprimer les entrées invalides.
 async function cleanupRecentFolders() {
-  const rawFolders = await readRecentFoldersRaw()
-  const existingFolders = await keepOnlyExistingDirectories(rawFolders)
-  const trimmed = existingFolders.slice(0, MAX_RECENT_FOLDERS)
-  if (JSON.stringify(trimmed) !== JSON.stringify(rawFolders)) {
-    await writeRecentFolders(trimmed)
-  }
-  return trimmed
+  return withRecentFoldersLock(async () => {
+    const rawFolders = await readRecentFoldersRaw()
+    const existingFolders = await keepOnlyExistingDirectories(rawFolders)
+    const trimmed = existingFolders.slice(0, MAX_RECENT_FOLDERS)
+    if (JSON.stringify(trimmed) !== JSON.stringify(rawFolders)) {
+      await writeRecentFolders(trimmed)
+    }
+    return trimmed
+  })
 }
 
 async function addRecentFolder(folderPath) {
   const normalizedTarget = path.resolve(folderPath)
-  const recentFolders = await getRecentFolders()
-  const deduplicated = [
-    normalizedTarget,
-    ...recentFolders.filter((entry) => path.resolve(entry) !== normalizedTarget),
-  ]
-  const trimmed = deduplicated.slice(0, MAX_RECENT_FOLDERS)
-  await writeRecentFolders(trimmed)
-  return trimmed
+  return withRecentFoldersLock(async () => {
+    const rawFolders = await readRecentFoldersRaw()
+    const deduplicated = [
+      normalizedTarget,
+      ...rawFolders.filter((entry) => path.resolve(entry) !== normalizedTarget),
+    ]
+    const trimmed = deduplicated.slice(0, MAX_RECENT_FOLDERS)
+    await writeRecentFolders(trimmed)
+    return trimmed
+  })
 }
 
 async function removeRecentFolder(folderPath) {
   const normalizedTarget = path.resolve(folderPath)
-  const recentFolders = await getRecentFolders()
-  const filtered = recentFolders.filter((entry) => path.resolve(entry) !== normalizedTarget)
-  await writeRecentFolders(filtered)
-  return filtered
+  return withRecentFoldersLock(async () => {
+    const rawFolders = await readRecentFoldersRaw()
+    const filtered = rawFolders.filter((entry) => path.resolve(entry) !== normalizedTarget)
+    await writeRecentFolders(filtered)
+    return filtered
+  })
 }
 
 function getHoloConfigPath() {

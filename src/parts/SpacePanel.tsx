@@ -1660,10 +1660,21 @@ export function SpaceRoute({
     return () => window.removeEventListener('holo:refresh-tree', handler)
   }, [setTree])
 
+  // Ouvre le dossier correspondant à l'URL une seule fois par chemin.
+  // Sans ce garde, si la valeur de rootPath renvoyée par le main se normalise
+  // différemment de folderPath (séparateurs/casse Windows, path.resolve…),
+  // la condition folderPath !== rootPath restait vraie indéfiniment et
+  // rappelait openRecentFolder en boucle (clignotement + écrasement des espaces).
+  const lastRequestedFolderRef = useRef<string | null>(null)
   useEffect(() => {
-    if (folderPath && folderPath !== rootPath) {
-      void openRecentFolder(folderPath)
+    if (!folderPath) return
+    if (folderPath === rootPath) {
+      lastRequestedFolderRef.current = folderPath
+      return
     }
+    if (lastRequestedFolderRef.current === folderPath) return
+    lastRequestedFolderRef.current = folderPath
+    void openRecentFolder(folderPath)
   }, [folderPath, rootPath, openRecentFolder])
 
   const files = useMemo(

@@ -294,15 +294,15 @@ Nouveau composants :
     -> La recherche de document semble cassé et il faudrai mieux voir l'espace de chaque fichier (highlight purple ?)
 - ✅ PopUp citation overlap -> Quand je perd le focus de la citation faudrai que le popup se ferme + le popup devrait avoir un z-index 9999
     -> Toujours le cas, le popup pour choisir le type de citation rentre en collision avec la citation du dessous (je vois le bouton a travers et en plus je peux cliquer dessus alors que le menu est ouvert) et je peux ouvrir plusieurs de ces popup en meme temps
-- ✅Quand j'ai ouvert un fichier d'un espace et que je vais dans un autre espace et que j'ouvre un fichier j'ai toujours dans l'entête "Erreur fatale" c'est très désagréable 
+- ✅ Quand j'ai ouvert un fichier d'un espace et que je vais dans un autre espace et que j'ouvre un fichier j'ai toujours dans l'entête "Erreur fatale" c'est très désagréable 
 - ✅ Le design des footnote n'a pas été refait voici l'ux attendu : je sélectionne un mot, je clique footnote, le mot viens avec une couleur highlight (genre bleu) et la y'a un tooltip editable qui apparait. Quand je survol ce mot le tooltip editable réaparait
 - ✅ Notes dans l'inspecteur on voit pas ID
     -> Dans l'inspecteur les ID des notes ne sont toujours pas visible
-- Dans les date de tableau -> si je sélectionne le champ et que je tappe -> "01051988" a la suite la saisie ne se fait pas correctement (jj/mm/0988)
+- ✅ Dans les date de tableau -> si je sélectionne le champ et que je tappe -> "01051988" a la suite la saisie ne se fait pas correctement (jj/mm/0988)
 
 # Phase 18.4
-- Le .index.md généré pour un dossier doit avoir le titre deja défini au nom du dossier
-- Modifications git dans les tableau : Quand je modifie un champ dans un tableau ça adapte tout le markdown du tableau. Ce qui rend très joli en brute mais du coup provoque un commit qui contient tout le tableau ce qui, si deux utilisateur modifie le meme tableau, peux provoquer un merge inutile voici un exemple :
+- ✅ Le .index.md généré pour un dossier doit avoir le titre deja défini au nom du dossier
+- ✅ Modifications git dans les tableau : Quand je modifie un champ dans un tableau ça adapte tout le markdown du tableau. Ce qui rend très joli en brute mais du coup provoque un commit qui contient tout le tableau ce qui, si deux utilisateur modifie le meme tableau, peux provoquer un merge inutile voici un exemple :
     avant
     | sadsa  | sdffdsfds |    |
     | :----- | :-------- | :- |
@@ -318,11 +318,16 @@ Nouveau composants :
     | adsfds | fsdfds      |    |
     | fgdgdf | dfgfdgfd    |    |
     Est-ce qu'il a une façon de faire pour eviter ça?
-- Dans les bloc citation si je change le type il faudrai ajouter un titre correspondant invisible dans le code brute. Dans github le code
+- ✅ Dans les bloc citation si je change le type il faudrai ajouter un titre correspondant invisible dans le code brute. Dans github le code
     > [!NOTE]
     > dsadas sdffds f sdfdksjf ldsklfks dlk fdslkjf dslkjdsf jlljk fdsl kj ljkl jk jlkl jkjl  ljk klj kjlkljljkjlkljkljkljjllkljkjlkljk jlkjljlklkj jlk jlk ljk lkjjl klljk lk j lkjljkjlk
     Affiche un petit titre "Note" avec l'icone i
-- Dans les date dans le tableau si je tape jour.mois en ommettan l'année faudrai que ça passe et mettre l'année courante (ex. 01.05 -> TAB et ça autocomplète 01.05.2026, pareil si je tape 1.1 -> TAB)
+- ✅ Dans les date dans le tableau si je tape jour.mois en ommettan l'année faudrai que ça passe et mettre l'année courante (ex. 01.05 -> TAB et ça autocomplète 01.05.2026, pareil si je tape 1.1 -> TAB)
+
+# Phase 18.6
+- Git merge + fetch
+- Factory settings doit aussi remettre a zero les dossier lié -> voir carrément vider / supprimer holo-config.json
+
 
 # Phase 18.5
 - Exportation PDF
@@ -332,3 +337,6 @@ Nouveau composants :
  
 # Phase 20
 - Site internet du projet
+
+# Phase 21
+- I18n de tout le software puis traduction (fr,de, en, es, it, jp, ch)
