@@ -1234,8 +1234,13 @@ export function EditorFrame({
       {diffModalOpen && (
         <MergeConflictDiffModal
           filePath={filepath}
+          swapSides={gitState?.operationInProgress === 'rebase'}
           onResolve={async (strategy) => {
-            await window.holo?.gitResolveConflict(filepath, strategy)
+            const res = await window.holo?.gitResolveConflict(filepath, strategy)
+            setDiffModalOpen(false)
+            window.dispatchEvent(new CustomEvent('holo:conflict-resolved', {
+              detail: { path: filepath, pushError: res?.pushError ?? null },
+            }))
           }}
           onDismiss={() => setDiffModalOpen(false)}
         />

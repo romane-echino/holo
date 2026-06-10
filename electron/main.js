@@ -237,6 +237,7 @@ function createDefaultGitState() {
     incoming: 0,
     outgoing: 0,
     conflictedFiles: [],
+    operationInProgress: 'none',
     lastFetchAt: null,
     error: null,
   }
@@ -818,6 +819,42 @@ async function hasRemoteNamed(cwd, remoteName) {
   return result.stdout.split('\n').map((line) => line.trim()).includes(remoteName)
 }
 
+// Résout le répertoire .git réel (gère .git fichier des worktrees/submodules).
+async function getGitDir(cwd) {
+  const result = await runGit(['rev-parse', '--git-dir'], cwd)
+  if (!result.ok || !result.stdout) return null
+  return path.isAbsolute(result.stdout) ? result.stdout : path.join(cwd, result.stdout)
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Détecte l'opération git en cours afin d'interpréter correctement
+// les côtés « ours »/« theirs » d'un conflit (ils sont inversés en rebase).
+async function getInProgressOperation(cwd) {
+  const gitDir = await getGitDir(cwd)
+  if (!gitDir) return 'none'
+
+  if (
+    (await pathExists(path.join(gitDir, 'rebase-merge'))) ||
+    (await pathExists(path.join(gitDir, 'rebase-apply')))
+  ) {
+    return 'rebase'
+  }
+
+  if (await pathExists(path.join(gitDir, 'MERGE_HEAD'))) {
+    return 'merge'
+  }
+
+  return 'none'
+}
+
 async function getGitState({ fetchRemote = false } = {}) {
   if (!currentRootPath) {
     return createDefaultGitState()
@@ -860,6 +897,8 @@ async function getGitState({ fetchRemote = false } = {}) {
   const remoteResult = await runGit(['remote'], currentRootPath)
   const hasRemote = remoteResult.ok && remoteResult.stdout.trim().length > 0
 
+  const operationInProgress = await getInProgressOperation(currentRootPath)
+
   return {
     isRepo: true,
     hasRemote,
@@ -868,6 +907,7 @@ async function getGitState({ fetchRemote = false } = {}) {
     incoming,
     outgoing,
     conflictedFiles,
+    operationInProgress,
     lastFetchAt,
     error: fetchError,
   }
@@ -2557,17 +2597,25 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
   const absoluteFilePath = String(filePath ?? '')
   assertPathInsideRoot(absoluteFilePath)
 
-  const normalizedStrategy = strategy === 'theirs' ? 'theirs' : 'ours'
   const relativePath = path.relative(cwd, absoluteFilePath)
 
   if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     throw new Error('Fichier de conflit invalide.')
   }
 
-  const checkoutResult = await runGit(
-    ['checkout', normalizedStrategy === 'ours' ? '--ours' : '--theirs', '--', relativePath],
-    cwd,
-  )
+  // Sémantique côté utilisateur : 'ours' = « ma version », 'theirs' = « la version distante ».
+  const wantMine = strategy !== 'theirs'
+
+  const operation = await getInProgressOperation(cwd)
+
+  // Pendant un `git pull --rebase`, git inverse --ours/--theirs :
+  //   --ours  désigne la branche amont (le distant), --theirs notre commit rejoué.
+  // Pendant un merge classique, c'est l'inverse habituel.
+  const checkoutFlag = operation === 'rebase'
+    ? (wantMine ? '--theirs' : '--ours')
+    : (wantMine ? '--ours' : '--theirs')
+
+  const checkoutResult = await runGit(['checkout', checkoutFlag, '--', relativePath], cwd)
 
   if (!checkoutResult.ok) {
     throw new Error(getGitErrorMessage(checkoutResult, 'Impossible de choisir cette version du fichier.'))
@@ -2579,10 +2627,96 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
     throw new Error(getGitErrorMessage(addResult, 'Impossible de marquer le conflit comme résolu.'))
   }
 
+  // Termine l'opération git en cours afin que HEAD avance et que le conflit disparaisse.
+  let completed = false
+  let stillConflicted = false
+  let remainingConflicts = []
+
+  if (operation === 'rebase') {
+    const continueResult = await runGit(['-c', 'core.editor=true', 'rebase', '--continue'], cwd)
+
+    if (continueResult.ok) {
+      completed = true
+    } else {
+      // Soit d'autres fichiers restent en conflit, soit le commit suivant du rebase conflicte.
+      const statusResult = await runGit(['status', '--porcelain'], cwd)
+      remainingConflicts = statusResult.ok
+        ? getConflictedFilesFromStatusOutput(statusResult.stdout, cwd)
+        : []
+      const operationAfter = await getInProgressOperation(cwd)
+
+      if (operationAfter === 'rebase' && remainingConflicts.length > 0) {
+        stillConflicted = true
+      } else if (operationAfter === 'rebase') {
+        // Rebase encore en cours mais sans conflit résiduel : nouvel essai.
+        const retryResult = await runGit(['-c', 'core.editor=true', 'rebase', '--continue'], cwd)
+        if (!retryResult.ok) {
+          throw new Error(getGitErrorMessage(retryResult, 'Impossible de terminer le rebase après résolution.'))
+        }
+        completed = true
+      } else {
+        throw new Error(getGitErrorMessage(continueResult, 'Impossible de terminer le rebase après résolution.'))
+      }
+    }
+  } else if (operation === 'merge') {
+    const commitResult = await runGit(['-c', 'core.editor=true', 'commit', '--no-edit'], cwd)
+    if (!commitResult.ok) {
+      throw new Error(getGitErrorMessage(commitResult, 'Impossible de finaliser la fusion après résolution.'))
+    }
+    completed = true
+  } else {
+    // Aucune opération en cours : le fichier était simplement marqué en conflit, désormais stagé.
+    completed = true
+  }
+
+  // Relit le contenu résolu pour que le renderer recharge l'éditeur.
+  let content = null
+  try {
+    content = await fs.readFile(absoluteFilePath, 'utf8')
+  } catch {
+    content = null
+  }
+
+  // Pousse le résultat si tout est résolu et qu'il reste des commits locaux.
+  let pushed = false
+  let pushError = null
+
+  if (completed && !stillConflicted) {
+    const { outgoing } = await getAheadBehind(cwd)
+    if (outgoing > 0) {
+      let pushResult = await runGit(['push'], cwd)
+
+      if (!pushResult.ok) {
+        const branchName = await getCurrentBranch(cwd)
+        const hasOrigin = await hasRemoteNamed(cwd, 'origin')
+        const needsUpstream = /upstream branch|no upstream branch|set-upstream/i.test(
+          `${pushResult.stderr}\n${pushResult.stdout}`,
+        )
+
+        if (needsUpstream && branchName && hasOrigin) {
+          pushResult = await runGit(['push', '-u', 'origin', branchName], cwd)
+        }
+      }
+
+      if (pushResult.ok) {
+        pushed = true
+      } else {
+        pushError = getGitErrorMessage(pushResult, 'Le push a échoué après résolution.')
+      }
+    }
+  }
+
   return {
     ok: true,
     filePath: absoluteFilePath,
-    strategy: normalizedStrategy,
+    strategy: wantMine ? 'ours' : 'theirs',
+    operation,
+    completed,
+    stillConflicted,
+    conflictedFiles: remainingConflicts,
+    content,
+    pushed,
+    pushError,
   }
 })
 

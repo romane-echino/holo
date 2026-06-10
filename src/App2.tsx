@@ -741,6 +741,9 @@ export default function App2() {
         setSaveErrorMsg((result as any).pushError)
         setSaveStatus('push-error')
         setTimeout(() => setSaveStatus(prev => prev === 'push-error' ? 'idle' : prev), 8000)
+        // Push refusé (souvent : on est en retard sur le distant). On déclenche
+        // immédiatement une vérification pour proposer « Récupérer » sans attendre 60 s.
+        void runBackgroundGitSyncRef.current()
         return
       }
       // not-a-repo ou no-remote : le fichier est enregistré localement uniquement
@@ -952,6 +955,27 @@ export default function App2() {
 
   // La bannière concerne le document affiché : on la masque au changement de fichier.
   useEffect(() => { setRemoteBanner(null) }, [openedFile?.path])
+
+  // Après résolution d'un conflit : rafraîchir l'état git + recharger le document
+  // résolu, et signaler un éventuel échec de push.
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent<{ path?: string; pushError?: string | null }>).detail
+      const holo = window.holo
+      if (holo) {
+        const nextState = await holo.gitGetState(false).catch(() => null)
+        if (nextState) setGitState(normalizeGitState(nextState))
+      }
+      await reloadOpenFileFromDisk()
+      if (detail?.pushError) {
+        setRemoteBanner({ message: 'Conflit résolu localement, mais l’envoi a échoué. Réessayez la synchronisation.' })
+      } else {
+        setRemoteBanner(null)
+      }
+    }
+    window.addEventListener('holo:conflict-resolved', handler)
+    return () => window.removeEventListener('holo:conflict-resolved', handler)
+  }, [reloadOpenFileFromDisk, setGitState])
 
   // Fermer le fichier ouvert s'il est supprimé ou archivé depuis SpacePanel
   const handleToggleTemplate = useCallback(async () => {

@@ -20,6 +20,7 @@ type HoloGitState = {
   incoming: number
   outgoing: number
   conflictedFiles: string[]
+  operationInProgress: 'rebase' | 'merge' | 'none'
   lastFetchAt: string | null
   error: string | null
 }
@@ -199,7 +200,7 @@ interface HoloApi {
   gitPull: () => Promise<{ ok: true; output: string }>
   gitPullIfSafe: () => Promise<HoloGitPullIfSafeResult>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
-  gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs' }>
+  gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs'; operation: 'rebase' | 'merge' | 'none'; completed: boolean; stillConflicted: boolean; conflictedFiles: string[]; content: string | null; pushed: boolean; pushError: string | null }>
   saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
   loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
 }

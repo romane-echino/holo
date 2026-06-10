@@ -6,6 +6,7 @@ export type GitState = {
   incoming: number
   outgoing: number
   conflictedFiles: string[]
+  operationInProgress: 'rebase' | 'merge' | 'none'
   lastFetchAt: string | null
   error: string | null
 }

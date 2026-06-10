@@ -87,11 +87,16 @@ function parseConflicts(content: string): ParsedConflicts {
 
 export interface MergeConflictDiffModalProps {
   filePath: string
+  /**
+   * Inverse les côtés affichés. À activer quand le conflit provient d'un rebase
+   * (`git pull --rebase`), car git y inverse HEAD/ours (= le distant) et theirs (= ma version).
+   */
+  swapSides?: boolean
   onResolve: (strategy: 'ours' | 'theirs') => Promise<void>
   onDismiss: () => void
 }
 
-export function MergeConflictDiffModal({ filePath, onResolve, onDismiss }: MergeConflictDiffModalProps) {
+export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve, onDismiss }: MergeConflictDiffModalProps) {
   const [parsed, setParsed] = useState<ParsedConflicts | null>(null)
   const [activeBlock, setActiveBlock] = useState(0)
   const [resolving, setResolving] = useState<'ours' | 'theirs' | null>(null)
@@ -106,6 +111,10 @@ export function MergeConflictDiffModal({ filePath, onResolve, onDismiss }: Merge
 
   const block = parsed?.blocks[activeBlock]
   const total = parsed?.blocks.length ?? 0
+
+  // Contenu réel selon la provenance (en rebase, HEAD/ours est en fait le distant).
+  const mineContent = block ? (swapSides ? block.theirs : block.ours) : ''
+  const remoteContent = block ? (swapSides ? block.ours : block.theirs) : ''
 
   async function handleResolve(strategy: 'ours' | 'theirs') {
     setResolving(strategy)
@@ -172,22 +181,22 @@ export function MergeConflictDiffModal({ filePath, onResolve, onDismiss }: Merge
 
             {/* Diff deux colonnes */}
             <div className="grid grid-cols-2 divide-x divide-holo-border-soft">
-              {/* NOTRE VERSION */}
+              {/* MA VERSION */}
               <div>
                 <div className="flex items-center gap-2 border-b border-holo-border-soft bg-emerald-500/5 px-4 py-2">
-                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-400">HEAD</span>
-                  <span className="text-xs font-medium text-emerald-400">Notre version</span>
+                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-400">MOI</span>
+                  <span className="text-xs font-medium text-emerald-400">Ma version</span>
                 </div>
-                <pre className={cn('min-h-[80px] whitespace-pre-wrap px-4 py-3 font-mono text-[12px] text-holo-text', !block.ours.trim() && 'text-holo-text-faint italic')}>{block.ours.trim() || '(vide)'}</pre>
+                <pre className={cn('min-h-[80px] whitespace-pre-wrap px-4 py-3 font-mono text-[12px] text-holo-text', !mineContent.trim() && 'text-holo-text-faint italic')}>{mineContent.trim() || '(vide)'}</pre>
               </div>
 
-              {/* LEUR VERSION */}
+              {/* VERSION DISTANTE */}
               <div>
                 <div className="flex items-center gap-2 border-b border-holo-border-soft bg-sky-500/5 px-4 py-2">
-                  <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-400">THEIRS</span>
-                  <span className="text-xs font-medium text-sky-400">Leur version</span>
+                  <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-400">DISTANT</span>
+                  <span className="text-xs font-medium text-sky-400">Version distante</span>
                 </div>
-                <pre className={cn('min-h-[80px] whitespace-pre-wrap px-4 py-3 font-mono text-[12px] text-holo-text', !block.theirs.trim() && 'text-holo-text-faint italic')}>{block.theirs.trim() || '(vide)'}</pre>
+                <pre className={cn('min-h-[80px] whitespace-pre-wrap px-4 py-3 font-mono text-[12px] text-holo-text', !remoteContent.trim() && 'text-holo-text-faint italic')}>{remoteContent.trim() || '(vide)'}</pre>
               </div>
             </div>
 
@@ -215,14 +224,14 @@ export function MergeConflictDiffModal({ filePath, onResolve, onDismiss }: Merge
               disabled={!!resolving}
               className="rounded-holo-lg border border-emerald-600/40 bg-emerald-900/20 px-3 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-800/30 disabled:opacity-50"
             >
-              {resolving === 'ours' ? '…' : 'Garder notre version'}
+              {resolving === 'ours' ? '…' : 'Garder ma version'}
             </button>
             <button
               onClick={() => handleResolve('theirs')}
               disabled={!!resolving}
               className="rounded-holo-lg border border-sky-600/40 bg-sky-900/20 px-3 py-2 text-sm font-medium text-sky-300 transition hover:bg-sky-800/30 disabled:opacity-50"
             >
-              {resolving === 'theirs' ? '…' : 'Prendre leur version'}
+              {resolving === 'theirs' ? '…' : 'Prendre la version distante'}
             </button>
           </div>
         </div>

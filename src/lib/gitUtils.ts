@@ -8,6 +8,7 @@ export const DEFAULT_GIT_STATE: GitState = {
   incoming: 0,
   outgoing: 0,
   conflictedFiles: [],
+  operationInProgress: 'none',
   lastFetchAt: null,
   error: null,
 }

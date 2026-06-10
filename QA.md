@@ -329,6 +329,16 @@ Nouveau composants :
 - Factory settings doit aussi remettre a zero les dossier lié -> voir carrément vider / supprimer holo-config.json
 
 
+y'a eu un conflit, samra a résolu, pris le mien (attention inversion text le mien / les leurs), mais ça n'a pas mis a jour le contenu (coté samra) et le popup est resté en conflit, on a recliquer y'avais plus de conflit mais on a revalider le warning est parti mais toujours pas a jour au niveau du contenu
+
+
+Ensuite j'ai le cas ou moi j'ai modifier la ligne 1 et elle la ligne 2
+pour une raison obscure holo n'a pas push (je l'ai fait manuellement) et ensuite il m'a mis un conflit sur
+
+Chez Samra j'ai un message commit local push échoué  mais pas d'erreur dans la console aucun idée pourquoi
+
+Est-ce que quand on fait une résolution manuelle du merge on pourrait intégrer des composant qui gère l'esthétique de >>>>>>>HEAD <<<<<< ?
+
 # Phase 18.5
 - Exportation PDF
 
