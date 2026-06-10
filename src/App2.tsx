@@ -346,6 +346,18 @@ export default function App2() {
     }
   }, [rootPath, appAuthor, gitEmail, setAzureBlobContainerUrl, setAzureBlobSasToken, setS3Region, setS3Bucket, setS3AccessKeyId, setS3SecretAccessKey, setS3Endpoint, setS3PublicBaseUrl, setDropboxAccessToken, setDropboxFolderPath, setGdriveAccessToken, setGdriveFolderId, setRepoImageStorageMode])
 
+  // Réinitialisation d'usine : efface la config globale, les espaces liés et
+  // l'index de recherche, puis recharge l'app (relance l'onboarding).
+  const handleFactoryReset = useCallback(async () => {
+    try {
+      await window.holo?.factoryReset()
+    } catch (err) {
+      console.error('[App2] handleFactoryReset', err)
+    } finally {
+      window.location.reload()
+    }
+  }, [])
+
   // ─── Identifiants manquants pour l'espace actif ────────────────────────────
   const [pendingCredentials, setPendingCredentials] = useState<{ spacePath: string; mode: string } | null>(null)
 
@@ -1342,6 +1354,7 @@ export default function App2() {
         currentSpace={rootPath ?? undefined}
         onSave={handleSettingsSave}
         onSaveSpaceConfig={handleSaveSpaceConfig}
+        onFactoryReset={handleFactoryReset}
         onChange={(value) => {
           // Prévisualisation en temps réel (sans persister)
           applyTheme(value.theme ?? 'dark')

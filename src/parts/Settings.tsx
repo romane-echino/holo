@@ -70,6 +70,7 @@ export type HoloSettingsDialogProps = {
   onChange?: (value: HoloSettingsValue) => void
   onSave?: (value: HoloSettingsValue) => void
   onSaveSpaceConfig?: (spacePath: string, mode: string, credentials: SpaceCredentials) => Promise<void>
+  onFactoryReset?: () => void | Promise<void>
   onClose?: () => void
 }
 
@@ -250,6 +251,7 @@ export function HoloSettingsDialog({
   onChange,
   onSave,
   onSaveSpaceConfig,
+  onFactoryReset,
   onClose,
 }: HoloSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
@@ -729,13 +731,14 @@ export function HoloSettingsDialog({
             <div className="min-w-0">
               {confirmReset ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-holo-text-muted">Réinitialiser tous les paramètres ?</span>
+                  <span className="text-sm text-holo-text-muted">Réinitialisation d'usine : efface les paramètres, les espaces liés et la configuration ?</span>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       setDraft({ ...defaultValue })
                       onChange?.({ ...defaultValue })
                       onSave?.({ ...defaultValue })
                       setConfirmReset(false)
+                      await onFactoryReset?.()
                     }}
                     className="rounded-holo-md bg-red-500/20 px-3 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/30 active:scale-[0.98]"
                   >Confirmer</button>

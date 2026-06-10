@@ -325,26 +325,11 @@ Nouveau composants :
 - ✅ Dans les date dans le tableau si je tape jour.mois en ommettan l'année faudrai que ça passe et mettre l'année courante (ex. 01.05 -> TAB et ça autocomplète 01.05.2026, pareil si je tape 1.1 -> TAB)
 
 # Phase 18.6
-- Git merge + fetch
 - Factory settings doit aussi remettre a zero les dossier lié -> voir carrément vider / supprimer holo-config.json
+- merge manuelle bizarre le truc color pour head>>> pas besoin de faire de formatage ça casse le truc d'avoir ajouter des composant dans le texte brute
+- quand on clone un repo git et que on a auth failed on peut pour editer les champs d'authentification meme si on ferme et reouvre le popup
+- faire plus de tests sur les tableaux (3 utilisateurs crée des lignes, et des données dans le tableau)
 
-
-y'a eu un conflit, samra a résolu, pris le mien (attention inversion text le mien / les leurs), mais ça n'a pas mis a jour le contenu (coté samra) et le popup est resté en conflit, on a recliquer y'avais plus de conflit mais on a revalider le warning est parti mais toujours pas a jour au niveau du contenu
-
-
-Ensuite j'ai le cas ou moi j'ai modifier la ligne 1 et elle la ligne 2
-pour une raison obscure holo n'a pas push (je l'ai fait manuellement) et ensuite il m'a mis un conflit sur
-
-Chez Samra j'ai un message commit local push échoué  mais pas d'erreur dans la console aucun idée pourquoi
-
-Est-ce que quand on fait une résolution manuelle du merge on pourrait intégrer des composant qui gère l'esthétique de >>>>>>>HEAD <<<<<< ?
-
-Il fait un enregistrement auto au moment du pull et ça fait un commit inutile a cause de l'enregristrerment auto -> explication j'ai commencer a taper une structure de document avec des titre (j'ai fait une pause de 1-2 seconde pour reflechir) et ça a lancer un enregistrement auto et un commit (jusque la pas de soucis), sauf que samra a reçu ce commit ça a pull. Par je sais pas quel mystère ça a fait de son coté a elle un enregistrement auto aussi et du coup elle a eu une resolution de conflit a gérer avec du contenu qu'elle a meme pas saisie (parce que entre temps j'ai fini de taper la structure et que j'ai envoyé un deuxième commit)
-
-Le warning récupéré ne s'adapte pas au sticky header (il est dessous)
-Lors de la résolution de conflit pouvoir prendre "les deux"
-
-Enfaite quand y'a un conflit j'ai eu a chaque fois le bouton récupérer qui est rester et si je clique dessus ça casse vraiment git (j'ai du résoudre via git de vscode)
 
 # Phase 18.5
 - Exportation PDF

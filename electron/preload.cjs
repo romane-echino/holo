@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('holo', {
   setHoloConfig: (cfg) => ipcRenderer.invoke('app:set-config', cfg),
   getHoloConfigValue: (key) => ipcRenderer.invoke('app:get-config-value', key),
   setHoloConfigValue: (key, value) => ipcRenderer.invoke('app:set-config-value', key, value),
+  factoryReset: () => ipcRenderer.invoke('app:factory-reset'),
   onUpdateAvailable: (callback) => {
     if (!updateListeners['update-available'].includes(callback)) {
       updateListeners['update-available'].push(callback)

@@ -12,35 +12,6 @@ import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import { MergeConflictDiffModal } from './MergeConflictDiffModal'
 
-// Coloration des lignes d'un fichier en conflit (mode brut de résolution manuelle).
-// La région « nôtre » (entre <<<<<<< et =======) est teintée en vert, la région
-// « distante » (entre ======= et >>>>>>>) en bleu, et les lignes de marqueurs en gras.
-function highlightConflictLines(text: string) {
-  let region: 'none' | 'ours' | 'theirs' = 'none'
-  return text.split('\n').map((line, index) => {
-    let cls = ''
-    if (line.startsWith('<<<<<<<')) {
-      region = 'ours'
-      cls = 'bg-emerald-500/20 font-semibold text-emerald-300'
-    } else if (region !== 'none' && line.startsWith('=======')) {
-      region = 'theirs'
-      cls = 'bg-holo-glass/60 font-semibold text-holo-text-faint'
-    } else if (region !== 'none' && line.startsWith('>>>>>>>')) {
-      region = 'none'
-      cls = 'bg-sky-500/20 font-semibold text-sky-300'
-    } else if (region === 'ours') {
-      cls = 'bg-emerald-500/[0.06]'
-    } else if (region === 'theirs') {
-      cls = 'bg-sky-500/[0.06]'
-    }
-    return (
-      <span key={index} className={cn('block break-words', cls)}>
-        {line === '' ? '\u200B' : line}
-      </span>
-    )
-  })
-}
-
 type EditorFrameProps = {
   filepath: string
   markdown?: string
@@ -1304,25 +1275,17 @@ export function EditorFrame({
                   {manualError}
                 </p>
               )}
-              <div className="relative">
-                <pre
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words rounded-holo-lg border border-transparent px-1 py-2 font-mono text-sm leading-relaxed"
-                >
-                  {highlightConflictLines(rawValue)}
-                </pre>
-                <textarea
-                  ref={rawTextareaRef}
-                  value={rawValue}
-                  onChange={(e) => handleRawChange(e.target.value)}
-                  className="relative w-full resize-none whitespace-pre-wrap break-words rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-transparent caret-holo-text outline-none selection:bg-holo-primary/30 focus:border-holo-primary/30"
-                  style={{ minHeight: '200px', overflowY: 'hidden' }}
-                  spellCheck={false}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                />
-              </div>
+              <textarea
+                ref={rawTextareaRef}
+                value={rawValue}
+                onChange={(e) => handleRawChange(e.target.value)}
+                className="w-full resize-none rounded-holo-lg border border-holo-border-soft bg-transparent px-1 py-2 font-mono text-sm leading-relaxed text-holo-text-soft outline-none focus:border-holo-primary/30"
+                style={{ minHeight: '200px', overflowY: 'hidden' }}
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+              />
             </div>
           ) : (
             <textarea

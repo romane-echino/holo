@@ -31,6 +31,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
   const [password, setPassword] = useState('')
   const [showAuth, setShowAuth] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const { getHoloApi } = useGetHoloApi()
   const { openFolder, applyOpenedFolder, refreshRecentFolders } = useWorkspaceFolders({ getHoloApi })
@@ -43,6 +44,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
     setPassword('')
     setShowAuth(false)
     setIsSubmitting(false)
+    setErrorMessage(null)
     setTab('folder')
     onClose()
   }
@@ -83,6 +85,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
     if (!holo) return
 
     setIsSubmitting(true)
+    setErrorMessage(null)
     try {
       const result = await holo.gitCloneRepository({
         repoUrl: repoUrl.trim(),
@@ -99,7 +102,11 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
 
       handleClose()
     } catch (error) {
-      window.alert((error as Error).message)
+      // On garde le popup ouvert avec les champs intacts et éditables, et on
+      // déplie la section d'authentification pour permettre de corriger les
+      // identifiants puis de réessayer directement.
+      setErrorMessage((error as Error).message)
+      setShowAuth(true)
     } finally {
       setIsSubmitting(false)
     }
@@ -261,6 +268,12 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
               </div>
             )}
           </div>
+
+          {errorMessage && (
+            <p className="rounded-holo-md border border-holo-danger/30 bg-holo-danger/10 px-3 py-2 text-xs leading-5 text-holo-danger">
+              {errorMessage}
+            </p>
+          )}
         </div>
       )}
     </AbstractPopup>

@@ -757,7 +757,9 @@ async function getCurrentTreePayload() {
 
 async function runGit(args, cwd) {
   try {
-    const { stdout, stderr } = await execFileAsync('git', args, {
+    // core.quotePath=false : évite l'échappement octal des noms non-ASCII (accents)
+    // dans les sorties porcelain/numstat, pour que les chemins restent exploitables.
+    const { stdout, stderr } = await execFileAsync('git', ['-c', 'core.quotePath=false', ...args], {
       cwd,
       windowsHide: true,
       maxBuffer: 10 * 1024 * 1024,
@@ -931,10 +933,89 @@ async function getGitState({ fetchRemote = false } = {}) {
   }
 }
 
+/**
+ * Déquote un chemin issu d'une sortie git (status/diff). Git entoure de guillemets
+ * et échappe (style C) les chemins « inhabituels » (espaces, accents, guillemets…).
+ * Renvoie le chemin réel exploitable côté système de fichiers.
+ */
+function unquoteGitPath(rawPath) {
+  if (typeof rawPath !== 'string' || rawPath.length < 2) {
+    return rawPath
+  }
+  if (!(rawPath.startsWith('"') && rawPath.endsWith('"'))) {
+    return rawPath
+  }
+
+  const inner = rawPath.slice(1, -1)
+  let result = ''
+  let hadOctal = false
+  for (let i = 0; i < inner.length; i += 1) {
+    const char = inner[i]
+    if (char !== '\\') {
+      result += char
+      continue
+    }
+
+    const next = inner[i + 1]
+    switch (next) {
+      case 'n':
+        result += '\n'
+        i += 1
+        break
+      case 't':
+        result += '\t'
+        i += 1
+        break
+      case 'r':
+        result += '\r'
+        i += 1
+        break
+      case '"':
+        result += '"'
+        i += 1
+        break
+      case '\\':
+        result += '\\'
+        i += 1
+        break
+      default:
+        // Séquence octale \NNN (présente quand core.quotePath n'est pas désactivé).
+        if (next !== undefined && next >= '0' && next <= '7') {
+          const octal = inner.slice(i + 1, i + 4)
+          const code = Number.parseInt(octal, 8)
+          if (Number.isFinite(code)) {
+            result += String.fromCharCode(code)
+            hadOctal = true
+            i += octal.length
+            break
+          }
+        }
+        result += char
+        break
+    }
+  }
+
+  // Sans échappement octal (core.quotePath=false), la chaîne est déjà de l'UTF-8 valide.
+  if (!hadOctal) {
+    return result
+  }
+
+  // Les séquences octales produisent des octets UTF-8 individuels : on les recompose.
+  try {
+    const bytes = Uint8Array.from(Array.from(result, (c) => c.charCodeAt(0) & 0xff))
+    return new TextDecoder('utf-8').decode(bytes)
+  } catch {
+    return result
+  }
+}
+
 function parsePorcelainLine(line) {
   const statusCode = line.slice(0, 2)
   const rawPath = line.slice(3).trim()
-  const pathText = rawPath.includes('->') ? rawPath.split('->').pop()?.trim() ?? rawPath : rawPath
+  const unquoted = unquoteGitPath(rawPath)
+  const pathText = unquoted.includes('->')
+    ? unquoteGitPath(unquoted.split('->').pop()?.trim() ?? unquoted)
+    : unquoted
   return {
     statusCode,
     pathText,
@@ -973,7 +1054,7 @@ function parseNumstatOutput(output) {
       const [addedText = '0', deletedText = '0', ...pathParts] = line.split('\t')
 
       return {
-        filePath: pathParts.join('\t').trim(),
+        filePath: unquoteGitPath(pathParts.join('\t').trim()),
         added: toNumstatValue(addedText),
         deleted: toNumstatValue(deletedText),
       }
@@ -1468,6 +1549,10 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
   const cloneResult = await runGit(['clone', cloneUrl, cloneTargetPath], destinationPath)
 
   if (!cloneResult.ok) {
+    // En cas d'échec (auth refusée, URL invalide…), git peut laisser un dossier
+    // cible partiellement créé. On le supprime pour qu'une nouvelle tentative
+    // (après correction des identifiants) ne bute pas sur « le dossier existe déjà ».
+    await fs.rm(cloneTargetPath, { recursive: true, force: true }).catch(() => {})
     throw new Error(getGitErrorMessage(cloneResult, 'Échec du clone du dépôt.'))
   }
 
@@ -1567,6 +1652,30 @@ ipcMain.handle('app:set-config', async (_event, cfg) => {
 ipcMain.handle('app:get-config-value', async (_event, key) => getHoloConfigValue(key))
 ipcMain.handle('app:set-config-value', async (_event, key, value) => {
   await setHoloConfigValue(key, value)
+  return { ok: true }
+})
+ipcMain.handle('app:factory-reset', async () => {
+  // Réinitialisation d'usine : supprime la configuration globale, la liste des
+  // espaces/dossiers liés et l'index de recherche (chemins actuels + legacy).
+  const targets = [
+    getHoloConfigPath(),
+    getLegacyHoloConfigPath(),
+    getRecentFoldersFilePath(),
+    getLegacyRecentFoldersFilePath(),
+    getSearchIndexPath(),
+    getLegacySearchIndexPath(),
+  ]
+  await withConfigLock(() =>
+    withRecentFoldersLock(async () => {
+      for (const target of targets) {
+        try {
+          await fs.rm(target, { force: true })
+        } catch {
+          // ignore les fichiers déjà absents
+        }
+      }
+    }),
+  )
   return { ok: true }
 })
 ipcMain.handle('clipboard:write-text', async (_event, text) => {

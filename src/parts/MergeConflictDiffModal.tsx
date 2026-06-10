@@ -133,7 +133,12 @@ export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve,
 
   return createPortal(
     <div className="fixed inset-0 z-[180] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/62 backdrop-blur-xl" onClick={onDismiss} />
+      {/* Le clic sur le fond ferme la modale, sauf pendant une résolution en cours
+          (on évite toute fermeture accidentelle qui laisserait le conflit non résolu). */}
+      <div
+        className="absolute inset-0 bg-black/62 backdrop-blur-xl"
+        onClick={() => { if (!resolving) onDismiss() }}
+      />
 
       <div className="relative z-10 flex w-full max-w-3xl flex-col overflow-hidden rounded-[1.4rem] border border-holo-border-soft bg-holo-bg/95 shadow-[0_30px_110px_rgba(0,0,0,.58),inset_0_1px_0_rgba(255,255,255,.035)] backdrop-blur-2xl">
         {/* Header */}
@@ -164,7 +169,7 @@ export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve,
               </button>
             </div>
           )}
-          <button onClick={onDismiss} className="rounded-holo-md p-1.5 text-holo-text-faint hover:bg-holo-glass hover:text-holo-text">
+          <button onClick={onDismiss} disabled={!!resolving} className="rounded-holo-md p-1.5 text-holo-text-faint hover:bg-holo-glass hover:text-holo-text disabled:opacity-30">
             <X size={15} />
           </button>
         </div>
@@ -220,7 +225,8 @@ export function MergeConflictDiffModal({ filePath, swapSides = false, onResolve,
           <div className="flex items-center gap-2">
             <button
               onClick={() => { onManual?.(); onDismiss() }}
-              className="rounded-holo-lg border border-holo-border-soft bg-transparent px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass"
+              disabled={!!resolving}
+              className="rounded-holo-lg border border-holo-border-soft bg-transparent px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass disabled:opacity-50"
             >
               Résoudre manuellement
             </button>
