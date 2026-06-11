@@ -299,4 +299,77 @@ test.describe('Electron app — critical flows', () => {
       await fs.rm(launched.configHome, { recursive: true, force: true })
     }
   })
+
+  test('le champ de lien du FormatToolbar accepte le collage clavier (Ctrl/Cmd+V)', async () => {
+    const workspace = await createStructuredWorkspace({
+      'doc.md': [
+        '---',
+        'title: Doc lien',
+        '---',
+        '',
+        'Texte a transformer en lien.',
+        '',
+      ].join('\n'),
+    })
+
+    const launched = await launchHolo([
+      `--holo-root=${workspace.rootPath}`,
+      `--holo-file=${path.join(workspace.rootPath, 'doc.md')}`,
+    ])
+
+    try {
+      // Garde-fou principal : sans menu Édition déclaré, Electron ne route plus
+      // les accélérateurs presse-papiers vers les champs natifs et Ctrl+V ne
+      // colle pas (le bug signalé). On vérifie que les rôles sont bien exposés.
+      const clipboardRoles = await launched.app.evaluate(({ Menu }) => {
+        const menu = Menu.getApplicationMenu()
+        if (!menu) return [] as string[]
+        const found = new Set<string>()
+        const walk = (items: Electron.MenuItem[]) => {
+          for (const item of items) {
+            if (item.role) found.add(String(item.role).toLowerCase())
+            if (item.submenu) walk(item.submenu.items)
+          }
+        }
+        walk(menu.items)
+        return Array.from(found)
+      })
+      expect(clipboardRoles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectall']))
+
+      const paragraph = launched.page
+        .locator('[data-block-type="paragraph"][contenteditable]')
+        .filter({ hasText: 'Texte a transformer en lien.' })
+      await expect(paragraph).toBeVisible({ timeout: 20_000 })
+
+      // Sélectionne tout le texte du paragraphe : la FormatToolbar apparaît.
+      await paragraph.click()
+      await launched.page.keyboard.press('Home')
+      await launched.page.keyboard.press('Shift+End')
+
+      const toolbar = launched.page.locator('[data-format-toolbar="true"]')
+      await expect(toolbar).toBeVisible({ timeout: 10_000 })
+
+      // Ouvre le mode saisie de lien.
+      await toolbar.getByRole('button', { name: 'Ajouter un lien (Ctrl+K)' }).click()
+
+      const linkInput = launched.page.getByPlaceholder(/nom de page/)
+      await expect(linkInput).toBeVisible({ timeout: 10_000 })
+
+      // Place une URL dans le presse-papiers système (process principal Electron).
+      const url = 'https://exemple.test/page-collee'
+      await launched.app.evaluate(({ clipboard }, value) => clipboard.writeText(value), url)
+
+      // Colle dans le champ natif <input> : aucun handler côté rendu ne doit
+      // intercepter / preventDefault le collage de texte dans ce champ.
+      await linkInput.click()
+      const pasteModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await launched.page.keyboard.press(`${pasteModifier}+V`)
+
+      await expect(linkInput).toHaveValue(url, { timeout: 10_000 })
+    } finally {
+      await launched.app.close()
+      await fs.rm(workspace.rootPath, { recursive: true, force: true })
+      await fs.rm(launched.configHome, { recursive: true, force: true })
+    }
+  })
 })

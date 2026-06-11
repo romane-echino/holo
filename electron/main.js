@@ -1524,7 +1524,6 @@ function createWindow(launchPayload = null) {
   })
 
   window.setMenuBarVisibility(false)
-  window.removeMenu()
 
   // Native spellcheck context menu
   window.webContents.on('context-menu', (_event, params) => {
@@ -1595,16 +1594,25 @@ app.on('second-instance', (_event, argv) => {
 
 ipcMain.handle('fs:open-folder', async () => {
   const result = await dialog.showOpenDialog({
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'multiSelections'],
   })
 
   if (result.canceled || result.filePaths.length === 0) {
     return null
   }
 
+  // On enregistre tous les dossiers sélectionnés comme espaces récents.
+  // `addRecentFolder` place le dernier ajouté en tête : on parcourt donc en
+  // ordre inverse afin que le premier dossier choisi reste en tête de liste.
+  for (const folderPath of result.filePaths) {
+    knownRootPaths.add(folderPath)
+  }
+  for (let i = result.filePaths.length - 1; i >= 0; i--) {
+    await addRecentFolder(result.filePaths[i])
+  }
+
+  // Le premier dossier sélectionné devient l'espace actif affiché.
   currentRootPath = result.filePaths[0]
-  knownRootPaths.add(currentRootPath)
-  await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
 
@@ -3175,7 +3183,28 @@ ipcMain.handle('fs:load-image', async (_event, relativePath) => {
 })
 
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null)
+  // La fenêtre est « frameless » : aucune barre de menu n'est affichée.
+  // On déclare malgré tout un menu Édition avec les rôles standards afin de
+  // réactiver les accélérateurs presse-papiers (Ctrl/Cmd + C/V/X/A, undo/redo)
+  // dans les champs natifs (<input>, <textarea>). Sans ce menu, Electron ne
+  // route plus ces raccourcis et coller (Ctrl+V) ne fonctionne pas dans les
+  // champs comme l'input de lien du FormatToolbar.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Édition',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      },
+    ]),
+  )
 
   // Pré-charger tous les espaces récents dans knownRootPaths (pour la lecture cross-espace)
   getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => { })
