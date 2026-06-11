@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { KeyRound } from 'lucide-react'
 import { cn } from '../utils/global'
+import { buildAzureSasUrl, parseAzureSasUrl } from '../utils/azureSas'
 import type { SpaceCredentials } from './Settings'
 
 // ─── Helpers UI ───────────────────────────────────────────────────────────────
@@ -99,20 +100,19 @@ export function SpaceCredentialsModal({ spacePath, mode, onSave, onDismiss }: Sp
 
         <div className="space-y-4">
           {mode === 'azure' && (
-            <>
-              <Field label="Azure Container URL">
-                <input
-                  type="url"
-                  value={creds.azureContainerUrl ?? ''}
-                  onChange={(e) => set('azureContainerUrl')(e.target.value)}
-                  placeholder="https://xxx.blob.core.windows.net/container"
-                  className={inputCls}
-                />
-              </Field>
-              <Field label="SAS Token">
-                <PasswordInput value={creds.azureSasToken} onChange={set('azureSasToken')} />
-              </Field>
-            </>
+            <Field label="Lien SAS Azure">
+              <input
+                type="text"
+                value={buildAzureSasUrl(creds.azureContainerUrl ?? '', creds.azureSasToken ?? '')}
+                onChange={(e) => {
+                  const { containerUrl, sasToken } = parseAzureSasUrl(e.target.value)
+                  set('azureContainerUrl')(containerUrl)
+                  set('azureSasToken')(sasToken)
+                }}
+                placeholder="https://xxx.blob.core.windows.net/container?sv=...&sig=..."
+                className={inputCls}
+              />
+            </Field>
           )}
 
           {mode === 's3' && (

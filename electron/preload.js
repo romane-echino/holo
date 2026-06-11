@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('holo', {
   loadImage: (relativePath) => ipcRenderer.invoke('fs:load-image', relativePath),
   gitPickCloneDirectory: () => ipcRenderer.invoke('git:pick-clone-directory'),
   gitCloneRepository: (payload) => ipcRenderer.invoke('git:clone-repository', payload),
+  gitGetSavedCredentials: (repoUrl) => ipcRenderer.invoke('git:get-saved-credentials', repoUrl),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),
   getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),

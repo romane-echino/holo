@@ -330,15 +330,20 @@ Nouveau composants :
 - quand on clone un repo git et que on a auth failed on peut pour editer les champs d'authentification meme si on ferme et reouvre le popup
 - faire plus de tests sur les tableaux (3 utilisateurs crée des lignes, et des données dans le tableau)
 
-
-# Phase 18.5
-- Exportation PDF
+# Phase 18.7
+- Sauvegarder en local les crendentials git
+- Si git clone auth failed demander les crédentials
+- Améliorer l'ux pour les Azure Storage -> En vrai on a besoin que d'un champ (ils fournissent un lien qui contien container + token) Settings plus popup ouverture d'espace
 
 # Phase 19
-- Documentation global sur toutes les fonctionnalités du projet en markdown github Documentation.md
- 
-# Phase 20
-- Site internet du projet
+- Exportation PDF
 
+# Phase 20
+- Documentation global sur toutes les fonctionnalités du projet en markdown github Documentation.md
+- Refaire le readme.md
+ 
 # Phase 21
 - I18n de tout le software puis traduction (fr,de, en, es, it, jp, ch)
+
+# Phase 22
+- Site internet du projet dans le projet vercel avec liens de download de l'app

@@ -82,6 +82,7 @@ type HoloGitClonePayload = {
   username?: string
   password?: string
   destinationPath: string
+  remember?: boolean
 }
 
 type HoloOpenFileInNewWindowPayload = {
@@ -195,6 +196,7 @@ interface HoloApi {
   gitAutoSave: (filePath: string, authorName?: string, authorEmail?: string) => Promise<{ ok: boolean; committed: boolean; reason?: string; error?: string }>
   gitPickCloneDirectory: () => Promise<string | null>
   gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>
+  gitGetSavedCredentials: (repoUrl: string) => Promise<{ username: string; hasPassword: boolean } | null>
   gitFetch: () => Promise<{ ok: true; output: string }>
   gitCommit: (message: string) => Promise<HoloGitCommitResult>
   gitSync: () => Promise<HoloGitSyncResult>

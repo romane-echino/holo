@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import updaterPkg from 'electron-updater'
 import { execFile, spawn } from 'node:child_process'
 
@@ -693,6 +693,106 @@ function withOptionalCredentials(rawUrl, username, password) {
   return parsed.toString()
 }
 
+// ─── Identifiants git enregistrés (chiffrés via safeStorage) ─────────────────
+// Sauvegardés par hôte (github.com, dev.azure.com…) dans holo-config.json sous
+// la clé « git-credentials ». Le mot de passe/token est chiffré au repos quand
+// le chiffrement OS est disponible, sinon stocké en base64 (repli).
+function getGitHostFromUrl(rawUrl) {
+  try {
+    return new URL(String(rawUrl ?? '').trim()).host.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function encryptSecret(plain) {
+  const text = String(plain ?? '')
+  if (!text) return ''
+
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return `enc:${safeStorage.encryptString(text).toString('base64')}`
+    }
+  } catch {
+    // repli ci-dessous
+  }
+
+  return `plain:${Buffer.from(text, 'utf8').toString('base64')}`
+}
+
+function decryptSecret(stored) {
+  if (typeof stored !== 'string' || !stored) return ''
+
+  if (stored.startsWith('enc:')) {
+    try {
+      return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'))
+    } catch {
+      return ''
+    }
+  }
+
+  if (stored.startsWith('plain:')) {
+    try {
+      return Buffer.from(stored.slice(6), 'base64').toString('utf8')
+    } catch {
+      return ''
+    }
+  }
+
+  return ''
+}
+
+async function getSavedGitCredentials(host) {
+  if (!host) return null
+
+  const config = await readHoloConfig()
+  const all = config['git-credentials']
+  if (!all || typeof all !== 'object' || Array.isArray(all)) return null
+
+  const entry = all[host]
+  if (!entry || typeof entry !== 'object') return null
+
+  const username = typeof entry.username === 'string' ? entry.username : ''
+  const password = decryptSecret(entry.password)
+  if (!username && !password) return null
+
+  return { username, password }
+}
+
+async function saveGitCredentials(host, username, password) {
+  if (!host) return
+
+  return withConfigLock(async () => {
+    const config = await readHoloConfig()
+    const all = config['git-credentials'] && typeof config['git-credentials'] === 'object' && !Array.isArray(config['git-credentials'])
+      ? config['git-credentials']
+      : {}
+
+    all[host] = {
+      username: String(username ?? ''),
+      password: encryptSecret(password),
+    }
+    config['git-credentials'] = all
+    await writeHoloConfig(config)
+  })
+}
+
+// Détecte une erreur d'authentification git à partir de la sortie d'erreur.
+function isGitAuthFailure(result) {
+  const text = `${result?.stderr ?? ''} ${result?.stdout ?? ''}`.toLowerCase()
+  return (
+    text.includes('authentication failed')
+    || text.includes('could not read username')
+    || text.includes('could not read password')
+    || text.includes('invalid username or password')
+    || text.includes('terminal prompts disabled')
+    || text.includes('http basic: access denied')
+    || text.includes('403')
+    || text.includes('401')
+  )
+}
+
+
 async function buildTree(entryPath) {
   const entries = (await fs.readdir(entryPath, { withFileTypes: true })).filter(
     (entry) => !entry.name.startsWith('.')
@@ -759,10 +859,13 @@ async function runGit(args, cwd) {
   try {
     // core.quotePath=false : évite l'échappement octal des noms non-ASCII (accents)
     // dans les sorties porcelain/numstat, pour que les chemins restent exploitables.
+    // GIT_TERMINAL_PROMPT=0 : empêche git de rester bloqué sur un prompt d'identifiants
+    // (aucun terminal disponible dans l'app) → l'échec d'auth remonte proprement.
     const { stdout, stderr } = await execFileAsync('git', ['-c', 'core.quotePath=false', ...args], {
       cwd,
       windowsHide: true,
       maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     })
 
     return {
@@ -1519,9 +1622,10 @@ ipcMain.handle('git:pick-clone-directory', async () => {
 
 ipcMain.handle('git:clone-repository', async (_event, payload) => {
   const repoUrl = String(payload?.repoUrl ?? '').trim()
-  const username = String(payload?.username ?? '').trim()
-  const password = String(payload?.password ?? '').trim()
+  let username = String(payload?.username ?? '').trim()
+  let password = String(payload?.password ?? '').trim()
   const destinationPath = String(payload?.destinationPath ?? '').trim()
+  const remember = payload?.remember !== false
 
   if (!repoUrl) {
     throw new Error('Le lien du dépôt est requis.')
@@ -1535,6 +1639,16 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
 
   if (!destinationStats || !destinationStats.isDirectory()) {
     throw new Error('Le dossier de destination est invalide.')
+  }
+
+  // Aucun identifiant fourni → on réutilise ceux enregistrés pour cet hôte.
+  const host = getGitHostFromUrl(repoUrl)
+  if (!username && !password) {
+    const saved = await getSavedGitCredentials(host)
+    if (saved) {
+      username = saved.username
+      password = saved.password
+    }
   }
 
   const repoName = getRepoNameFromUrl(repoUrl)
@@ -1553,7 +1667,19 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
     // cible partiellement créé. On le supprime pour qu'une nouvelle tentative
     // (après correction des identifiants) ne bute pas sur « le dossier existe déjà ».
     await fs.rm(cloneTargetPath, { recursive: true, force: true }).catch(() => {})
+
+    if (isGitAuthFailure(cloneResult)) {
+      const authError = new Error('Authentification refusée : vérifiez le nom d\'utilisateur et le token.')
+      authError.code = 'AUTH_FAILED'
+      throw authError
+    }
+
     throw new Error(getGitErrorMessage(cloneResult, 'Échec du clone du dépôt.'))
+  }
+
+  // Clone réussi avec des identifiants → on les mémorise (chiffrés) pour cet hôte.
+  if (remember && host && (username || password)) {
+    await saveGitCredentials(host, username, password).catch(() => {})
   }
 
   currentRootPath = cloneTargetPath
@@ -1561,6 +1687,16 @@ ipcMain.handle('git:clone-repository', async (_event, payload) => {
   await addRecentFolder(currentRootPath)
   return getCurrentTreePayload()
 })
+
+// Renvoie l'éventuel nom d'utilisateur enregistré pour l'hôte d'une URL de dépôt
+// (sans jamais exposer le mot de passe/token au renderer).
+ipcMain.handle('git:get-saved-credentials', async (_event, rawUrl) => {
+  const host = getGitHostFromUrl(rawUrl)
+  const saved = await getSavedGitCredentials(host)
+  if (!saved) return null
+  return { username: saved.username, hasPassword: Boolean(saved.password) }
+})
+
 
 ipcMain.handle('fs:get-recent-folders', async () => getRecentFolders())
 

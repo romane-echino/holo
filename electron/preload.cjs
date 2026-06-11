@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('holo', {
   gitAutoSave: (filePath, authorName, authorEmail) => ipcRenderer.invoke('git:auto-save', filePath, authorName, authorEmail),
   gitPickCloneDirectory: () => ipcRenderer.invoke('git:pick-clone-directory'),
   gitCloneRepository: (payload) => ipcRenderer.invoke('git:clone-repository', payload),
+  gitGetSavedCredentials: (repoUrl) => ipcRenderer.invoke('git:get-saved-credentials', repoUrl),
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitSync: () => ipcRenderer.invoke('git:sync'),

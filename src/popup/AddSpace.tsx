@@ -30,6 +30,8 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showAuth, setShowAuth] = useState(false)
+  const [remember, setRemember] = useState(true)
+  const [savedHint, setSavedHint] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -43,10 +45,33 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
     setUsername('')
     setPassword('')
     setShowAuth(false)
+    setRemember(true)
+    setSavedHint(null)
     setIsSubmitting(false)
     setErrorMessage(null)
     setTab('folder')
     onClose()
+  }
+
+  // Préremplit le nom d'utilisateur enregistré (chiffré côté main) pour cet hôte.
+  const handleRepoUrlBlur = async () => {
+    const holo = getHoloApi()
+    const url = repoUrl.trim()
+    if (!holo?.gitGetSavedCredentials || !url) {
+      setSavedHint(null)
+      return
+    }
+    try {
+      const saved = await holo.gitGetSavedCredentials(url)
+      if (saved && (saved.username || saved.hasPassword)) {
+        if (saved.username && !username.trim()) setUsername(saved.username)
+        setSavedHint('Identifiants enregistrés pour cet hôte — laissez vide pour les réutiliser.')
+      } else {
+        setSavedHint(null)
+      }
+    } catch {
+      setSavedHint(null)
+    }
   }
 
   // ── Ouvrir un dossier local ──────────────────────────────────────────────────
@@ -92,6 +117,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
         destinationPath: destinationPath.trim(),
         username: username.trim() || undefined,
         password: password.trim() || undefined,
+        remember,
       })
 
       applyOpenedFolder(result)
@@ -195,6 +221,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
               type="text"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
+              onBlur={handleRepoUrlBlur}
               placeholder="https://github.com/user/repo.git"
               className={inputClassName}
             />
@@ -265,6 +292,20 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
                     className={inputClassName}
                   />
                 </div>
+
+                {savedHint && (
+                  <p className="text-[11px] leading-4 text-holo-text-faint">{savedHint}</p>
+                )}
+
+                <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-holo-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                    className="size-3.5 accent-holo-primary"
+                  />
+                  Mémoriser ces identifiants (chiffrés) sur cette machine
+                </label>
               </div>
             )}
           </div>

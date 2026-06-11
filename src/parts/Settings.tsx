@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '../utils/global'
+import { buildAzureSasUrl, parseAzureSasUrl } from '../utils/azureSas'
 import { CHANGELOG_ENTRIES } from '../constants/changelog'
 
 type SettingsTab = 'profile' | 'storage' | 'ai' | 'appearance' | 'about'
@@ -473,23 +474,17 @@ export function HoloSettingsDialog({
                           </div>
 
                           {spaceImageMode === 'azure' && (
-                            <>
-                              <Field label="Azure container URL">
-                                <input
-                                  value={spaceCredentials.azureContainerUrl ?? ''}
-                                  onChange={(e) => setSpaceCredentials((p) => ({ ...p, azureContainerUrl: e.target.value }))}
-                                  placeholder="https://account.blob.core.windows.net/container"
-                                  className={inputClassName}
-                                />
-                              </Field>
-                              <Field label="SAS Token">
-                                <PasswordInput
-                                  value={spaceCredentials.azureSasToken}
-                                  onChange={(v) => setSpaceCredentials((p) => ({ ...p, azureSasToken: v }))}
-                                  placeholder="SAS Token Azure"
-                                />
-                              </Field>
-                            </>
+                            <Field label="Lien SAS Azure">
+                              <input
+                                value={buildAzureSasUrl(spaceCredentials.azureContainerUrl ?? '', spaceCredentials.azureSasToken ?? '')}
+                                onChange={(e) => {
+                                  const { containerUrl, sasToken } = parseAzureSasUrl(e.target.value)
+                                  setSpaceCredentials((p) => ({ ...p, azureContainerUrl: containerUrl, azureSasToken: sasToken }))
+                                }}
+                                placeholder="https://compte.blob.core.windows.net/container?sv=...&sig=..."
+                                className={inputClassName}
+                              />
+                            </Field>
                           )}
 
                           {spaceImageMode === 's3' && (
