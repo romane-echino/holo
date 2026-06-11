@@ -41,7 +41,7 @@ import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
-import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
+import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, ImageMetadata, ImageDisplayMode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { InlineEditorHandle } from './InlineEditor'
 
@@ -145,6 +145,37 @@ function buildTableMetadataComment(metadata: TableMetadata | undefined): string 
   return `<!-- holo:table ${JSON.stringify(payload)} -->`
 }
 
+const IMAGE_DISPLAY_MODES: ImageDisplayMode[] = ['full', 'banner', 'thumbnail', 'quarter', 'half']
+
+function parseImageMetadataComment(value: string): ImageMetadata | null {
+  const match = value.trim().match(/^<!--\s*holo:image\s+([\s\S]+?)\s*-->$/)
+  if (!match) return null
+  try {
+    const parsed = JSON.parse(match[1]) as ImageMetadata
+    if (!parsed || typeof parsed !== 'object') return null
+    const mode = IMAGE_DISPLAY_MODES.includes(parsed.displayMode as ImageDisplayMode) ? parsed.displayMode : undefined
+    return { displayMode: mode }
+  } catch {
+    return null
+  }
+}
+
+function hasNonDefaultImageMetadata(metadata: ImageMetadata | undefined): boolean {
+  return Boolean(metadata?.displayMode && metadata.displayMode !== 'full')
+}
+
+function buildImageMetadataComment(metadata: ImageMetadata | undefined): string | null {
+  if (!hasNonDefaultImageMetadata(metadata)) return null
+  return `<!-- holo:image ${JSON.stringify({ displayMode: metadata!.displayMode })} -->`
+}
+
+function paragraphSingleImage(node: BlockNode): ImageNode | null {
+  if (node.type !== 'paragraph') return null
+  const para = node as ParagraphNode
+  if (para.children.length === 1 && para.children[0].type === 'image') return para.children[0] as ImageNode
+  return null
+}
+
 // Au chargement, le markdown standard `mot[^1]` est parsé en [text "mot", footnoteReference]
 // sans information d'ancre. On rattache le mot précédent à la référence pour restaurer
 // le surlignage du mot ancré (et l'aperçu du tooltip au survol).
@@ -231,6 +262,29 @@ function markdownToBlocks(markdown: string): BlockState[] {
           },
         }
         result.push({ id: newId(), node: convertHtmlUnderline(tableNode) })
+        i++
+      } else {
+        result.push({ id: newId(), node: convertHtmlUnderline(node) })
+      }
+    } else if (
+      node.type === 'html'
+      && i + 1 < children.length
+      && children[i + 1].type === 'paragraph'
+      && children[i + 1].children?.length === 1
+      && children[i + 1].children[0].type === 'image'
+    ) {
+      const imageMetadata = parseImageMetadataComment(node.value as string)
+      if (imageMetadata?.displayMode) {
+        const paragraphNode = children[i + 1]
+        const imageChild = {
+          ...paragraphNode.children[0],
+          data: {
+            ...(paragraphNode.children[0].data ?? {}),
+            holoImage: imageMetadata,
+          },
+        }
+        const wrappedNode = { ...paragraphNode, children: [imageChild] }
+        result.push({ id: newId(), node: convertHtmlUnderline(wrappedNode) })
         i++
       } else {
         result.push({ id: newId(), node: convertHtmlUnderline(node) })
@@ -369,11 +423,20 @@ function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string
       }
       const { data: _d, ...nodeWithoutData } = tableNode
       expanded.push(nodeWithoutData)
+    } else if (paragraphSingleImage(b.node)) {
+      const image = paragraphSingleImage(b.node) as ImageNode
+      const comment = buildImageMetadataComment(image.data?.holoImage)
+      if (comment) expanded.push({ type: 'html', value: comment })
+      expanded.push(b.node)
+    } else if (b.node.type === 'image') {
+      const image = b.node as ImageNode
+      const comment = buildImageMetadataComment(image.data?.holoImage)
+      if (comment) expanded.push({ type: 'html', value: comment })
+      expanded.push(b.node)
     } else {
       expanded.push(b.node)
     }
-  }
-  const markdown = serializer.stringify({
+  }  const markdown = serializer.stringify({
     type: 'root',
     children: expanded,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1659,7 +1722,7 @@ function BlockDispatcher({
       // Un paragraphe ne contenant qu'une image → rendu comme ImageBlock (évite perte lors du blur)
       const para = block.node as ParagraphNode
       if (para.children.length === 1 && para.children[0].type === 'image') {
-        return <ImageBlock node={para.children[0] as ImageNode} isSelected={isSelected} onSelect={onSelect} />
+        return <ImageBlock node={para.children[0] as ImageNode} isSelected={isSelected} onSelect={onSelect} onChange={(image) => onChange({ ...para, children: [image] })} />
       }
       return (
         <ParagraphBlock
@@ -1773,7 +1836,7 @@ function BlockDispatcher({
       )
 
     case 'image':
-      return <ImageBlock node={block.node as ImageNode} isSelected={isSelected} onSelect={onSelect} />
+      return <ImageBlock node={block.node as ImageNode} isSelected={isSelected} onSelect={onSelect} onChange={(image) => onChange(image)} />
 
     case 'thematicBreak':
       return (

@@ -335,6 +335,9 @@ Nouveau composants :
 - ✅Si git clone auth failed demander les crédentials
 - ✅Améliorer l'ux pour les Azure Storage -> En vrai on a besoin que d'un champ (ils fournissent un lien qui contien container + token) Settings plus popup ouverture d'espace
 
+# Phase 18.8
+- Pouvoir mettre des image dans les cellules de tableau -> largeur s'adapte a la cellule, hauteur fixe
+
 # Phase 19
 - Exportation PDF
 
