@@ -366,6 +366,8 @@ test.describe('Electron app — critical flows', () => {
       await launched.page.keyboard.press(`${pasteModifier}+V`)
 
       await expect(linkInput).toHaveValue(url, { timeout: 10_000 })
+      // La toolbar (et donc le champ) ne doit PAS se fermer pendant le collage.
+      await expect(toolbar).toBeVisible()
     } finally {
       await launched.app.close()
       await fs.rm(workspace.rootPath, { recursive: true, force: true })

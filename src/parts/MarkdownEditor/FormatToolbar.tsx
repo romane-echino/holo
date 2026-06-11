@@ -235,6 +235,29 @@ export function FormatToolbar({
               ref={inputRef}
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
+              onPaste={(e) => {
+                // Collage géré explicitement : on neutralise la propagation
+                // (handlers de collage globaux de l'éditeur) et le comportement
+                // par défaut qui, sinon, ferme la toolbar sans rien insérer.
+                // On insère le texte dans l'état contrôlé puis on garde le focus
+                // dans l'input pour que la toolbar reste ouverte.
+                e.preventDefault()
+                e.stopPropagation()
+                const pasted = e.clipboardData.getData('text/plain')
+                if (!pasted) return
+                const input = e.currentTarget
+                const start = input.selectionStart ?? linkUrl.length
+                const end = input.selectionEnd ?? linkUrl.length
+                const next = linkUrl.slice(0, start) + pasted + linkUrl.slice(end)
+                const caret = start + pasted.length
+                setLinkUrl(next)
+                requestAnimationFrame(() => {
+                  const el = inputRef.current
+                  if (!el) return
+                  el.focus()
+                  try { el.setSelectionRange(caret, caret) } catch { /* noop */ }
+                })
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()

@@ -325,15 +325,15 @@ Nouveau composants :
 - ✅ Dans les date dans le tableau si je tape jour.mois en ommettan l'année faudrai que ça passe et mettre l'année courante (ex. 01.05 -> TAB et ça autocomplète 01.05.2026, pareil si je tape 1.1 -> TAB)
 
 # Phase 18.6
-- Factory settings doit aussi remettre a zero les dossier lié -> voir carrément vider / supprimer holo-config.json
-- merge manuelle bizarre le truc color pour head>>> pas besoin de faire de formatage ça casse le truc d'avoir ajouter des composant dans le texte brute
-- quand on clone un repo git et que on a auth failed on peut pour editer les champs d'authentification meme si on ferme et reouvre le popup
-- faire plus de tests sur les tableaux (3 utilisateurs crée des lignes, et des données dans le tableau)
+- ✅Factory settings doit aussi remettre a zero les dossier lié -> voir carrément vider / supprimer holo-config.json
+- ✅merge manuelle bizarre le truc color pour head>>> pas besoin de faire de formatage ça casse le truc d'avoir ajouter des composant dans le texte brute
+- ✅quand on clone un repo git et que on a auth failed on peut pour editer les champs d'authentification meme si on ferme et reouvre le popup
+- ✅faire plus de tests sur les tableaux (3 utilisateurs crée des lignes, et des données dans le tableau)
 
 # Phase 18.7
-- Sauvegarder en local les crendentials git
-- Si git clone auth failed demander les crédentials
-- Améliorer l'ux pour les Azure Storage -> En vrai on a besoin que d'un champ (ils fournissent un lien qui contien container + token) Settings plus popup ouverture d'espace
+- ✅Sauvegarder en local les crendentials git
+- ✅Si git clone auth failed demander les crédentials
+- ✅Améliorer l'ux pour les Azure Storage -> En vrai on a besoin que d'un champ (ils fournissent un lien qui contien container + token) Settings plus popup ouverture d'espace
 
 # Phase 19
 - Exportation PDF
