@@ -317,7 +317,7 @@ function TreeNode({
 
       {isFolder && isExpanded && hasChildren && (
         <div className="mt-0.5 space-y-0.5">
-          {node.children!.filter((child) => child.name !== '.index.md').map((child) => (
+          {node.children!.filter((child) => !(['.index.md', 'CLAUDE.md', 'MEMORY.md'].includes(child.name))).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
