@@ -122,6 +122,8 @@
     },
     "mac": {
       "icon": "public/app-icon-512.png",
+      "identity": "-",
+      "hardenedRuntime": false,
       "target": [
         "dmg",
         "zip"
