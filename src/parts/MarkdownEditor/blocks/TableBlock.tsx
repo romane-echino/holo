@@ -33,7 +33,8 @@ type ColAlign = 'left' | 'center' | 'right'
 type InternalColumn = {
   id: string
   title: string
-  align: ColAlign
+  /** null = alignement par défaut (`---` dans le markdown), conservé tel quel pour limiter le diff git */
+  align: ColAlign | null
   type: TableColumnType
   aggregation: TableColumnAggregation
   color: string | null
@@ -124,9 +125,9 @@ const cellText = (cell: any): string =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (cell?.children ?? []).map((n: any) => n.value ?? '').join('')
 
-const toColAlign = (value: unknown): ColAlign => {
-  if (value === 'center' || value === 'right') return value
-  return 'left'
+const toColAlign = (value: unknown): ColAlign | null => {
+  if (value === 'left' || value === 'center' || value === 'right') return value
+  return null
 }
 
 function getSelectionBounds(anchor: CellCoord | null, focus: CellCoord | null) {
@@ -199,10 +200,10 @@ function toTableColumnType(value: unknown): TableColumnType {
   return DEFAULT_TABLE_COLUMN_TYPE
 }
 
-function defaultAlignForColumnType(type: TableColumnType): ColAlign {
+function defaultAlignForColumnType(type: TableColumnType): ColAlign | null {
   if (type === 'number' || type === 'currency') return 'right'
   if (type === 'checkbox') return 'center'
-  return 'left'
+  return null
 }
 
 function parseNumericLikeValue(value: string): number | null {
@@ -686,7 +687,7 @@ function nodeToInternal(node: TableNode): InternalTable {
   }))
 
   if (columns.length === 0) {
-    columns.push({ id: newColId(), title: '', align: 'left', type: DEFAULT_TABLE_COLUMN_TYPE, aggregation: DEFAULT_TABLE_COLUMN_AGGREGATION, color: null, width: 180, manualWidth: false })
+    columns.push({ id: newColId(), title: '', align: null, type: DEFAULT_TABLE_COLUMN_TYPE, aggregation: DEFAULT_TABLE_COLUMN_AGGREGATION, color: null, width: 180, manualWidth: false })
   }
 
   const rows: InternalRow[] = node.children.slice(1).map((row) => {
@@ -759,7 +760,7 @@ function getColumnTypeLabel(type: TableColumnType): string {
   return COLUMN_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? 'Texte'
 }
 
-function getAlignLabel(align: ColAlign): string {
+function getAlignLabel(align: ColAlign | null): string {
   return ALIGN_OPTIONS.find((option) => option.value === align)?.label ?? 'Gauche'
 }
 
@@ -944,7 +945,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         const newCol: InternalColumn = {
           id: newColId(),
           title: '',
-          align: 'left',
+          align: null,
           type: DEFAULT_TABLE_COLUMN_TYPE,
           aggregation: DEFAULT_TABLE_COLUMN_AGGREGATION,
           color: null,
@@ -1326,7 +1327,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       return () => document.removeEventListener('mousedown', handle)
     }, [activeColMenu])
 
-    const alignClass = (align: ColAlign) =>
+    const alignClass = (align: ColAlign | null) =>
       align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'
 
     const tableWidthClass = table.columns.length <= 3 ? 'w-full' : 'w-auto'
@@ -1666,7 +1667,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                                     onClick={() => setColumnAlign(col.id, value)}
                                     className={cn(
                                       'flex w-full items-center gap-2 rounded-holo-md px-2.5 py-2 text-sm transition',
-                                      col.align === value
+                                      (col.align ?? 'left') === value
                                         ? 'bg-holo-primary-surface text-holo-primary-soft'
                                         : 'text-holo-text-muted hover:bg-holo-glass-hover hover:text-holo-text',
                                     )}

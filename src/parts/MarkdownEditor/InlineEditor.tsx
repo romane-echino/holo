@@ -289,6 +289,17 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   const selectionRangeRef = useRef<Range | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingPointerSelectAllRef = useRef(false)
+  // rAF de re-sélection après un clic (selectAllOnFocus). Doit être annulé dès
+  // qu'une frappe arrive, sinon le 1er caractère tapé est sélectionné puis
+  // remplacé par le suivant (« Rédaction » → « édaction »).
+  const pointerSelectAllFrameRef = useRef<number | null>(null)
+  const cancelPointerSelectAll = useCallback(() => {
+    pendingPointerSelectAllRef.current = false
+    if (pointerSelectAllFrameRef.current !== null) {
+      cancelAnimationFrame(pointerSelectAllFrameRef.current)
+      pointerSelectAllFrameRef.current = null
+    }
+  }, [])
 
   // État de la toolbar de formatage inline
   const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
@@ -874,6 +885,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    cancelPointerSelectAll()
     if (mentionPopup) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -1171,10 +1183,14 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           pendingPointerSelectAllRef.current = false
           e.preventDefault()
           const target = e.currentTarget
-          requestAnimationFrame(() => selectAllContents(target))
+          if (pointerSelectAllFrameRef.current !== null) cancelAnimationFrame(pointerSelectAllFrameRef.current)
+          pointerSelectAllFrameRef.current = requestAnimationFrame(() => {
+            pointerSelectAllFrameRef.current = null
+            selectAllContents(target)
+          })
         }}
         onBlur={() => {
-          pendingPointerSelectAllRef.current = false
+          cancelPointerSelectAll()
           save()
           setMentionPopup(null)
           // Masquer la toolbar sauf si le focus part vers elle (ex. input URL)
@@ -1259,6 +1275,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
           }
         }}
         onInput={(e) => {
+          cancelPointerSelectAll()
           syncEmpty(e.currentTarget)
           savedRef.current = false
           scheduleSave()
