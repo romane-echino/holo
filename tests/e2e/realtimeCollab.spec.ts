@@ -142,6 +142,19 @@ test.describe('Édition en temps réel (relais Codenotch)', () => {
           .toMatch(/^(?=.*A1)(?=.*B1)/)
       }
 
+      // Alice tape dans un paragraphe pendant que Bob insère au début du même
+      // paragraphe : le curseur d'Alice suit, sa frappe continue au bon endroit.
+      await appendTo(alice.page, 'Point Bob. Relu par Bob.', ' Alice')
+      await expect(paragraph(bob.page, 'Relu par Bob. Alice')).toBeVisible({ timeout: 15_000 })
+      const bobTarget = paragraph(bob.page, 'Relu par Bob. Alice')
+      await bobTarget.click()
+      await bob.page.keyboard.press('Home')
+      await bob.page.keyboard.type('Note : ')
+      await expect(paragraph(alice.page, 'Note : Point Bob.')).toBeVisible({ timeout: 15_000 })
+      await alice.page.keyboard.type(' continue')
+      await expect.poll(async () => paragraph(bob.page, 'Note : Point Bob.').first().innerText(), { timeout: 15_000 })
+        .toBe('Note : Point Bob. Relu par Bob. Alice continue')
+
       // Les deux fichiers sur disque convergent.
       await expect.poll(async () => {
         const [a, b] = await Promise.all([

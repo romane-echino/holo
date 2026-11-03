@@ -42,6 +42,7 @@ import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
 import { flushPendingEdits } from '../../lib/editorFlush'
+import { singleSpliceDiff } from '../../lib/realtime/encoding'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, ImageMetadata, ImageDisplayMode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -525,6 +526,18 @@ function stripPositions(node: any): any {
   return out
 }
 
+/** Position du curseur dans le texte d'un élément éditable (0 si hors de l'élément). */
+function getCaretTextOffset(element: HTMLElement): number {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return 0
+  const caret = selection.getRangeAt(0)
+  if (!element.contains(caret.endContainer)) return 0
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  range.setEnd(caret.endContainer, caret.endOffset)
+  return range.toString().length
+}
+
 function blocksToClipboardPayload(blocks: BlockState[], footnoteMap?: Map<string, string>) {
   const markdown = blocksToMarkdown(blocks, footnoteMap)
   return {
@@ -759,11 +772,37 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
+  // Bloc en cours d'édition au moment d'une mise à jour externe : s'il est
+  // remplacé (un collègue l'a modifié), le focus et le curseur sont restaurés
+  // à la même position.
+  const focusRestoreRef = useRef<{ index: number; previousId: string; offset: number; text: string } | null>(null)
+  useLayoutEffect(() => {
+    const restore = focusRestoreRef.current
+    if (!restore) return
+    focusRestoreRef.current = null
+    const block = blocks[Math.min(restore.index, blocks.length - 1)]
+    if (!block || block.id === restore.previousId) return
+    // Texte inséré ou supprimé avant le curseur : la position suit.
+    const element = document.querySelector<HTMLElement>(`[data-block-id="${block.id}"] [contenteditable="true"]`)
+    let offset = restore.offset
+    const splice = element ? singleSpliceDiff(restore.text, element.textContent ?? '') : null
+    if (splice && splice.index < offset) {
+      offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+    }
+    blockRefs.current.get(block.id)?.focus({ type: 'offset', offset })
+  }, [blocks])
+
   // Changement externe du prop markdown → réinitialise sans émettre en retour
   useEffect(() => {
     if (markdown !== lastEmittedRef.current) {
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
+      const active = document.activeElement as HTMLElement | null
+      const activeBlockId = (active?.closest('[data-block-id]') as HTMLElement | null)?.dataset.blockId ?? null
+      const activeIndex = activeBlockId ? blocksRef.current.findIndex((block) => block.id === activeBlockId) : -1
+      if (active && activeBlockId && activeIndex !== -1) {
+        focusRestoreRef.current = { index: activeIndex, previousId: activeBlockId, offset: getCaretTextOffset(active), text: active.textContent ?? '' }
+      }
       setBlocks((previous) => reconcileBlocks(previous, markdownToBlocks(markdown)))
       initFootnotes(extractFootnoteMapFromMarkdown(markdown))
       // Réinitialise l'historique quand le document change de l'extérieur

@@ -9,7 +9,7 @@
  * - Handle impératif : focus(cursor?) pour la navigation clavier inter-blocs
  */
 
-import { useRef, useEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useEffect, useLayoutEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react'
 import { domToInlines } from './lib/domToInlines'
 import { inlinesToHtml } from './lib/inlinesToHtml'
 import { inlinesToMarkdown } from './lib/inlinesToMarkdown'
@@ -231,6 +231,8 @@ function isMarkdownTable(text: string): boolean {
 export type InitialCursor =
   | { type: 'click'; x: number; y: number }
   | { type: 'arrow'; x: number; edge: 'top' | 'bottom' }
+  /** Position dans le texte (restauration du curseur après une mise à jour reçue) */
+  | { type: 'offset'; offset: number }
   | null
 
 /** Handle exposé via ref pour la navigation inter-blocs */
@@ -332,9 +334,15 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   }, [])
 
   // Init une seule fois au mount : set content sans focus automatique
-  useEffect(() => {
+  // useLayoutEffect : le contenu est en place avant l'affichage et avant les
+  // effets du parent (restauration du curseur après une mise à jour reçue).
+  // Une seule fois : rejouer l'effet (StrictMode) remplacerait les nœuds texte
+  // et ferait perdre la position du curseur.
+  const contentInitializedRef = useRef(false)
+  useLayoutEffect(() => {
     const el = divRef.current
-    if (!el) return
+    if (!el || contentInitializedRef.current) return
+    contentInitializedRef.current = true
     el.innerHTML = inlinesToHtml(initialContent)
     hydrateInlineImages(el)
     syncEmpty(el)
@@ -358,6 +366,23 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         : elRect.bottom - lh / 2
       const r = document.caretRangeFromPoint(cursor.x, y)
       if (r) { sel.removeAllRanges(); sel.addRange(r); return }
+    }
+
+    if (cursor?.type === 'offset') {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      let remaining = cursor.offset
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const length = node.textContent?.length ?? 0
+        if (remaining <= length) {
+          const r = document.createRange()
+          r.setStart(node, remaining)
+          r.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(r)
+          return
+        }
+        remaining -= length
+      }
     }
 
     // Fallback : curseur à la fin
