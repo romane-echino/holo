@@ -12,6 +12,12 @@ import type { InlineNode } from './types'
 import { getInlineColorPreview } from '../../../lib/inlineColor'
 
 const HTML_LINE_BREAK = /^<br\s*\/?>$/i
+// Image 1×1 transparente affichée le temps de charger une image locale.
+const IMAGE_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
+
+function isRemoteImageUrl(url: string) {
+  return /^(https?:|data:|blob:|file:)/i.test(url)
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -82,10 +88,13 @@ function inlineToHtml(node: InlineNode): string {
       return '<br>'
 
     case 'image': {
-      const src = escapeHtml(node.url)
-      const alt = escapeHtml(node.alt ?? '')
-      const title = node.title ? ` title="${escapeHtml(node.title)}"` : ''
-      return `<img src="${src}" alt="${alt}"${title} data-md-image>`
+      // data-md-src garde le chemin du document ; src reçoit l'image chargée
+      // (voir hydrateInlineImages) pour les images stockées dans l'espace.
+      const url = escapeAttribute(node.url)
+      const src = isRemoteImageUrl(node.url) ? url : IMAGE_PLACEHOLDER
+      const alt = escapeAttribute(node.alt ?? '')
+      const title = node.title ? ` title="${escapeAttribute(node.title)}"` : ''
+      return `<img src="${src}" alt="${alt}"${title} data-md-image data-md-src="${url}" draggable="false">`
     }
 
     case 'html':

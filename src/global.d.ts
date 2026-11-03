@@ -213,6 +213,11 @@ interface HoloApi {
   gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs' | 'both' | 'manual') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs' | 'both' | 'manual'; operation: 'rebase' | 'merge' | 'none'; completed: boolean; stillConflicted: boolean; conflictedFiles: string[]; content: string | null; pushed: boolean; pushError: string | null }>
   saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
   loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
+  /** Copie une image (chemin du document, URL http(s) ou data:) dans le presse-papiers système. */
+  writeClipboardImage: (source: string) => Promise<{ ok: true }>
+  /** Source de l'image si le presse-papiers contient encore l'image copiée depuis Holo. */
+  getCopiedHoloImage: () => Promise<string | null>
+  showImageInFolder: (source: string) => Promise<{ ok: true }>
 }
 
 declare global {

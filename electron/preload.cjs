@@ -9,6 +9,9 @@ const updateListeners = {
 contextBridge.exposeInMainWorld('holo', {
   appName: 'Holo',
   writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  writeClipboardImage: (source) => ipcRenderer.invoke('clipboard:write-image', source),
+  getCopiedHoloImage: () => ipcRenderer.invoke('clipboard:get-copied-holo-image'),
+  showImageInFolder: (source) => ipcRenderer.invoke('shell:show-image-in-folder', source),
   getClipboardFormats: () => ipcRenderer.invoke('clipboard:get-formats'),
   clipboardHasFormat: (format) => ipcRenderer.invoke('clipboard:has-format', format),
   readClipboardFormat: (format) => ipcRenderer.invoke('clipboard:read-format', format),

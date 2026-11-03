@@ -1399,6 +1399,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     const selected = blocksRef.current.filter((b) => selectedBlockIds.has(b.id))
     const payload = blocksToClipboardPayload(selected)
     setClipboardEventData(clipboardData, payload)
+    // Une seule image sélectionnée : on copie aussi l'image elle-même dans le
+    // presse-papiers système, pour la coller dans Teams, Word, un mail…
+    // (un collage dans Holo réutilise alors l'image existante, sans doublon).
+    const onlyImage = selected.length === 1
+      ? (selected[0].node.type === 'image' ? selected[0].node as ImageNode : paragraphSingleImage(selected[0].node))
+      : null
+    if (onlyImage?.url && window.holo?.writeClipboardImage) {
+      const url = onlyImage.url
+      setTimeout(() => { void window.holo?.writeClipboardImage(url).catch(() => undefined) }, 0)
+    }
     return true
   }, [selectedBlockIds])
 

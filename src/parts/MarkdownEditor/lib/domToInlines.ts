@@ -81,7 +81,13 @@ function nodeToInlines(node: Node): InlineNode[] {
       return [{ type: 'break' }]
 
     case 'img':
-      return [{ type: 'image', url: el.getAttribute('src') ?? '', alt: el.getAttribute('alt') ?? '', title: el.getAttribute('title') ?? null }]
+      return [{
+        type: 'image',
+        // data-md-src : chemin d'origine (src peut contenir l'image chargée en data URL)
+        url: el.getAttribute('data-md-src') ?? el.getAttribute('src') ?? '',
+        alt: el.getAttribute('alt') ?? '',
+        title: el.getAttribute('title') ?? null,
+      }]
 
     default:
       // Éléments inconnus : flatten (récupère les enfants)

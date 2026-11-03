@@ -7,9 +7,12 @@
  */
 
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
-import { Expand, ImageOff, LayoutGrid, RectangleHorizontal, Square, X } from 'lucide-react'
+import { Copy, Expand, FolderOpen, ImageOff, Link2, LayoutGrid, RectangleHorizontal, Square, X } from 'lucide-react'
 import type { ImageDisplayMode, ImageMetadata, ImageNode } from '../lib/types'
 import { cn } from '../../../utils/global'
+import { ContextMenu, type ContextMenuAction } from '../../../components/ContextMenu'
+import { copyImageToClipboard, isLocalImagePath, resolveImageSrc } from '../../../lib/documentImages'
+import { notify } from '../../../lib/notify'
 
 interface ImageBlockProps {
   node: ImageNode
@@ -30,26 +33,29 @@ function getDisplayModeLabel(mode: ImageDisplayMode): string {
   return DISPLAY_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? 'Pleine largeur'
 }
 
-function isLocalRelativePath(url: string) {
-  return url !== '' && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('file://')
-}
+const isLocalRelativePath = isLocalImagePath
 
 export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockProps) {
   const [error, setError] = useState(false)
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false)
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const modeMenuRef = useRef<HTMLDivElement>(null)
 
   const displayMode: ImageDisplayMode = node.data?.holoImage?.displayMode ?? 'full'
 
   useEffect(() => {
     if (!node.url || !isLocalRelativePath(node.url)) return
+    let cancelled = false
     setError(false)
     setResolvedSrc(null)
-    window.holo?.loadImage(node.url)
-      .then((res) => { if (res.ok) setResolvedSrc(res.dataUrl) })
-      .catch(() => setError(true))
+    void resolveImageSrc(node.url).then((src) => {
+      if (cancelled) return
+      if (src) setResolvedSrc(src)
+      else setError(true)
+    })
+    return () => { cancelled = true }
   }, [node.url])
 
   useEffect(() => {
@@ -121,12 +127,34 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
       break
   }
 
+  const contextMenuItems: ContextMenuAction[] = [
+    { type: 'item', label: 'Copier l\'image', icon: Copy, onClick: () => void copyImageToClipboard(node.url) },
+    {
+      type: 'item',
+      label: isLocalRelativePath(node.url) ? 'Copier le chemin' : 'Copier l\'adresse',
+      icon: Link2,
+      onClick: () => {
+        void window.holo?.writeClipboardText(node.url)
+        notify({ kind: 'success', title: 'Chemin copié', durationMs: 2000 })
+      },
+    },
+    ...(isLocalRelativePath(node.url) && window.holo?.showImageInFolder
+      ? [{ type: 'item' as const, label: 'Afficher dans le dossier', icon: FolderOpen, onClick: () => void window.holo?.showImageInFolder(node.url) }]
+      : []),
+  ]
+
   return (
     <>
       <figure
         className={cn('group relative my-4 cursor-pointer rounded-holo-xl transition', figureWidthClass, isSelected && 'ring-2 ring-holo-primary/60')}
         style={figureStyle}
         onClick={onSelect}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onSelect?.()
+          setContextMenuPosition({ x: event.clientX, y: event.clientY })
+        }}
       >
         <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
           {onChange && (
@@ -184,6 +212,19 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
+              void copyImageToClipboard(node.url)
+            }}
+            className="inline-flex items-center gap-1 rounded-full bg-black/72 px-2.5 py-1.5 text-[11px] text-white shadow-[0_10px_20px_rgba(0,0,0,.2)] ring-1 ring-white/10 transition hover:bg-black/82"
+            title="Copier l'image"
+            aria-label="Copier l'image"
+          >
+            <Copy size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
               setIsFullscreen(true)
             }}
             className="inline-flex items-center gap-1 rounded-full bg-black/72 px-2.5 py-1.5 text-[11px] text-white shadow-[0_10px_20px_rgba(0,0,0,.2)] ring-1 ring-white/10 transition hover:bg-black/82"
@@ -213,6 +254,15 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
         </figcaption>
       )}
       </figure>
+
+      {contextMenuPosition && (
+        <ContextMenu
+          x={contextMenuPosition.x}
+          y={contextMenuPosition.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenuPosition(null)}
+        />
+      )}
 
       {isFullscreen && displaySrc && (
         <div

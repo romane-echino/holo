@@ -19,6 +19,24 @@ import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { registerPendingEditFlusher } from '../../lib/editorFlush'
+import { resolveImageSrc } from '../../lib/documentImages'
+
+/** Charge les images locales d'un éditeur inline (cellules de tableau, paragraphes). */
+function hydrateInlineImages(root: HTMLElement) {
+  for (const img of Array.from(root.querySelectorAll<HTMLImageElement>('img[data-md-src]'))) {
+    const source = img.getAttribute('data-md-src') ?? ''
+    if (!source || img.dataset.hydrated === source) continue
+    img.dataset.hydrated = source
+    void resolveImageSrc(source).then((resolved) => {
+      if (resolved && img.getAttribute('data-md-src') === source) img.src = resolved
+      else if (!resolved) img.classList.add('holo-inline-image-missing')
+    })
+  }
+}
+
+/** Évènement DOM demandant l'insertion d'une image au curseur d'un éditeur inline. */
+export const INSERT_INLINE_IMAGE_EVENT = 'holo:insert-inline-image'
+export type InsertInlineImageDetail = { url: string; alt: string }
 
 interface MentionSuggestion {
   mention: string
@@ -318,6 +336,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     const el = divRef.current
     if (!el) return
     el.innerHTML = inlinesToHtml(initialContent)
+    hydrateInlineImages(el)
     syncEmpty(el)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -375,6 +394,40 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   useEffect(() => registerPendingEditFlusher(() => {
     if (saveTimerRef.current) save()
   }), [save])
+
+  // Insertion d'une image au curseur (collage / dépôt dans une cellule de tableau).
+  useEffect(() => {
+    const el = divRef.current
+    if (!el) return
+    const handleInsertImage = (event: Event) => {
+      const detail = (event as CustomEvent<InsertInlineImageDetail>).detail
+      if (!detail?.url) return
+      event.stopPropagation()
+      const holder = document.createElement('span')
+      holder.innerHTML = inlinesToHtml([{ type: 'image', url: detail.url, alt: detail.alt, title: null }])
+      const image = holder.firstElementChild
+      if (!image) return
+      const selection = window.getSelection()
+      let range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+      if (!range || !el.contains(range.commonAncestorContainer)) {
+        range = document.createRange()
+        range.selectNodeContents(el)
+        range.collapse(false)
+      }
+      range.deleteContents()
+      range.insertNode(image)
+      range.setStartAfter(image)
+      range.collapse(true)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      hydrateInlineImages(el)
+      syncEmpty(el)
+      savedRef.current = false
+      save()
+    }
+    el.addEventListener(INSERT_INLINE_IMAGE_EVENT, handleInsertImage)
+    return () => el.removeEventListener(INSERT_INLINE_IMAGE_EVENT, handleInsertImage)
+  }, [save, syncEmpty])
 
   useEffect(() => {
     if (!rootPath || !window.holo?.gitGetContributors) {

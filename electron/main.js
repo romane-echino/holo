@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, nativeImage, net, safeStorage, shell } from 'electron'
 import updaterPkg from 'electron-updater'
 import { execFile, spawn } from 'node:child_process'
 
@@ -2010,8 +2010,60 @@ ipcMain.handle('app:factory-reset', async () => {
   return { ok: true }
 })
 ipcMain.handle('clipboard:write-text', async (_event, text) => {
-  console.log('Received clipboard write-text request:', { text })
   clipboard.writeText(String(text ?? ''))
+  return { ok: true }
+})
+
+/** Chemin absolu d'une image référencée par un document (relative à la racine de l'espace). */
+function resolveDocumentImagePath(source) {
+  if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
+  let decoded = String(source ?? '')
+  try { decoded = decodeURIComponent(decoded) } catch { /* chemin laissé tel quel */ }
+  const imagePath = path.normalize(path.join(currentRootPath, decoded))
+  const root = path.normalize(currentRootPath)
+  if (imagePath !== root && !imagePath.startsWith(root.endsWith(path.sep) ? root : root + path.sep)) {
+    throw new Error('Accès refusé.')
+  }
+  return imagePath
+}
+
+// Dernière image copiée depuis Holo : permet de reconnaître un collage interne
+// et de réutiliser l'image existante au lieu d'en enregistrer un doublon.
+let lastCopiedHoloImage = null
+
+function hashImage(image) {
+  return crypto.createHash('sha1').update(image.toBitmap()).digest('hex')
+}
+
+ipcMain.handle('clipboard:write-image', async (_event, source) => {
+  const value = String(source ?? '')
+  let image
+  if (value.startsWith('data:')) {
+    image = nativeImage.createFromDataURL(value)
+  } else if (/^https?:\/\//i.test(value)) {
+    const response = await net.fetch(value)
+    if (!response.ok) throw new Error(`Téléchargement de l'image impossible (${response.status}).`)
+    image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()))
+  } else {
+    image = nativeImage.createFromPath(resolveDocumentImagePath(value))
+  }
+  if (image.isEmpty()) {
+    throw new Error('Ce format d\'image ne peut pas être copié (SVG non pris en charge).')
+  }
+  clipboard.writeImage(image)
+  lastCopiedHoloImage = { source: value, hash: hashImage(image) }
+  return { ok: true }
+})
+
+ipcMain.handle('clipboard:get-copied-holo-image', async () => {
+  if (!lastCopiedHoloImage) return null
+  const image = clipboard.readImage()
+  if (image.isEmpty() || hashImage(image) !== lastCopiedHoloImage.hash) return null
+  return lastCopiedHoloImage.source
+})
+
+ipcMain.handle('shell:show-image-in-folder', async (_event, source) => {
+  shell.showItemInFolder(resolveDocumentImagePath(source))
   return { ok: true }
 })
 ipcMain.handle('clipboard:get-formats', async () => clipboard.availableFormats())

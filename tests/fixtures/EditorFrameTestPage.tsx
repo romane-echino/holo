@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EditorFrame } from '../../src/parts/EditorFrame'
+import { ToastHost } from '../../src/parts/ToastHost'
 import { WorkspaceContext, type WorkspaceContextType } from '../../src/contexts/WorkspaceContext'
 import { ConfigContext, type ConfigContextType } from '../../src/contexts/ConfigContext'
 import '../../src/index.css'
@@ -130,6 +131,7 @@ function TestApp() {
         <div data-testid="editor-frame-fixture" style={{ padding: '24px', maxWidth: '960px', margin: '0 auto' }}>
           <pre id="pw-editorframe-md-output" data-testid="pw-editorframe-md-output" style={{ display: 'none' }}>{md}</pre>
           <EditorFrame filepath="/playwright-workspace/doc.md" markdown={md} onMarkdownChange={setMd} />
+          <ToastHost />
         </div>
       </ConfigContext.Provider>
     </WorkspaceContext.Provider>

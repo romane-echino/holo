@@ -173,6 +173,34 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('copier une image la place dans le presse-papiers système et la reconnaît au collage', async () => {
+    // PNG 2×2 rouge
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==', 'base64')
+    const ws = await createWorkspace(['Avant.', '', '![rouge](images/rouge.png)', '', 'Après.', ''].join('\n'))
+    await fs.mkdir(path.join(ws.rootPath, 'images'), { recursive: true })
+    await fs.writeFile(path.join(ws.rootPath, 'images', 'rouge.png'), png)
+    let launched: Launched | null = null
+    try {
+      launched = await launchHolo(ws.rootPath, ws.filePath)
+      await expect(launched.page.locator('img[alt="rouge"]')).toHaveAttribute('src', /^data:image\/png/, { timeout: 20_000 })
+
+      await launched.page.evaluate(() => (window as unknown as { holo: { writeClipboardImage: (s: string) => Promise<unknown> } }).holo.writeClipboardImage('images/rouge.png'))
+      const size = await launched.app.evaluate(({ clipboard }) => clipboard.readImage().getSize())
+      expect(size).toEqual({ width: 2, height: 2 })
+      const copied = await launched.page.evaluate(() => (window as unknown as { holo: { getCopiedHoloImage: () => Promise<string | null> } }).holo.getCopiedHoloImage())
+      expect(copied).toBe('images/rouge.png')
+
+      // Une autre image dans le presse-papiers n'est pas confondue avec celle de Holo.
+      await launched.app.evaluate(({ clipboard, nativeImage }) => {
+        clipboard.writeImage(nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='))
+      })
+      const other = await launched.page.evaluate(() => (window as unknown as { holo: { getCopiedHoloImage: () => Promise<string | null> } }).holo.getCopiedHoloImage())
+      expect(other).toBeNull()
+    } finally {
+      await cleanup(launched, ws.rootPath)
+    }
+  })
+
   test('modifier un paragraphe conserve la mise en forme du reste du fichier', async () => {
     const original = ['---', 'title: Diff minimal', 'tags:', '  - alpha', '---', '', '* item un', '* item deux', '', 'Paragraphe à modifier.', '', '| a   | b   |', '|-----|-----|', '| x<br>y | 2   |', ''].join('\n')
     const ws = await createWorkspace(original)

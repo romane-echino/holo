@@ -4,6 +4,8 @@ import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLin
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor, normalizeBodyMarkdown, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
+import { INSERT_INLINE_IMAGE_EVENT, type InsertInlineImageDetail } from './MarkdownEditor/InlineEditor'
+import { notifyError } from '../lib/notify'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { FootnotesProvider } from '../contexts/FootnotesContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -39,6 +41,20 @@ type EditorFrameProps = {
 }
 
 type ScrollTarget = Window | HTMLElement
+
+function findTableCellEditor(target: Element | EventTarget | null): HTMLElement | null {
+  const element = target instanceof Element ? target : null
+  return element?.closest<HTMLElement>('[data-block-type="table-cell"][contenteditable="true"]') ?? null
+}
+
+function placeCaretAtPoint(editor: HTMLElement, x: number, y: number) {
+  const range = document.caretRangeFromPoint?.(x, y)
+  editor.focus({ preventScroll: true })
+  if (!range || !editor.contains(range.startContainer)) return
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
 
 function filenameFromPath(filepath: string) {
   const normalized = filepath.replace(/\\/g, '/')
@@ -943,6 +959,16 @@ export function EditorFrame({
     return opts
   }, [repoImageStorageMode, azureBlobContainerUrl, azureBlobSasToken, s3Region, s3Bucket, s3AccessKeyId, s3SecretAccessKey, s3Endpoint, s3PublicBaseUrl, dropboxAccessToken, dropboxFolderPath, gdriveAccessToken, gdriveFolderId])
 
+  // Une image déposée ou collée dans une cellule de tableau y est insérée au
+  // curseur ; ailleurs elle devient un bloc image.
+  const insertSavedImage = useCallback((url: string, alt: string, cell: HTMLElement | null) => {
+    if (cell?.isConnected) {
+      cell.dispatchEvent(new CustomEvent<InsertInlineImageDetail>(INSERT_INLINE_IMAGE_EVENT, { detail: { url, alt } }))
+      return
+    }
+    blockEditorRef.current?.insertImage(url, alt)
+  }, [])
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     const hasImage = Array.from(e.dataTransfer.items).some((item) => item.type.startsWith('image/'))
     if (!hasImage) return
@@ -965,6 +991,8 @@ export function EditorFrame({
     if (!files.length) return
     const opts = buildImageStorageOptions()
     if (!opts) return
+    const cell = findTableCellEditor(document.elementFromPoint(e.clientX, e.clientY))
+    if (cell) placeCaretAtPoint(cell, e.clientX, e.clientY)
     for (const file of files) {
       try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -976,12 +1004,13 @@ export function EditorFrame({
         const base64 = dataUrl.split(',')[1]
         const result = await window.holo!.saveImage(file.name, base64, opts)
         const alt = file.name.replace(/\.[^.]+$/, '')
-        blockEditorRef.current?.insertImage(result.relativePath, alt)
+        insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
         console.error('[EditorFrame] drop image error', err)
+        notifyError('Impossible d\'ajouter l\'image', err)
       }
     }
-  }, [buildImageStorageOptions])
+  }, [buildImageStorageOptions, insertSavedImage])
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const remoteGifUrl = extractGifUrlFromClipboardData(e.clipboardData)
@@ -991,6 +1020,16 @@ export function EditorFrame({
     if (!opts) return
     e.preventDefault()
     e.stopPropagation()
+    const cell = findTableCellEditor(document.activeElement) ?? findTableCellEditor(e.target as Element)
+
+    // Image copiée depuis Holo : on réutilise le fichier existant (pas de doublon).
+    if (!remoteGifUrl) {
+      const copiedSource = await window.holo?.getCopiedHoloImage?.().catch(() => null)
+      if (copiedSource) {
+        insertSavedImage(copiedSource, copiedSource.split('/').pop()?.replace(/(-[0-9a-f]{8})?\.[^.]+$/i, '') ?? '', cell)
+        return
+      }
+    }
 
     if (remoteGifUrl) {
       try {
@@ -1002,7 +1041,7 @@ export function EditorFrame({
             const name = filenameFromRemoteUrl(remoteGifUrl, blob.type)
             const result = await window.holo!.saveImage(name, base64, opts)
             const alt = name.replace(/\.[^.]+$/, '')
-            blockEditorRef.current?.insertImage(result.relativePath, alt)
+            insertSavedImage(result.relativePath, alt, cell)
             return
           }
         }
@@ -1025,12 +1064,13 @@ export function EditorFrame({
         const name = file.name || `image-${Date.now()}${extensionFromMimeType(file.type)}`
         const result = await window.holo!.saveImage(name, base64, opts)
         const alt = name.replace(/\.[^.]+$/, '')
-        blockEditorRef.current?.insertImage(result.relativePath, alt)
+        insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
         console.error('[EditorFrame] paste image error', err)
+        notifyError('Impossible de coller l\'image', err)
       }
     }
-  }, [buildImageStorageOptions])
+  }, [buildImageStorageOptions, insertSavedImage])
 
   return (
     <section
