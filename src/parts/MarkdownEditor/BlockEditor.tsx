@@ -117,6 +117,9 @@ function parseTableMetadataComment(value: string): TableMetadata | null {
       columnAggregations: Array.isArray(parsed.columnAggregations)
         ? parsed.columnAggregations.filter(isAggregation)
         : undefined,
+      columnWidths: Array.isArray(parsed.columnWidths)
+        ? parsed.columnWidths.map((entry) => (typeof entry === 'number' && Number.isFinite(entry) && entry > 0 ? Math.round(entry) : null))
+        : undefined,
     }
   } catch {
     return null
@@ -128,7 +131,8 @@ function hasNonDefaultTableMetadata(metadata: TableMetadata | undefined): boolea
   const hasTypedColumns = metadata.columnTypes?.some((entry) => entry && entry !== 'text') ?? false
   const hasColoredColumns = metadata.columnColors?.some((entry) => Boolean(entry)) ?? false
   const hasAggregatedColumns = metadata.columnAggregations?.some((entry) => entry && entry !== 'none') ?? false
-  return hasTypedColumns || hasColoredColumns || hasAggregatedColumns
+  const hasCustomWidths = metadata.columnWidths?.some((entry) => typeof entry === 'number') ?? false
+  return hasTypedColumns || hasColoredColumns || hasAggregatedColumns || hasCustomWidths
 }
 
 function buildTableMetadataComment(metadata: TableMetadata | undefined): string | null {
@@ -142,6 +146,9 @@ function buildTableMetadataComment(metadata: TableMetadata | undefined): string 
   }
   if (metadata?.columnAggregations?.some((entry) => entry && entry !== 'none')) {
     payload.columnAggregations = metadata.columnAggregations
+  }
+  if (metadata?.columnWidths?.some((entry) => typeof entry === 'number')) {
+    payload.columnWidths = metadata.columnWidths
   }
   return `<!-- holo:table ${JSON.stringify(payload)} -->`
 }

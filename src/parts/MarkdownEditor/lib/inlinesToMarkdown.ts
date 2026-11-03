@@ -41,6 +41,10 @@ function inlineToMarkdown(node: InlineNode): string {
       return '  \n'
     case 'image':
       return `![${escapeMarkdownText(node.alt ?? '')}](${escapeMarkdownLink(node.url)})`
+    case 'html':
+      return node.value
+    case 'inlineMath':
+      return `$${node.value}$`
     default:
       return ''
   }

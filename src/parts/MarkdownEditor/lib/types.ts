@@ -18,10 +18,15 @@ export type UnderlineNode = { type: 'underline';  children: InlineNode[] }
 export type SuperscriptNode = { type: 'superscript'; children: InlineNode[] }
 export type SubscriptNode = { type: 'subscript'; children: InlineNode[] }
 export type FootnoteReferenceNode = { type: 'footnoteReference'; identifier: string; label?: string | null; anchorText?: string }
+/** HTML brut en ligne (`<br>`, `<mark>`, `<kbd>`…) : conservé tel quel. */
+export type HtmlInlineNode = { type: 'html'; value: string }
+/** Formule LaTeX en ligne (`$x^2$`). */
+export type InlineMathNode = { type: 'inlineMath'; value: string }
 
 export type InlineNode =
   | TextNode | StrongNode | EmphasisNode | InlineCodeNode
   | LinkNode | DeleteNode | BreakNode | UnderlineNode | SuperscriptNode | SubscriptNode | FootnoteReferenceNode | ImageNode
+  | HtmlInlineNode | InlineMathNode
 
 // ─── Block nodes ────────────────────────────────────────────────────────────
 
@@ -55,6 +60,8 @@ export type TableMetadata = {
   columnTypes?: TableColumnType[]
   columnColors?: (string | null)[]
   columnAggregations?: TableColumnAggregation[]
+  /** Largeurs choisies par l'utilisateur (px), null = largeur automatique. */
+  columnWidths?: (number | null)[]
 }
 export type TableNode     = {
   type: 'table'

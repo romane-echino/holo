@@ -34,6 +34,8 @@ type ColAlign = 'left' | 'center' | 'right'
 type InternalColumn = {
   id: string
   title: string
+  /** Contenu d'origine de l'en-tête (gras, lien…), réécrit tel quel tant que le titre n'est pas modifié. */
+  titleNodes?: InlineNode[]
   /** null = alignement par défaut (`---` dans le markdown), conservé tel quel pour limiter le diff git */
   align: ColAlign | null
   type: TableColumnType
@@ -115,6 +117,13 @@ const COLUMN_COLOR_OPTIONS: Array<{
 ]
 
 const MAX_TABLE_COLUMN_WIDTH = 360
+// Bornes d'un redimensionnement manuel (px)
+const MIN_MANUAL_COLUMN_WIDTH = 56
+const MAX_MANUAL_COLUMN_WIDTH = 960
+const ROW_HANDLE_COLUMN_WIDTH = 42
+
+const clampManualWidth = (width: number) =>
+  Math.round(Math.min(MAX_MANUAL_COLUMN_WIDTH, Math.max(MIN_MANUAL_COLUMN_WIDTH, width)))
 
 let _tc = 0
 let _tr = 0
@@ -159,11 +168,34 @@ function inlineNodesToPlainText(nodes: InlineNode[]): string {
         return inlineNodesToPlainText(node.children)
       case 'image':
         return node.alt ?? ''
+      case 'inlineMath':
+        return node.value
+      case 'html':
+        return /^<br\s*\/?>$/i.test(node.value.trim()) ? '\n' : ''
       default:
         return ''
     }
   }).join('')
 }
+
+/**
+ * Un saut de ligne markdown ne peut pas exister dans une cellule GFM
+ * (remark le transforme en espace) : on l'écrit `<br>`, la forme reconnue
+ * par GitHub, VS Code et Obsidian.
+ */
+function breaksToHtmlLineBreaks(nodes: InlineNode[]): InlineNode[] {
+  return nodes.map((node) => {
+    if (node.type === 'break') return { type: 'html', value: '<br>' }
+    if ('children' in node && Array.isArray(node.children)) {
+      return { ...node, children: breaksToHtmlLineBreaks(node.children as InlineNode[]) } as InlineNode
+    }
+    return node
+  })
+}
+
+// Montant « pur » (chiffres, séparateurs, devise éventuelle) : seul ce cas est
+// reformaté ; un texte libre comme « env. 1200 CHF » ou « 1,5k » est conservé.
+const PLAIN_AMOUNT_PATTERN = /^(?:chf|eur|usd|fr\.?|€|\$)?\s*[+-]?\s*\d[\d'\s]*(?:[.,]\d+)?(?:\.-)?\s*(?:chf|eur|usd|fr\.?|€|\$)?$/i
 
 function plainTextToInlineNodes(value: string): InlineNode[] {
   if (!value) return []
@@ -277,6 +309,7 @@ function normalizeNodesForColumnType(type: TableColumnType, nodes: InlineNode[])
   if (!text) return []
 
   if (type === 'currency') {
+    if (!PLAIN_AMOUNT_PATTERN.test(text)) return nodes
     const numericValue = parseNumericLikeValue(text)
     if (numericValue === null) return nodes
     return plainTextToInlineNodes(formatCurrencyValue(numericValue))
@@ -573,11 +606,16 @@ function normalizeTableMetadata(metadata: TableMetadata | undefined, columnCount
   const columnAggregations = Array.from({ length: columnCount }, (_value, index) =>
     toTableColumnAggregation(metadata.columnAggregations?.[index]),
   )
+  const columnWidths = Array.from({ length: columnCount }, (_value, index) => {
+    const width = metadata.columnWidths?.[index]
+    return typeof width === 'number' && width > 0 ? clampManualWidth(width) : null
+  })
 
   return {
     columnTypes,
     columnColors,
     columnAggregations,
+    columnWidths,
   }
 }
 
@@ -682,17 +720,18 @@ function nodeToInternal(node: TableNode): InternalTable {
 
   const columns: InternalColumn[] = headerCells.map((cell, i) => ({
     id: newColId(),
-    title: cellText(cell),
+    title: inlineNodesToPlainText((cell?.children ?? []) as InlineNode[]),
+    titleNodes: (cell?.children ?? []) as InlineNode[],
     align: toColAlign(node.align?.[i]),
     type: metadata?.columnTypes?.[i] ?? DEFAULT_TABLE_COLUMN_TYPE,
     aggregation: metadata?.columnAggregations?.[i] ?? DEFAULT_TABLE_COLUMN_AGGREGATION,
     color: metadata?.columnColors?.[i] ?? null,
-    width: estimateColumnWidth(
+    width: metadata?.columnWidths?.[i] ?? estimateColumnWidth(
       cellText(cell),
       bodyRows.map((row) => (row.children[i]?.children ?? []) as InlineNode[]),
       totalColumns,
     ),
-    manualWidth: false,
+    manualWidth: typeof metadata?.columnWidths?.[i] === 'number',
   }))
 
   if (columns.length === 0) {
@@ -724,6 +763,7 @@ function internalToNode(t: InternalTable): TableNode {
     columnTypes: t.columns.map((column) => column.type),
     columnColors: t.columns.map((column) => column.color),
     columnAggregations: t.columns.map((column) => column.aggregation),
+    columnWidths: t.columns.map((column) => (column.manualWidth ? clampManualWidth(column.width) : null)),
   }
 
   return {
@@ -737,14 +777,16 @@ function internalToNode(t: InternalTable): TableNode {
         type: 'tableRow' as const,
         children: t.columns.map((c) => ({
           type: 'tableCell' as const,
-          children: c.title ? [{ type: 'text' as const, value: c.title }] : [],
+          children: c.titleNodes && inlineNodesToPlainText(c.titleNodes) === c.title
+            ? breaksToHtmlLineBreaks(c.titleNodes)
+            : c.title ? [{ type: 'text' as const, value: c.title }] : [],
         })),
       },
       ...t.rows.map((row) => ({
         type: 'tableRow' as const,
         children: t.columns.map((c) => ({
           type: 'tableCell' as const,
-          children: (row.cells[c.id] ?? []) as InlineNode[],
+          children: breaksToHtmlLineBreaks((row.cells[c.id] ?? []) as InlineNode[]),
         })),
       })),
     ],
@@ -800,7 +842,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     const cellRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
     const headerRefs = useRef<Map<string, HTMLInputElement>>(new Map())
     const menuRef = useRef<HTMLDivElement | null>(null)
-    const resizingRef = useRef<{ colId: string; startX: number; startWidth: number } | null>(null)
+    const resizingRef = useRef<{ colId: string; startX: number; startWidth: number; moved?: boolean } | null>(null)
     const tableWrapRef = useRef<HTMLDivElement | null>(null)
     const dragSelectRef = useRef<{ anchor: CellCoord; active: boolean } | null>(null)
 
@@ -1300,18 +1342,27 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         if (!r) return
 
         const delta = e.clientX - r.startX
-        const newWidth = Math.max(96, r.startWidth + delta)
+        const newWidth = clampManualWidth(r.startWidth + delta)
+        r.moved = true
 
-        setTable((prev) => ({
-          ...prev,
-          columns: prev.columns.map((c) => (c.id === r.colId ? { ...c, width: newWidth, manualWidth: true } : c)),
-        }))
+        setTable((prev) => {
+          const next = {
+            ...prev,
+            columns: prev.columns.map((c) => (c.id === r.colId ? { ...c, width: newWidth, manualWidth: true } : c)),
+          }
+          tableRef.current = next
+          return next
+        })
       }
 
       const onMouseUp = () => {
+        const r = resizingRef.current
+        if (!r) return
         resizingRef.current = null
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
+        // Les largeurs sont enregistrées dans le commentaire holo:table du document.
+        if (r.moved) emit(tableRef.current)
       }
 
       document.addEventListener('mousemove', onMouseMove)
@@ -1321,7 +1372,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         document.removeEventListener('mousemove', onMouseMove)
         document.removeEventListener('mouseup', onMouseUp)
       }
-    }, [])
+    }, [emit])
 
     useEffect(() => {
       if (!activeColMenu) return
@@ -1339,13 +1390,67 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
     const alignClass = (align: ColAlign | null) =>
       align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'
 
-    const tableWidthClass = table.columns.length <= 3 ? 'w-full' : 'w-auto'
+    // Dès qu'une largeur a été choisie à la main, la mise en page devient fixe :
+    // chaque colonne fait exactement sa largeur (elle peut donc rétrécir sous
+    // la largeur de son contenu, qui passe alors à la ligne).
+    const hasManualWidths = table.columns.some((column) => column.manualWidth)
+    const tableWidthClass = hasManualWidths ? '' : table.columns.length <= 3 ? 'w-full' : 'w-auto'
+    const tableLayoutStyle: CSSProperties = hasManualWidths
+      ? {
+          tableLayout: 'fixed',
+          width: ROW_HANDLE_COLUMN_WIDTH + table.columns.reduce((total, column) => total + getColumnWidth(column), 0),
+        }
+      : { minWidth: '100%' }
+
+    function getColumnWidth(column: InternalColumn): number {
+      return column.manualWidth ? clampManualWidth(column.width) : Math.min(column.width, MAX_TABLE_COLUMN_WIDTH)
+    }
 
     const getColumnSizeStyle = (column: InternalColumn): CSSProperties => {
-      const constrainedWidth = Math.min(column.width, MAX_TABLE_COLUMN_WIDTH)
-      return column.manualWidth
-        ? { width: constrainedWidth, minWidth: constrainedWidth, maxWidth: MAX_TABLE_COLUMN_WIDTH }
-        : { width: constrainedWidth, minWidth: constrainedWidth, maxWidth: constrainedWidth }
+      const width = getColumnWidth(column)
+      return { width, minWidth: width, maxWidth: width }
+    }
+
+    const startColumnResize = (event: React.MouseEvent, colId: string) => {
+      event.preventDefault()
+      event.stopPropagation()
+      // Première largeur manuelle : on fige toutes les colonnes à leur largeur
+      // affichée pour que le tableau ne saute pas en passant en mise en page fixe.
+      const headerCells = Array.from(
+        (event.currentTarget.closest('tr')?.querySelectorAll<HTMLTableCellElement>('th[data-column-id]')) ?? [],
+      )
+      const renderedWidths = new Map(headerCells.map((cell) => [cell.dataset.columnId ?? '', cell.getBoundingClientRect().width]))
+      const current = tableRef.current
+      if (!current.columns.some((column) => column.manualWidth)) {
+        const frozen = {
+          ...current,
+          columns: current.columns.map((column) => ({
+            ...column,
+            width: clampManualWidth(renderedWidths.get(column.id) ?? column.width),
+            manualWidth: true,
+          })),
+        }
+        tableRef.current = frozen
+        setTable(frozen)
+      }
+      const column = tableRef.current.columns.find((entry) => entry.id === colId)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      resizingRef.current = {
+        colId,
+        startX: event.clientX,
+        startWidth: renderedWidths.get(colId) ?? column?.width ?? 120,
+      }
+    }
+
+    const resetColumnWidths = () => {
+      const next = recalculateAutoColumnWidths({
+        ...tableRef.current,
+        columns: tableRef.current.columns.map((column) => ({ ...column, manualWidth: false })),
+      })
+      tableRef.current = next
+      setTable(next)
+      emit(next)
     }
 
     const toggleColumnSubmenu = (submenu: ColumnMenuSubmenu) => {
@@ -1393,10 +1498,10 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
         >
           <table
             className={cn('border-separate border-spacing-0 overflow-hidden rounded-holo-xl', tableWidthClass)}
-            style={{ minWidth: '100%' }}
+            style={tableLayoutStyle}
           >
             <colgroup>
-              <col style={{ width: 42, minWidth: 42, maxWidth: 42 }} />
+              <col style={{ width: ROW_HANDLE_COLUMN_WIDTH, minWidth: ROW_HANDLE_COLUMN_WIDTH, maxWidth: ROW_HANDLE_COLUMN_WIDTH }} />
               {table.columns.map((column) => (
                 <col key={`${column.id}-col`} style={getColumnSizeStyle(column)} />
               ))}
@@ -1439,6 +1544,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                       )}
                       style={{ ...columnStyle, ...columnColorStyles.header }}
                       data-column-color={col.color ?? undefined}
+                      data-column-id={col.id}
                     >
                       <div className="flex min-h-11 items-center gap-2 px-3 pr-9">
                         <input
@@ -1478,6 +1584,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                           )}
                           title={col.title}
                           placeholder="Colonne"
+                          size={1}
                         />
 
                         <button
@@ -1702,28 +1809,18 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                       </div>
 
                       <div
-                        className="absolute right-0 top-0 z-20 h-full w-1 cursor-col-resize opacity-0 transition hover:bg-holo-primary/50 hover:opacity-100 group-hover/table:opacity-100"
-                        onMouseDown={(e) => {
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Redimensionner la colonne ${col.title || colIdx + 1}`}
+                        title="Glisser pour redimensionner · double-clic pour revenir aux largeurs automatiques"
+                        className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize opacity-0 transition after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 after:-translate-x-1/2 after:rounded-full hover:opacity-100 hover:after:bg-holo-primary/60 group-hover/table:opacity-100"
+                        onMouseDown={(e) => startColumnResize(e, col.id)}
+                        onDoubleClick={(e) => {
                           e.preventDefault()
-                          document.body.style.cursor = 'col-resize'
-                          document.body.style.userSelect = 'none'
-                          resizingRef.current = {
-                            colId: col.id,
-                            startX: e.clientX,
-                            startWidth: col.width,
-                          }
+                          e.stopPropagation()
+                          resetColumnWidths()
                         }}
                       />
-
-                      {colIdx > 0 && (
-                        <button
-                          onClick={() => addColumnAt(colIdx)}
-                          className="absolute -left-3 top-1/2 z-20 flex size-6 -translate-y-1/2 items-center justify-center rounded-full border border-holo-border-soft bg-holo-bg text-holo-text-faint opacity-0 shadow-[0_8px_24px_rgba(0,0,0,.22)] transition hover:bg-holo-primary hover:text-white group-hover/table:opacity-100"
-                          title="Insérer une colonne ici"
-                        >
-                          <Plus size={12} />
-                        </button>
-                      )}
                     </th>
                       )
                     })()
@@ -1811,19 +1908,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                             isCellSelected(rowIdx, colIdx) && 'bg-holo-primary/12 ring-1 ring-inset ring-holo-primary/35',
                             isActive && !isCellSelected(rowIdx, colIdx) && 'bg-holo-primary-surface/25',
                           )}
-                          style={col.manualWidth
-                            ? {
-                                width: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH),
-                                minWidth: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH),
-                                maxWidth: MAX_TABLE_COLUMN_WIDTH,
-                                ...columnColorStyles.cell,
-                              }
-                            : {
-                                width: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH),
-                                minWidth: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH),
-                                maxWidth: Math.min(col.width, MAX_TABLE_COLUMN_WIDTH),
-                                ...columnColorStyles.cell,
-                              }}
+                          style={{ ...getColumnSizeStyle(col), ...columnColorStyles.cell }}
                           data-column-color={col.color ?? undefined}
                         >
                           <div
@@ -1998,7 +2083,7 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                                 placeholder="Saisir…"
                                 selectAllOnFocus
                                 className={cn(
-                                  'min-h-11 w-full max-w-full break-words whitespace-normal px-3 py-3 leading-6 text-holo-text-soft outline-none',
+                                  'min-h-11 w-full min-w-0 max-w-full whitespace-normal px-3 py-3 leading-6 text-holo-text-soft outline-none [overflow-wrap:anywhere]',
                                   'hover:bg-white/[0.012] focus-within:bg-white/[0.02]',
                                   alignClass(col.align),
                                 )}
@@ -2018,10 +2103,10 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           {hasSummaryRow && (
             <table
               className={cn('mt-2 border-separate border-spacing-0', tableWidthClass)}
-              style={{ minWidth: '100%' }}
+              style={tableLayoutStyle}
             >
               <colgroup>
-                <col style={{ width: 42, minWidth: 42, maxWidth: 42 }} />
+                <col style={{ width: ROW_HANDLE_COLUMN_WIDTH, minWidth: ROW_HANDLE_COLUMN_WIDTH, maxWidth: ROW_HANDLE_COLUMN_WIDTH }} />
                 {table.columns.map((column) => (
                   <col key={`${column.id}-summary-col`} style={getColumnSizeStyle(column)} />
                 ))}
@@ -2056,13 +2141,21 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
           )}
         </div>
 
-        <div className="mt-3 flex items-center pl-3">
+        <div className="mt-3 flex items-center gap-1 pl-3">
           <button
             onClick={() => addRowAt(table.rows.length)}
             className="inline-flex items-center gap-2 rounded-holo-md px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
           >
             <Plus size={14} />
             Ajouter une ligne
+          </button>
+          {/* Les colonnes s'insèrent aussi avant/après depuis le menu de chaque colonne. */}
+          <button
+            onClick={() => addColumnAt(table.columns.length)}
+            className="inline-flex items-center gap-2 rounded-holo-md px-3 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text active:scale-[0.98]"
+          >
+            <Plus size={14} />
+            Ajouter une colonne
           </button>
         </div>
       </div>

@@ -23,6 +23,12 @@ function nodeToInlines(node: Node): InlineNode[] {
 
   const el = node as Element
   const tag = el.tagName.toLowerCase()
+
+  // Éléments atomiques conservés tels quels (HTML brut, formule) : on ne
+  // descend pas dans leur rendu.
+  if (el.hasAttribute('data-md-html')) return [{ type: 'html', value: el.getAttribute('data-md-html') ?? '' }]
+  if (el.hasAttribute('data-md-math')) return [{ type: 'inlineMath', value: el.getAttribute('data-md-math') ?? '' }]
+
   const children = Array.from(el.childNodes).flatMap(nodeToInlines)
 
   switch (tag) {

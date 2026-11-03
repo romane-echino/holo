@@ -674,7 +674,7 @@ export function EditorFrame({
     let cancelled = false
     const loadStats = async () => {
       if (!filepath) { if (!cancelled) setFileModifiedAt(undefined); return }
-      const stats = await window.holo?.getPathStats(filepath).catch(() => null)
+      const stats = await window.holo?.getPathStats?.(filepath).catch(() => null)
       if (!cancelled) setFileModifiedAt(stats?.modifiedAt)
     }
     void loadStats()

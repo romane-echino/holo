@@ -795,3 +795,31 @@ body,
 @media (prefers-reduced-motion: reduce) {
   [class*='animate-[holo-toast-in'] { animation: none; }
 }
+
+/* HTML brut en ligne conservé tel quel (ex. <kbd>, <mark>) */
+.holo-inline-raw {
+  display: inline-block;
+  margin: 0 0.05em;
+  padding: 0 0.3em;
+  border: 1px dashed var(--color-holo-border-soft);
+  border-radius: 0.35em;
+  background: var(--color-holo-glass);
+  color: var(--color-holo-text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  user-select: all;
+}
+
+/* Formule LaTeX en ligne ($x^2$) */
+.holo-inline-math {
+  display: inline-block;
+  padding: 0 0.15em;
+  border-radius: 0.3em;
+  cursor: default;
+}
+
+.holo-inline-math:hover {
+  background: color-mix(in srgb, var(--color-holo-primary) 10%, transparent);
+}
