@@ -229,7 +229,8 @@ test.describe('EditorFrame — document history', () => {
     await expect(page.locator('img[src^="data:image/gif;base64,"]')).toHaveCount(1)
 
     const md = await waitForMd(page, (value) => value.includes('images/Rotating_earth_\\(large\\).gif'), 6000)
-    expect(md).toContain('![Rotating\\_earth\\_(large)](images/Rotating_earth_\\(large\\).gif)')
+    // L'échappement des « _ » du texte alternatif dépend de la version du sérialiseur.
+    expect(md).toMatch(/!\[Rotating\\?_earth\\?_\(large\)\]\(images\/Rotating_earth_\\\(large\\\)\.gif\)/)
   })
 
   test('paste un GIF local en erreur n insere ni image ni markdown', async ({ page }) => {

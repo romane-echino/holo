@@ -127,9 +127,6 @@ interface HoloApi {
   exportPdf: (payload: { html: string; suggestedName?: string }) => Promise<{ ok: true; filePath: string } | { ok: false; canceled?: boolean; error?: string }>
   openFileInNewWindow: (payload: HoloOpenFileInNewWindowPayload) => Promise<{ ok: true }>
   writeClipboardText: (text: string) => Promise<{ ok: true }>
-  getClipboardFormats: () => Promise<string[]>
-  clipboardHasFormat: (format: string) => Promise<boolean>
-  readClipboardFormat: (format: string) => Promise<string>
   checkForUpdates: () => Promise<unknown>
   installUpdate: () => Promise<unknown>
   getUpdateState: () => Promise<unknown>

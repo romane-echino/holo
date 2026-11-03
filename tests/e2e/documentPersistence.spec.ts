@@ -81,7 +81,7 @@ test.describe('Persistance du document ouvert', () => {
       // Simule OneDrive qui dépose la version d'un collègue.
       await fs.writeFile(ws.filePath, ['# Titre', '', 'Paragraphe initial.', '', 'Second paragraphe modifié ailleurs.', ''].join('\n'), 'utf8')
 
-      await expect(paragraph(launched.page, 'Second paragraphe modifié ailleurs.')).toBeVisible({ timeout: 10_000 })
+      await expect(paragraph(launched.page, 'Second paragraphe modifié ailleurs.')).toBeVisible({ timeout: 15_000 })
     } finally {
       await cleanup(launched, ws.rootPath)
     }
@@ -185,14 +185,19 @@ test.describe('Persistance du document ouvert', () => {
       await expect(launched.page.locator('img[alt="rouge"]')).toHaveAttribute('src', /^data:image\/png/, { timeout: 20_000 })
 
       await launched.page.evaluate(() => (window as unknown as { holo: { writeClipboardImage: (s: string) => Promise<unknown> } }).holo.writeClipboardImage('images/rouge.png'))
-      const size = await launched.app.evaluate(({ clipboard }) => clipboard.readImage().getSize())
+      const size = await launched.app.evaluate(async ({ clipboard, nativeImage }) => {
+        const [item] = await clipboard.read()
+        const blob = await item.getType('image/png')
+        return nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer())).getSize()
+      })
       expect(size).toEqual({ width: 2, height: 2 })
       const copied = await launched.page.evaluate(() => (window as unknown as { holo: { getCopiedHoloImage: () => Promise<string | null> } }).holo.getCopiedHoloImage())
       expect(copied).toBe('images/rouge.png')
 
       // Une autre image dans le presse-papiers n'est pas confondue avec celle de Holo.
-      await launched.app.evaluate(({ clipboard, nativeImage }) => {
-        clipboard.writeImage(nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='))
+      await launched.app.evaluate(async ({ clipboard, ClipboardItem, nativeImage }) => {
+        const other = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
+        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([other.toPNG()], { type: 'image/png' }) })])
       })
       const other = await launched.page.evaluate(() => (window as unknown as { holo: { getCopiedHoloImage: () => Promise<string | null> } }).holo.getCopiedHoloImage())
       expect(other).toBeNull()

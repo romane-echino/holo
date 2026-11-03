@@ -138,9 +138,9 @@ test.describe('Electron app — critical flows', () => {
     const launched = await launchHolo(['holo://DepotInconnu/doc.md'])
 
     try {
-      const dialog = await launched.page.waitForEvent('dialog', { timeout: 15_000 })
-      expect(dialog.message()).toContain('Aucun dépôt correspondant trouvé: DepotInconnu')
-      await dialog.accept()
+      // Notification non bloquante (plus d'alerte modale au démarrage).
+      await expect(launched.page.getByRole('alert').filter({ hasText: 'L\'espace « DepotInconnu » n\'est pas présent sur cet ordinateur' }))
+        .toBeVisible({ timeout: 15_000 })
     } finally {
       await launched.app.close()
       await fs.rm(launched.configHome, { recursive: true, force: true })

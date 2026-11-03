@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItem, clipboard, dialog, ipcMain, nativeImage, net, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ClipboardItem, Menu, MenuItem, clipboard, dialog, ipcMain, nativeImage, net, safeStorage, shell } from 'electron'
 import updaterPkg from 'electron-updater'
 import { execFile, spawn } from 'node:child_process'
 
@@ -727,13 +727,13 @@ function getGitHostFromUrl(rawUrl) {
   }
 }
 
-function encryptSecret(plain) {
+async function encryptSecret(plain) {
   const text = String(plain ?? '')
   if (!text) return ''
 
   try {
-    if (safeStorage.isEncryptionAvailable()) {
-      return `enc:${safeStorage.encryptString(text).toString('base64')}`
+    if (await safeStorage.isAsyncEncryptionAvailable()) {
+      return `enc:${(await safeStorage.encryptStringAsync(text)).toString('base64')}`
     }
   } catch {
     // repli ci-dessous
@@ -742,12 +742,14 @@ function encryptSecret(plain) {
   return `plain:${Buffer.from(text, 'utf8').toString('base64')}`
 }
 
-function decryptSecret(stored) {
+async function decryptSecret(stored) {
   if (typeof stored !== 'string' || !stored) return ''
 
   if (stored.startsWith('enc:')) {
     try {
-      return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'))
+      // Déchiffre aussi les secrets enregistrés avec l'ancienne API synchrone.
+      const { result } = await safeStorage.decryptStringAsync(Buffer.from(stored.slice(4), 'base64'))
+      return result
     } catch {
       return ''
     }
@@ -775,7 +777,7 @@ async function getSavedGitCredentials(host) {
   if (!entry || typeof entry !== 'object') return null
 
   const username = typeof entry.username === 'string' ? entry.username : ''
-  const password = decryptSecret(entry.password)
+  const password = await decryptSecret(entry.password)
   if (!username && !password) return null
 
   return { username, password }
@@ -784,6 +786,7 @@ async function getSavedGitCredentials(host) {
 async function saveGitCredentials(host, username, password) {
   if (!host) return
 
+  const encryptedPassword = await encryptSecret(password)
   return withConfigLock(async () => {
     const config = await readHoloConfig()
     const all = config['git-credentials'] && typeof config['git-credentials'] === 'object' && !Array.isArray(config['git-credentials'])
@@ -792,7 +795,7 @@ async function saveGitCredentials(host, username, password) {
 
     all[host] = {
       username: String(username ?? ''),
-      password: encryptSecret(password),
+      password: encryptedPassword,
     }
     config['git-credentials'] = all
     await writeHoloConfig(config)
@@ -2131,7 +2134,7 @@ ipcMain.handle('app:factory-reset', async () => {
   return { ok: true }
 })
 ipcMain.handle('clipboard:write-text', async (_event, text) => {
-  clipboard.writeText(String(text ?? ''))
+  await clipboard.writeText(String(text ?? ''))
   return { ok: true }
 })
 
@@ -2156,6 +2159,18 @@ function hashImage(image) {
   return crypto.createHash('sha1').update(image.toBitmap()).digest('hex')
 }
 
+/** Première image du presse-papiers système (API Clipboard d'Electron ≥ 44). */
+async function readClipboardImage() {
+  const items = await clipboard.read().catch(() => [])
+  for (const item of items) {
+    const type = item.types.find((entry) => entry.startsWith('image/'))
+    if (!type) continue
+    const blob = await item.getType(type)
+    return nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()))
+  }
+  return null
+}
+
 ipcMain.handle('clipboard:write-image', async (_event, source) => {
   const value = String(source ?? '')
   let image
@@ -2171,30 +2186,21 @@ ipcMain.handle('clipboard:write-image', async (_event, source) => {
   if (image.isEmpty()) {
     throw new Error('Ce format d\'image ne peut pas être copié (SVG non pris en charge).')
   }
-  clipboard.writeImage(image)
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([image.toPNG()], { type: 'image/png' }) })])
   lastCopiedHoloImage = { source: value, hash: hashImage(image) }
   return { ok: true }
 })
 
 ipcMain.handle('clipboard:get-copied-holo-image', async () => {
   if (!lastCopiedHoloImage) return null
-  const image = clipboard.readImage()
-  if (image.isEmpty() || hashImage(image) !== lastCopiedHoloImage.hash) return null
+  const image = await readClipboardImage()
+  if (!image || image.isEmpty() || hashImage(image) !== lastCopiedHoloImage.hash) return null
   return lastCopiedHoloImage.source
 })
 
 ipcMain.handle('shell:show-image-in-folder', async (_event, source) => {
   shell.showItemInFolder(resolveDocumentImagePath(source))
   return { ok: true }
-})
-ipcMain.handle('clipboard:get-formats', async () => clipboard.availableFormats())
-ipcMain.handle('clipboard:has-format', async (_event, format) => clipboard.has(String(format)))
-ipcMain.handle('clipboard:read-format', async (_event, format) => {
-  try {
-    return clipboard.read(String(format))
-  } catch {
-    return ''
-  }
 })
 
 ipcMain.handle('window:minimize', async (event) => {
