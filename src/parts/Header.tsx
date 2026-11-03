@@ -109,6 +109,8 @@ export function Header({
             )}
             onClick={() => setFontSizeOpen((v) => !v)}
             title="Taille du texte"
+            aria-label="Taille du texte"
+            aria-expanded={fontSizeOpen}
           >
             <ALargeSmall size={16} />
           </button>
@@ -124,6 +126,8 @@ export function Header({
         <button
           className="rounded-holo-md px-2 py-1.5 hover:bg-holo-glass-hover hover:text-holo-text-muted sm:px-3"
           onClick={onOpenSettings}
+          title="Paramètres"
+          aria-label="Paramètres"
         >
           <Settings size={16} />
         </button>
@@ -131,7 +135,8 @@ export function Header({
         <button
           className="rounded-holo-md px-2 py-1.5 hover:bg-holo-glass-hover hover:text-holo-text-muted sm:px-3"
           onClick={() => window.holo?.toggleDevTools()}
-          title="Toggle DevTools"
+          title="Outils de développement"
+          aria-label="Outils de développement"
         >
           <Bug size={16} />
         </button>

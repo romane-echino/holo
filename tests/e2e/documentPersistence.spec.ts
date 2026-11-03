@@ -222,6 +222,30 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('les réglages temps réel s enregistrent avec le bouton global des paramètres', async () => {
+    const ws = await createWorkspace('Contenu.\n')
+    let launched: Launched | null = null
+    try {
+      launched = await launchHolo(ws.rootPath, ws.filePath)
+      const page = launched.page
+      await expect(paragraph(page, 'Contenu.')).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: 'Paramètres' }).click()
+      await page.getByRole('button', { name: /Collaboration/ }).first().click()
+      await page.getByLabel('Activer l\'édition en temps réel').check()
+      await page.getByPlaceholder('https://cn.echino.com/holo-realtime').fill('https://relais.example.com/holo-realtime/api/')
+      await page.getByPlaceholder('CN_…').fill('CN_test-token')
+      await page.getByRole('button', { name: 'Enregistrer', exact: true }).last().click()
+
+      await expect.poll(() => page.evaluate(() => (window as unknown as { holo: { realtime: { getConfig: () => Promise<unknown> } } }).holo.realtime.getConfig()), { timeout: 5_000 })
+        .toEqual({ url: 'https://relais.example.com/holo-realtime', enabled: true, hasToken: true })
+      // Le jeton n'est jamais stocké en clair.
+      const config = await fs.readFile(path.join(launched.configHome, 'holo', 'holo-config.json'), 'utf8')
+      expect(config).not.toContain('CN_test-token')
+    } finally {
+      await cleanup(launched, ws.rootPath)
+    }
+  })
+
   test('modifier un paragraphe conserve la mise en forme du reste du fichier', async () => {
     const original = ['---', 'title: Diff minimal', 'tags:', '  - alpha', '---', '', '* item un', '* item deux', '', 'Paragraphe à modifier.', '', '| a   | b   |', '|-----|-----|', '| x<br>y | 2   |', ''].join('\n')
     const ws = await createWorkspace(original)

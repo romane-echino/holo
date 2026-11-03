@@ -10,6 +10,7 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
       'Édition à plusieurs : une modification faite ailleurs (collègue, OneDrive, autre fenêtre) est fusionnée avec la vôtre au lieu d\'être écrasée, et s\'affiche en direct dans le document ouvert.',
       'Édition à plusieurs : la synchronisation réconcilie automatiquement les modifications qui ne se chevauchent pas ; en cas de vrai conflit, le document est verrouillé jusqu\'à la résolution, qui conserve désormais les modifications non conflictuelles des deux côtés.',
       'Git : opérations sérialisées (fin des erreurs « index.lock »), ouvrir un document ne crée plus de commit, et seules les lignes réellement modifiées changent dans le fichier.',
+      'Nouveau : édition en temps réel. Plusieurs personnes modifient le même document et voient les changements des autres instantanément (avatars « En direct » dans l\'en-tête). À activer dans Paramètres → Collaboration avec le relais Codenotch de l\'équipe.',
       'OneDrive : avertissement quand un dépôt git se trouve dans un dossier synchronisé (OneDrive, Dropbox, iCloud, Google Drive).',
       'Tableaux : les images peuvent être collées ou déposées dans une cellule ; les colonnes se rétrécissent librement et leur largeur est enregistrée (double-clic sur la bordure pour revenir en automatique).',
       'Tableaux : plus de caractère perdu en tapant juste après un clic, les <br>, le HTML, les formules et les en-têtes formatés sont conservés, Maj+Entrée crée un vrai retour à la ligne, et un montant en texte libre n\'est plus reformaté.',
