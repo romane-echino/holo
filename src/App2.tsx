@@ -679,6 +679,23 @@ export default function App2() {
 
   useLaunchPayloads(handleLaunchPayload)
 
+  // Dépôt git dans un dossier synchronisé (OneDrive…) : avertissement une fois par session.
+  const warnedSyncedSpacesRef = useRef(new Set<string>())
+  useEffect(() => {
+    const spacePath = rootPath
+    if (!spacePath || warnedSyncedSpacesRef.current.has(spacePath) || !window.holo?.getSpaceWarnings) return
+    warnedSyncedSpacesRef.current.add(spacePath)
+    void window.holo.getSpaceWarnings(spacePath).then(({ syncedFolderProvider }) => {
+      if (!syncedFolderProvider) return
+      notify({
+        kind: 'warning',
+        title: `Dépôt git dans un dossier ${syncedFolderProvider}`,
+        message: `« ${getBaseName(spacePath)} » est synchronisé à la fois par git et par ${syncedFolderProvider}, ce qui peut créer des conflits ou des pertes. Holo protège vos enregistrements, mais il est recommandé de cloner le dépôt dans un dossier non synchronisé (ex. C:\\Holo ou ~/Holo).`,
+        durationMs: 0,
+      })
+    }).catch(() => undefined)
+  }, [rootPath])
+
   // ─── Données pour le panel Récents ────────────────────────────────────────
   const recentDocuments = useMemo<HoloDocument[]>(
     () => recentFilePaths.map(filePath => {

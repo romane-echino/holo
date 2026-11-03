@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('holo', {
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
   openHoloLink: (url) => ipcRenderer.invoke('app:open-holo-link', url),
   getShareInfo: (filePath) => ipcRenderer.invoke('app:get-share-info', filePath),
+  getSpaceWarnings: (spacePath) => ipcRenderer.invoke('holo:get-space-warnings', spacePath),
   onLaunchPayload: (callback) => {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('app:open-launch-payload', listener)

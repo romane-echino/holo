@@ -201,6 +201,22 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('un dépôt git dans un dossier OneDrive affiche un avertissement', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'holo-onedrive-')))
+    const rootPath = path.join(base, 'OneDrive - Echino', 'Documents', 'docs')
+    await fs.mkdir(rootPath, { recursive: true })
+    const filePath = path.join(rootPath, 'doc.md')
+    await fs.writeFile(filePath, 'Contenu.\n', 'utf8')
+    await git(rootPath, 'init')
+    let launched: Launched | null = null
+    try {
+      launched = await launchHolo(rootPath, filePath)
+      await expect(launched.page.getByText('Dépôt git dans un dossier OneDrive')).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await cleanup(launched, base)
+    }
+  })
+
   test('modifier un paragraphe conserve la mise en forme du reste du fichier', async () => {
     const original = ['---', 'title: Diff minimal', 'tags:', '  - alpha', '---', '', '* item un', '* item deux', '', 'Paragraphe à modifier.', '', '| a   | b   |', '|-----|-----|', '| x<br>y | 2   |', ''].join('\n')
     const ws = await createWorkspace(original)

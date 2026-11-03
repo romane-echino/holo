@@ -1867,6 +1867,33 @@ ipcMain.handle('app:open-holo-link', async (event, rawUrl) => {
   return { ok: true }
 })
 
+/**
+ * Service de synchronisation cloud qui gère le dossier (OneDrive, Dropbox,
+ * iCloud, Google Drive), ou null. Un dépôt git dans un tel dossier est
+ * synchronisé deux fois (git + cloud), ce qui peut corrompre .git.
+ */
+function detectSyncedFolderProvider(folderPath) {
+  const resolved = path.resolve(String(folderPath ?? ''))
+  const lower = resolved.toLowerCase()
+  const envRoots = [process.env.OneDrive, process.env.OneDriveCommercial, process.env.OneDriveConsumer]
+    .filter(Boolean)
+    .map((root) => path.resolve(root).toLowerCase())
+  if (envRoots.some((root) => lower === root || lower.startsWith(root + path.sep))) return 'OneDrive'
+  const segments = resolved.split(/[\\/]+/)
+  if (segments.some((segment) => /^onedrive(\s*-\s*.+)?$/i.test(segment))) return 'OneDrive'
+  if (lower.includes(`${path.sep}library${path.sep}cloudstorage${path.sep}onedrive`)) return 'OneDrive'
+  if (segments.some((segment) => /^dropbox(\s*\(.+\))?$/i.test(segment))) return 'Dropbox'
+  if (lower.includes(`${path.sep}library${path.sep}mobile documents${path.sep}`) || segments.some((segment) => /^icloud\s?drive$/i.test(segment))) return 'iCloud Drive'
+  if (lower.includes(`${path.sep}library${path.sep}cloudstorage${path.sep}googledrive`) || segments.some((segment) => /^(google drive|my drive|mon drive)$/i.test(segment))) return 'Google Drive'
+  return null
+}
+
+ipcMain.handle('holo:get-space-warnings', async (_event, spacePath) => {
+  const provider = detectSyncedFolderProvider(spacePath)
+  const isRepo = provider ? await isGitRepository(String(spacePath)).catch(() => false) : false
+  return { syncedFolderProvider: isRepo ? provider : null }
+})
+
 ipcMain.handle('app:get-share-info', async (_event, filePath) => {
   const root = findOwningRoot(filePath)
   if (!root) return { rootPath: null, remoteUrl: null }

@@ -152,6 +152,8 @@ interface HoloApi {
   /** Ouvre un lien holo:// (ou de la passerelle https) dans l'app. */
   openHoloLink: (url: string) => Promise<{ ok: true }>
   getShareInfo: (filePath: string) => Promise<{ rootPath: string | null; remoteUrl: string | null }>
+  /** Avertissements sur l'emplacement d'un espace (dépôt git dans un dossier OneDrive…). */
+  getSpaceWarnings: (spacePath: string) => Promise<{ syncedFolderProvider: string | null }>
   onLaunchPayload: (callback: (payload: HoloLaunchPayload) => void) => () => void
   openFolder: () => Promise<OpenFolderResult>
   getRecentFolders: () => Promise<string[]>
