@@ -1,0 +1,19 @@
+{
+    "title": "Holo — temps réel",
+    "name": "holo_realtime",
+    "languages": [
+        "fr",
+        "en"
+    ],
+    "uid": "com.codenotch.holorealtime",
+    "uri": "holo-realtime",
+    "roles": [
+        {
+            "name": "Admin",
+            "description": "Administrateurs du relais : peuvent consulter les documents et journaux depuis le portail."
+        }
+    ],
+    "version": "0.1.0",
+    "parameters": [],
+    "index": "index"
+}

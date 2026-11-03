@@ -1,0 +1,16 @@
+{
+    "app": {
+        "name": "index"
+    },
+    "html": {
+        "title": "holo-realtime"
+    },
+    "pwa": {
+        "name": "index",
+        "display": "standalone",
+        "display_override": [
+            "window-controls-overlay"
+        ],
+        "start_url": "./"
+    }
+}

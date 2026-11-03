@@ -1,0 +1,29 @@
+{
+    "name": "holo_realtime",
+    "version": "0.0.0",
+    "description": "New Codenotch Project",
+    "scripts": {
+        "start": "cn project start",
+        "dev": "cn react dev",
+        "build": "cn project compile"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@codenotch/orm": "1.2.3",
+        "@codenotch/react": "1.2.3",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.34",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.4",
+        "@vitejs/plugin-react": "^6.0.5",
+        "@codenotch/process": "1.2.3",
+        "vite": "^8.0.0",
+        "sass-embedded": "^1.97.3",
+        "typescript": "^5.9.3"
+    }
+}
