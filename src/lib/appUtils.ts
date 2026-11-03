@@ -256,7 +256,7 @@ export function resolveRepoRelativePath(rootPath: string, relPath: string): stri
   return base + '/' + relPath.replace(/\\/g, '/')
 }
 
-export function buildHoloFileLink(rootPath: string | null, filePath: string): string {
+export function buildHoloFileLink(rootPath: string | null, filePath: string, remoteUrl?: string | null): string {
   if (!rootPath) {
     return ''
   }
@@ -275,11 +275,25 @@ export function buildHoloFileLink(rootPath: string | null, filePath: string): st
     .map((segment) => encodeURIComponent(segment))
     .join('/')
 
-  return `holo://${encodedRepoName}/${encodedPath}`
+  // L'URL du dépôt (sans identifiants) permet au destinataire de retrouver
+  // l'espace même si son dossier porte un autre nom, ou de le cloner.
+  const remoteQuery = remoteUrl ? `?remote=${encodeURIComponent(stripUrlCredentials(remoteUrl))}` : ''
+  return `holo://${encodedRepoName}/${encodedPath}${remoteQuery}`
 }
 
-export function buildShareableHoloLink(rootPath: string | null, filePath: string, gatewayBaseUrl: string): string {
-  const holoLink = buildHoloFileLink(rootPath, filePath)
+function stripUrlCredentials(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return rawUrl
+  }
+}
+
+export function buildShareableHoloLink(rootPath: string | null, filePath: string, gatewayBaseUrl: string, remoteUrl?: string | null): string {
+  const holoLink = buildHoloFileLink(rootPath, filePath, remoteUrl)
 
   if (!holoLink) {
     return ''

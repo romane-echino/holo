@@ -10,7 +10,8 @@ import { getBaseName, buildShareableHoloLink, flatTreeFiles } from './lib/appUti
 import { remapTrackedPath } from './lib/markdownLinks'
 import { updateMarkdownBooleanHeaderField, updateMarkdownHeaderField } from './lib/markdown'
 import { normalizeGitState } from './lib/gitUtils'
-import { useSearchIndex, useStartupNavigation, useWorkspaceFolders } from './hooks'
+import { useSearchIndex, useWorkspaceFolders } from './hooks'
+import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -500,6 +501,8 @@ export default function App2() {
   )
 
   const addSpace = usePopup()
+  const addSpaceShowRef = useRef(addSpace.show)
+  useEffect(() => { addSpaceShowRef.current = addSpace.show }, [addSpace.show])
 
   const handleSpaceFavorite = useCallback((folderPath: string) => {
     setFavoriteFolders(prev => {
@@ -646,12 +649,35 @@ export default function App2() {
     }
   }, [initDocumentSync, navigate, resolveOwningSpace, rootPath, setRecentFilePaths])
 
-  useStartupNavigation({
-    openRecentFolder,
-    openFile: async (path: string) => {
-      await handleSelectFile({ id: path, path, name: getBaseName(path), type: 'file' })
-    },
-  })
+  // ─── Liens Holo / fichiers transmis à l'app ────────────────────────────────
+  // Lien vers un dépôt absent de cet ordinateur : on propose de le cloner.
+  const [linkCloneRequest, setLinkCloneRequest] = useState<HoloLaunchPayload['cloneRequest'] | null>(null)
+  const linkCloneRequestRef = useRef(linkCloneRequest)
+  useEffect(() => { linkCloneRequestRef.current = linkCloneRequest }, [linkCloneRequest])
+
+  const handleLaunchPayload = useCallback(async (payload: HoloLaunchPayload) => {
+    if (payload.startupError) {
+      notify({ kind: payload.rootPath ? 'warning' : 'error', title: 'Lien Holo', message: payload.startupError, durationMs: 10_000 })
+    }
+    if (payload.cloneRequest) {
+      setLinkCloneRequest(payload.cloneRequest)
+      addSpaceShowRef.current()
+      return
+    }
+    if (!payload.rootPath) return
+    try {
+      await openRecentFolder(payload.rootPath)
+      if (payload.filePath) {
+        await handleSelectFile({ id: payload.filePath, path: payload.filePath, name: getBaseName(payload.filePath), type: 'file' })
+      } else {
+        navigate(`/space/${encodeURIComponent(payload.rootPath)}`)
+      }
+    } catch (error) {
+      notifyError('Impossible d\'ouvrir le lien', error)
+    }
+  }, [handleSelectFile, navigate, openRecentFolder])
+
+  useLaunchPayloads(handleLaunchPayload)
 
   // ─── Données pour le panel Récents ────────────────────────────────────────
   const recentDocuments = useMemo<HoloDocument[]>(
@@ -714,12 +740,16 @@ export default function App2() {
   const handleShare = useCallback(async () => {
     const filePath = openedFileRef.current?.path
     if (!filePath) return
-    const link = buildShareableHoloLink(rootPath, filePath, shareGatewayBaseUrl)
+    // Le lien est construit à partir de l'espace qui contient le fichier (pas
+    // forcément l'espace actif) et porte l'URL du dépôt pour le destinataire.
+    const shareInfo = await window.holo?.getShareInfo?.(filePath).catch(() => null)
+    const link = buildShareableHoloLink(shareInfo?.rootPath ?? rootPath, filePath, shareGatewayBaseUrl, shareInfo?.remoteUrl)
     if (!link) return
     try {
       await window.holo?.writeClipboardText?.(link)
-    } catch {
-      // ignore
+      notify({ kind: 'success', title: 'Lien copié', durationMs: 2500 })
+    } catch (error) {
+      notifyError('Impossible de copier le lien', error)
     }
   }, [rootPath, shareGatewayBaseUrl])
 
@@ -1454,7 +1484,21 @@ export default function App2() {
 
       </main>
 
-      <AddSpace open={addSpace.open} onClose={addSpace.hide} />
+      <AddSpace
+        open={addSpace.open}
+        onClose={() => { addSpace.hide(); setLinkCloneRequest(null) }}
+        initialRepoUrl={linkCloneRequest?.remoteUrl}
+        notice={linkCloneRequest
+          ? `Ce lien pointe vers « ${linkCloneRequest.repoName} », un dépôt qui n'est pas encore sur cet ordinateur. Clonez-le pour ouvrir le document.`
+          : undefined}
+        onCloned={(clonedRoot) => {
+          const request = linkCloneRequestRef.current
+          setLinkCloneRequest(null)
+          if (!request?.relativeFilePath) return
+          const filePath = `${clonedRoot.replace(/[\\/]+$/, '')}/${request.relativeFilePath}`
+          void handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })
+        }}
+      />
 
       {/* Inspecteur drawer — visible < 3xl */}
       <div

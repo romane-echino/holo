@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld('holo', {
   exportPdf: (payload) => ipcRenderer.invoke('app:export-pdf', payload),
   openFileInNewWindow: (payload) => ipcRenderer.invoke('app:open-file-in-new-window', payload),
   openExternalUrl: (url) => ipcRenderer.invoke('app:open-external-url', url),
+  openHoloLink: (url) => ipcRenderer.invoke('app:open-holo-link', url),
+  getShareInfo: (filePath) => ipcRenderer.invoke('app:get-share-info', filePath),
+  onLaunchPayload: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('app:open-launch-payload', listener)
+    return () => ipcRenderer.removeListener('app:open-launch-payload', listener)
+  },
   openFolder: () => ipcRenderer.invoke('fs:open-folder'),
   getRecentFolders: () => ipcRenderer.invoke('fs:get-recent-folders'),
   getRecentFolderIcon: (folderPath) => ipcRenderer.invoke('fs:get-recent-folder-icon', folderPath),

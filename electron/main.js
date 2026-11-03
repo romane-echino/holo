@@ -1499,6 +1499,118 @@ function normalizeArgPath(rawArg) {
   return trimmed
 }
 
+function normalizeRemoteForComparison(rawRemote) {
+  const webUrl = normalizeRemoteToWebUrl(rawRemote)
+  return webUrl ? webUrl.toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '') : null
+}
+
+/** Lien https:// d'une passerelle (…/open?h=holo%3A%2F%2F…) → lien holo:// qu'il contient. */
+function extractHoloLink(rawUrl) {
+  const value = String(rawUrl ?? '').trim()
+  if (value.toLowerCase().startsWith('holo://')) return value
+  try {
+    const parsed = new URL(value)
+    const inner = parsed.searchParams.get('h')
+    if (inner && inner.toLowerCase().startsWith('holo://')) return inner
+  } catch {
+    // pas une URL
+  }
+  return null
+}
+
+/** Rapatrie le distant si c'est sans risque (arbre propre, pas de divergence). */
+async function fetchAndFastForward(cwd) {
+  return withRepoLock(repoLockKey(cwd), async () => {
+    if (!(await isGitRepository(cwd)) || !(await hasRemoteNamed(cwd, 'origin'))) return { pulled: false }
+    const fetchResult = await runGit(['fetch', '--all', '--prune'], cwd)
+    if (!fetchResult.ok) return { pulled: false, error: fetchResult.stderr }
+    const { incoming, outgoing } = await getAheadBehind(cwd)
+    if (incoming === 0) return { pulled: false }
+    const status = await runGit(['status', '--porcelain'], cwd)
+    if (!status.ok || status.stdout.trim() !== '' || outgoing > 0) return { pulled: false, blocked: true }
+    const ff = await runGit(['merge', '--ff-only', '@{upstream}'], cwd)
+    return { pulled: ff.ok }
+  })
+}
+
+/**
+ * Résout un lien holo:// (holo://<dossier>/<chemin.md>?remote=<url du dépôt>)
+ * en espace + fichier locaux. Si le fichier n'existe pas encore localement, on
+ * récupère d'abord le distant ; si l'espace est inconnu et que le lien porte
+ * l'URL du dépôt, on propose de le cloner.
+ */
+async function resolveHoloLink(rawUrl) {
+  const holoLink = extractHoloLink(rawUrl)
+  if (!holoLink) {
+    return { rootPath: '', filePath: '', startupError: 'Lien Holo invalide.' }
+  }
+  let parsedUrl
+  try {
+    parsedUrl = new URL(holoLink)
+  } catch {
+    return { rootPath: '', filePath: '', startupError: 'Impossible de lire le lien Holo.' }
+  }
+
+  const repoName = decodeURIComponent(parsedUrl.hostname.trim())
+  const relativeFilePath = decodeURIComponent(parsedUrl.pathname || '').replace(/^\/+/, '')
+  const remoteParam = parsedUrl.searchParams.get('remote')
+  const remoteUrl = remoteParam ? normalizeRemoteToWebUrl(remoteParam) : null
+
+  if (!repoName) {
+    return { rootPath: '', filePath: '', startupError: 'Lien Holo invalide : dépôt manquant.' }
+  }
+  if (!relativeFilePath.toLowerCase().endsWith('.md') || relativeFilePath.split('/').includes('..')) {
+    return { rootPath: '', filePath: '', startupError: 'Lien Holo invalide : le fichier ciblé doit être un document .md.' }
+  }
+
+  const candidates = Array.from(new Set([...(await getRecentFolders()), ...knownRootPaths]))
+  let matchingRoot = null
+  const wantedRemote = remoteUrl ? normalizeRemoteForComparison(remoteUrl) : null
+  if (wantedRemote) {
+    // L'URL du dépôt identifie l'espace même si le dossier local porte un autre nom.
+    for (const candidate of candidates) {
+      const candidateRemote = await getPrimaryRemoteWebUrl(candidate).catch(() => null)
+      if (candidateRemote && normalizeRemoteForComparison(candidateRemote) === wantedRemote) {
+        matchingRoot = candidate
+        break
+      }
+    }
+  }
+  if (!matchingRoot) {
+    matchingRoot = candidates.find((folderPath) => path.basename(folderPath).toLowerCase() === repoName.toLowerCase()) ?? null
+  }
+
+  if (!matchingRoot) {
+    if (remoteUrl) {
+      return { rootPath: '', filePath: '', cloneRequest: { remoteUrl, repoName, relativeFilePath } }
+    }
+    return {
+      rootPath: '',
+      filePath: '',
+      startupError: `L'espace « ${repoName} » n'est pas présent sur cet ordinateur. Ajoutez-le (dossier local ou clone du dépôt) puis rouvrez le lien.`,
+    }
+  }
+
+  const targetFilePath = path.join(matchingRoot, relativeFilePath)
+  const isFile = async () => Boolean((await fs.stat(targetFilePath).catch(() => null))?.isFile())
+
+  if (!(await isFile())) {
+    // Document créé récemment par un collègue : on récupère le distant avant de conclure.
+    const sync = await fetchAndFastForward(matchingRoot).catch(() => ({ pulled: false }))
+    if (!(await isFile())) {
+      return {
+        rootPath: matchingRoot,
+        filePath: '',
+        startupError: sync.blocked
+          ? `Le document « ${relativeFilePath} » n'est pas encore sur cet ordinateur. Synchronisez l'espace « ${repoName} » (des modifications locales empêchent la récupération automatique) puis rouvrez le lien.`
+          : `Document introuvable dans l'espace « ${repoName} » : ${relativeFilePath}. Il a peut-être été déplacé ou supprimé.`,
+      }
+    }
+  }
+
+  return { rootPath: matchingRoot, filePath: targetFilePath }
+}
+
 async function getLaunchPayloadFromArgv(argv) {
   const rootArg = argv.find((arg) => arg.startsWith('--holo-root='))
   const fileArg = argv.find((arg) => arg.startsWith('--holo-file='))
@@ -1521,62 +1633,7 @@ async function getLaunchPayloadFromArgv(argv) {
       continue
     }
 
-    try {
-      const parsedUrl = new URL(normalizedArg)
-      const repoName = decodeURIComponent(parsedUrl.hostname.trim())
-      const relativeFilePath = decodeURIComponent(parsedUrl.pathname || '').replace(/^\/+/, '')
-
-      if (!repoName) {
-        return {
-          rootPath: '',
-          filePath: '',
-          startupError: 'Lien holo invalide: dépôt manquant.',
-        }
-      }
-
-      if (!relativeFilePath.toLowerCase().endsWith('.md')) {
-        return {
-          rootPath: '',
-          filePath: '',
-          startupError: 'Lien holo invalide: le fichier ciblé doit être un .md.',
-        }
-      }
-
-      const recentFolders = await getRecentFolders()
-      const matchingRepo = recentFolders.find((folderPath) =>
-        path.basename(folderPath).toLowerCase() === repoName.toLowerCase(),
-      )
-
-      if (!matchingRepo) {
-        return {
-          rootPath: '',
-          filePath: '',
-          startupError: `Aucun dépôt correspondant trouvé: ${repoName}`,
-        }
-      }
-
-      const targetFilePath = path.join(matchingRepo, relativeFilePath)
-      const targetStats = await fs.stat(targetFilePath).catch(() => null)
-
-      if (!targetStats || !targetStats.isFile()) {
-        return {
-          rootPath: '',
-          filePath: '',
-          startupError: `Fichier introuvable dans le dépôt ${repoName}: ${relativeFilePath}`,
-        }
-      }
-
-      return {
-        rootPath: matchingRepo,
-        filePath: targetFilePath,
-      }
-    } catch {
-      return {
-        rootPath: '',
-        filePath: '',
-        startupError: 'Impossible de lire le lien holo transmis au lancement.',
-      }
-    }
+    return resolveHoloLink(normalizedArg)
   }
 
   for (const arg of argv) {
@@ -1749,6 +1806,11 @@ function navigateWindowToLaunchPayload(window, launchPayload = null) {
   if (launchPayload?.startupError) {
     query.startupError = launchPayload.startupError
   }
+  if (launchPayload?.cloneRequest) {
+    query.cloneRemote = launchPayload.cloneRequest.remoteUrl
+    query.cloneRepoName = launchPayload.cloneRequest.repoName
+    query.cloneFilePath = launchPayload.cloneRequest.relativeFilePath
+  }
 
   if (isDev) {
     const queryString = new URLSearchParams(query).toString()
@@ -1761,23 +1823,55 @@ function navigateWindowToLaunchPayload(window, launchPayload = null) {
   window.loadFile(indexPath, { query })
 }
 
+function hasLaunchTarget(payload) {
+  return Boolean(payload && (payload.rootPath || payload.filePath || payload.startupError || payload.cloneRequest))
+}
+
+// Ouvre un lien / fichier dans la fenêtre existante, sans la recharger (la
+// saisie en cours et l'état de l'app sont conservés).
+function deliverLaunchPayload(payload) {
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!window) {
+    createWindow(payload)
+    return
+  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+  if (!hasLaunchTarget(payload)) return
+  if (window.webContents.isLoading()) {
+    navigateWindowToLaunchPayload(window, payload)
+  } else {
+    window.webContents.send('app:open-launch-payload', payload)
+  }
+}
+
 app.on('second-instance', (_event, argv) => {
-  void (async () => {
-    const payload = await getLaunchPayloadFromArgv(argv)
-    const window = BrowserWindow.getAllWindows()[0]
+  void getLaunchPayloadFromArgv(argv).then(deliverLaunchPayload)
+})
 
-    if (!window) {
-      createWindow(payload)
-      return
-    }
+// macOS transmet les liens holo:// par cet évènement (jamais par argv).
+let pendingOpenUrl = null
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (!app.isReady()) {
+    pendingOpenUrl = url
+    return
+  }
+  void resolveHoloLink(url).then(deliverLaunchPayload)
+})
 
-    if (window.isMinimized()) window.restore()
-    window.focus()
+ipcMain.handle('app:open-holo-link', async (event, rawUrl) => {
+  const payload = await resolveHoloLink(rawUrl)
+  event.sender.send('app:open-launch-payload', payload)
+  return { ok: true }
+})
 
-    if (payload.rootPath || payload.filePath || payload.startupError) {
-      navigateWindowToLaunchPayload(window, payload)
-    }
-  })()
+ipcMain.handle('app:get-share-info', async (_event, filePath) => {
+  const root = findOwningRoot(filePath)
+  if (!root) return { rootPath: null, remoteUrl: null }
+  const remoteUrl = await getPrimaryRemoteWebUrl(root).catch(() => null)
+  return { rootPath: root, remoteUrl }
 })
 
 ipcMain.handle('fs:open-folder', async () => {
@@ -2158,7 +2252,18 @@ ipcMain.handle('window:toggle-devtools', async (event) => {
   return { ok: true }
 })
 
-ipcMain.handle('app:open-external-url', async (_event, rawUrl) => {
+ipcMain.handle('app:open-external-url', async (event, rawUrl) => {
+  // Lien Holo (direct ou via la passerelle https) : ouvert dans l'app.
+  if (extractHoloLink(rawUrl)) {
+    const payload = await resolveHoloLink(rawUrl)
+    event.sender.send('app:open-launch-payload', payload)
+    return { ok: true, handledInApp: true }
+  }
+  // mailto: ouvre le client mail ; tout autre protocole reste refusé.
+  if (/^mailto:/i.test(String(rawUrl ?? '').trim())) {
+    await shell.openExternal(String(rawUrl).trim())
+    return { ok: true }
+  }
   const safeUrl = assertExternalHttpUrl(rawUrl)
   await shell.openExternal(safeUrl)
   return { ok: true }
@@ -3590,7 +3695,11 @@ app.whenReady().then(async () => {
     // Ignore protocol registration errors in restricted environments
   }
 
-  createWindow(await getLaunchPayloadFromArgv(process.argv))
+  const launchPayload = pendingOpenUrl
+    ? await resolveHoloLink(pendingOpenUrl)
+    : await getLaunchPayloadFromArgv(process.argv)
+  pendingOpenUrl = null
+  createWindow(launchPayload)
 
   // Configure auto-updater
   if (!isDev) {

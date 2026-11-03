@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AbstractPopup } from '../parts/AbstractPopup'
 import { useGetHoloApi } from '../hooks/useGetHoloApi'
 import { useWorkspaceFolders } from '../hooks/useWorkspaceFolders'
@@ -13,6 +13,12 @@ type Tab = 'folder' | 'clone'
 type AddSpaceProps = {
   open: boolean
   onClose: () => void
+  /** Préremplit l'onglet « Dépôt Git » (ex. lien Holo vers un dépôt pas encore cloné). */
+  initialRepoUrl?: string
+  /** Message d'explication affiché au-dessus du formulaire. */
+  notice?: string
+  /** Appelé avec la racine de l'espace cloné. */
+  onCloned?: (rootPath: string) => void
 }
 
 const inputClassName =
@@ -21,7 +27,7 @@ const inputClassName =
 const primaryButtonClassName =
   'rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white shadow-[0_10px_34px_rgba(123,97,255,.22)] transition hover:bg-holo-primary/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50'
 
-export function AddSpace({ open, onClose }: AddSpaceProps) {
+export function AddSpace({ open, onClose, initialRepoUrl, notice, onCloned }: AddSpaceProps) {
   const [tab, setTab] = useState<Tab>('folder')
 
   // Clone form
@@ -54,9 +60,9 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
   }
 
   // Préremplit le nom d'utilisateur enregistré (chiffré côté main) pour cet hôte.
-  const handleRepoUrlBlur = async () => {
+  const handleRepoUrlBlur = async (urlOverride?: string) => {
     const holo = getHoloApi()
-    const url = repoUrl.trim()
+    const url = (urlOverride ?? repoUrl).trim()
     if (!holo?.gitGetSavedCredentials || !url) {
       setSavedHint(null)
       return
@@ -73,6 +79,15 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
       setSavedHint(null)
     }
   }
+
+  // Ouverture depuis un lien : onglet clone prérempli avec l'URL du dépôt.
+  useEffect(() => {
+    if (!open || !initialRepoUrl) return
+    setTab('clone')
+    setRepoUrl(initialRepoUrl)
+    void handleRepoUrlBlur(initialRepoUrl)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialRepoUrl])
 
   // ── Ouvrir un dossier local ──────────────────────────────────────────────────
   const handleOpenFolder = async () => {
@@ -126,7 +141,9 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
       const nextGitState = await holo.gitGetState(true)
       setGitState(normalizeGitState(nextGitState))
 
+      const clonedRoot = result?.rootPath
       handleClose()
+      if (clonedRoot) onCloned?.(clonedRoot)
     } catch (error) {
       // On garde le popup ouvert avec les champs intacts et éditables, et on
       // déplie la section d'authentification pour permettre de corriger les
@@ -168,6 +185,12 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
       size="sm"
       footer={footer}
     >
+      {notice && (
+        <p className="mb-4 rounded-holo-lg border border-holo-primary/20 bg-holo-primary-surface/40 px-3 py-2.5 text-sm text-holo-text-soft">
+          {notice}
+        </p>
+      )}
+
       {/* Sélecteur d'onglets */}
       <div className="mb-6 flex gap-1 rounded-holo-lg bg-holo-glass p-1">
         {([
@@ -221,7 +244,7 @@ export function AddSpace({ open, onClose }: AddSpaceProps) {
               type="text"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
-              onBlur={handleRepoUrlBlur}
+              onBlur={() => void handleRepoUrlBlur()}
               placeholder="https://github.com/user/repo.git"
               className={inputClassName}
             />

@@ -149,6 +149,10 @@ interface HoloApi {
   closeWindow: () => Promise<{ ok: true }>
   toggleDevTools: () => Promise<{ ok: true }>
   openExternalUrl: (url: string) => Promise<{ ok: true }>
+  /** Ouvre un lien holo:// (ou de la passerelle https) dans l'app. */
+  openHoloLink: (url: string) => Promise<{ ok: true }>
+  getShareInfo: (filePath: string) => Promise<{ rootPath: string | null; remoteUrl: string | null }>
+  onLaunchPayload: (callback: (payload: HoloLaunchPayload) => void) => () => void
   openFolder: () => Promise<OpenFolderResult>
   getRecentFolders: () => Promise<string[]>
   getRecentFolderIcon: (folderPath: string) => Promise<string | null>
@@ -221,6 +225,14 @@ interface HoloApi {
 }
 
 declare global {
+  /** Lien Holo, fichier ou dossier transmis à l'app (démarrage ou instance déjà ouverte). */
+  type HoloLaunchPayload = {
+    rootPath: string
+    filePath: string
+    startupError?: string
+    cloneRequest?: { remoteUrl: string; repoName: string; relativeFilePath: string }
+  }
+
   interface Window {
     holo?: HoloApi
   }
