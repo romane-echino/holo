@@ -237,4 +237,43 @@ test.describe('Synchronisation git en arrière-plan (fetch + merge)', () => {
       await fs.rm(launched.configHome, { recursive: true, force: true })
     }
   })
+
+  test('un collègue pousse juste avant : pas d alerte, réconciliation automatique', async () => {
+    const repos = await setupGitRepos()
+    const launched = await launchHolo([
+      `--holo-root=${repos.workspaceDir}`,
+      `--holo-file=${repos.filePath}`,
+    ])
+    const alarming: string[] = []
+    try {
+      const target = paragraph(launched.page, INITIAL_BODY)
+      await expect(target).toBeVisible({ timeout: 25_000 })
+      await launched.page.waitForTimeout(1500)
+
+      // Le collègue pousse un autre fichier pendant que l'on travaille.
+      await fs.writeFile(path.join(repos.collabDir, 'autre.md'), '# Autre\n', 'utf8')
+      await git(repos.collabDir, 'add', '-A')
+      await git(repos.collabDir, 'commit', '-m', 'autre document')
+      await git(repos.collabDir, 'push')
+
+      await target.click()
+      await launched.page.keyboard.press('End')
+      await launched.page.keyboard.type(' Modifié localement.')
+
+      // Notre modification finit sur le distant, avec celle du collègue.
+      await expect.poll(async () => {
+        const badge = await launched.page.locator('header').first().innerText().catch(() => '')
+        if (/échoué|envoi en attente/i.test(badge)) alarming.push(badge)
+        const doc = await git(repos.remoteDir, 'show', `${repos.branch}:doc.md`).catch(() => '')
+        const other = await git(repos.remoteDir, 'show', `${repos.branch}:autre.md`).catch(() => '')
+        return doc.includes('Modifié localement.') && other.includes('Autre')
+      }, { timeout: 30_000, intervals: [250] }).toBe(true)
+      expect(alarming).toEqual([])
+      await expect(launched.page.getByText('Synchronisé').first()).toBeVisible({ timeout: 10_000 }).catch(() => undefined)
+    } finally {
+      await launched.app.close()
+      await fs.rm(repos.base, { recursive: true, force: true })
+      await fs.rm(launched.configHome, { recursive: true, force: true })
+    }
+  })
 })

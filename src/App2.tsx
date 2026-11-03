@@ -39,6 +39,25 @@ function isSamePath(a?: string | null, b?: string | null) {
 
 const nextTick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
+type PushErrorKind = 'behind' | 'auth' | 'offline' | 'other'
+
+/** Nature d'un refus de push git, pour un message adapté (et non alarmant). */
+function classifyPushError(message: string): PushErrorKind {
+  if (/non-fast-forward|fetch first|updates were rejected|rejected|failed to push some refs/i.test(message) && !/permission|denied|authentication|403/i.test(message)) return 'behind'
+  if (/authentication|could not read username|permission denied|403|401|access denied|invalid credentials/i.test(message)) return 'auth'
+  if (/could not resolve host|unable to access|timed out|network|connection (refused|reset)|offline/i.test(message)) return 'offline'
+  return 'other'
+}
+
+function describePushError(kind: PushErrorKind, raw: string): string {
+  switch (kind) {
+    case 'behind': return 'Synchronisation avec les modifications des collègues…'
+    case 'auth': return 'Envoi refusé par le dépôt : identifiants à vérifier. Les modifications sont enregistrées sur ce poste.'
+    case 'offline': return 'Hors connexion : les modifications seront envoyées dès que le dépôt sera joignable.'
+    default: return `Envoi en attente : ${raw.split('\n')[0]}`
+  }
+}
+
 // Extraction rapide des 3 champs frontmatter pour la mise à jour live de l'arborescence
 function extractFmMeta(md: string): TreeFileMeta {
   const match = md.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/)
@@ -808,7 +827,7 @@ export default function App2() {
   }, [rootPath, shareGatewayBaseUrl])
 
   // ─── Sauvegarde git auto ────────────────────────────────────────────────────
-  type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'syncing' | 'synced' | 'pending-sync' | 'error'
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -823,6 +842,8 @@ export default function App2() {
   const appAuthorRef = useRef(appAuthor)
   appAuthorRef.current = appAuthor
   const gitEmailRef = useRef(gitEmail)
+  // Erreur d'identifiants signalée une seule fois par session (le badge reste visible).
+  const pushAuthWarnedRef = useRef(false)
   gitEmailRef.current = gitEmail
 
   const performGitSave = useCallback(async () => {
@@ -864,11 +885,20 @@ export default function App2() {
         emitActivityRefresh()
       }
       if (result.pushError) {
-        setSaveErrorMsg(result.pushError)
-        setSaveStatus('push-error')
-        setTimeout(() => setSaveStatus(prev => prev === 'push-error' ? 'idle' : prev), 8000)
-        // Push refusé (souvent : on est en retard sur le distant). On déclenche
-        // immédiatement une vérification pour proposer « Récupérer » sans attendre 60 s.
+        const kind = classifyPushError(result.pushError)
+        if (kind === 'behind') {
+          // Un collègue a poussé juste avant : situation normale, réconciliée
+          // automatiquement (rebase sans conflit puis envoi).
+          setSaveErrorMsg(null)
+          setSaveStatus('syncing')
+        } else {
+          setSaveErrorMsg(describePushError(kind, result.pushError))
+          setSaveStatus('pending-sync')
+          if (kind === 'auth' && !pushAuthWarnedRef.current) {
+            pushAuthWarnedRef.current = true
+            notifyError('Envoi vers le dépôt refusé', 'Vérifiez vos identifiants git (Paramètres de l\'espace). Vos modifications restent enregistrées sur ce poste.')
+          }
+        }
         void runBackgroundGitSyncRef.current()
         return
       }
@@ -1198,13 +1228,27 @@ export default function App2() {
   // Une seule synchronisation à la fois (fond ou « Récupérer ») : une synchro
   // de fond qui tomberait au milieu d'un rebase effacerait l'état de conflit.
   const gitSyncInFlightRef = useRef(false)
+  const gitSyncRerunRef = useRef(false)
+  const markSynced = useCallback(() => {
+    setSaveStatus((prev) => {
+      if (prev !== 'syncing' && prev !== 'pending-sync') return prev
+      setTimeout(() => setSaveStatus((current) => (current === 'synced' ? 'idle' : current)), 4000)
+      return 'synced'
+    })
+    setSaveErrorMsg(null)
+  }, [])
 
   const runBackgroundGitSync = useCallback(async () => {
     const holo = window.holo
     if (!holo?.gitPullIfSafe) return
     if (!rootPathRef.current) return
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-    if (gitSyncInFlightRef.current) return
+    if (gitSyncInFlightRef.current) {
+      // Une synchro tourne déjà : on la relance juste après (le commit qui
+      // vient d'être créé doit partir).
+      gitSyncRerunRef.current = true
+      return
+    }
     gitSyncInFlightRef.current = true
     try {
       // Les modifications locales sont d'abord écrites et commitées : git peut
@@ -1230,15 +1274,20 @@ export default function App2() {
         // Avance rapide ou rebase sans conflit réussi. On recharge le document
         // ouvert s'il a été mis à jour côté distant.
         if (openFileChangedRemotely) await reloadOpenFileFromDisk()
-        if (result.pushed) setSaveStatus((prev) => (prev === 'push-error' ? 'synced' : prev))
+        if (result.pushed || result.outgoing === 0) markSynced()
         setRemoteBanner(null)
-      } else if (result.reason === 'pushed') {
-        setSaveStatus((prev) => (prev === 'push-error' ? 'synced' : prev))
+      } else if (result.reason === 'pushed' || (result.reason === 'up-to-date' && result.outgoing === 0)) {
+        markSynced()
         setRemoteBanner(null)
+      } else if (result.reason === 'push-failed' || result.reason === 'fetch-failed') {
+        // Hors connexion ou identifiants : rien de perdu, envoi au prochain essai.
+        setSaveStatus((prev) => (prev === 'syncing' ? 'pending-sync' : prev))
+        setSaveErrorMsg((prev) => prev ?? describePushError(classifyPushError(result.error ?? ''), result.error ?? ''))
       } else if (result.reason === 'operation-in-progress') {
         // Rebase / merge interrompu par un conflit : la résolution reste à faire.
         setRemoteBanner({ message: 'Conflit à résoudre : choisissez la version à conserver.', kind: 'conflict' })
       } else if ((result.reason === 'dirty' || result.reason === 'diverged') && result.incoming > 0) {
+        if (result.reason === 'diverged') setSaveStatus((prev) => (prev === 'syncing' ? 'pending-sync' : prev))
         // Changements distants présents mais rapatriement non sûr → bannière douce.
         setRemoteBanner({
           message: result.reason === 'diverged'
@@ -1249,13 +1298,19 @@ export default function App2() {
         })
       } else {
         setRemoteBanner((previous) => (previous?.kind === 'conflict' ? previous : null))
+        if (result.outgoing > 0) setSaveStatus((prev) => (prev === 'syncing' ? 'pending-sync' : prev))
       }
     } catch {
       // La synchronisation de fond ne doit jamais perturber l'utilisateur.
+      setSaveStatus((prev) => (prev === 'syncing' ? 'pending-sync' : prev))
     } finally {
       gitSyncInFlightRef.current = false
+      if (gitSyncRerunRef.current) {
+        gitSyncRerunRef.current = false
+        setTimeout(() => { void runBackgroundGitSyncRef.current() }, 0)
+      }
     }
-  }, [reloadOpenFileFromDisk, samePath, setGitState])
+  }, [markSynced, reloadOpenFileFromDisk, samePath, setGitState])
 
   const runBackgroundGitSyncRef = useRef(runBackgroundGitSync)
   runBackgroundGitSyncRef.current = runBackgroundGitSync

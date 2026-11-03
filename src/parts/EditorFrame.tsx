@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, Layers, PanelRight, Save, Star } from 'lucide-react'
+import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, Layers, PanelRight, RefreshCw, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
 import { BlockEditor, normalizeBodyMarkdown, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
@@ -26,7 +26,7 @@ type EditorFrameProps = {
   onToggleInspector?: () => void
   onShare?: () => void
   onMore?: () => void
-  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'syncing' | 'synced' | 'pending-sync' | 'error'
   saveErrorMsg?: string
   onMobileBack?: () => void
   contentFontScale?: number
@@ -395,7 +395,7 @@ function StickyEditorHeader({
   icon?: React.ReactNode
   title: string
   author?: string
-  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  saveStatus?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'syncing' | 'synced' | 'pending-sync' | 'error'
   saveErrorMsg?: string
   rawMode: boolean
   isFavorite?: boolean
@@ -602,7 +602,7 @@ function ReadOnlyMetaField({ label, value, title }: { label: string; value?: str
 }
 
 function SaveStatusBadge({ status, errorMsg }: {
-  status?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'synced' | 'push-error' | 'error'
+  status?: 'idle' | 'unsaved' | 'saving' | 'saved' | 'syncing' | 'synced' | 'pending-sync' | 'error'
   errorMsg?: string
 }) {
   if (!status || status === 'idle') return null
@@ -630,10 +630,17 @@ function SaveStatusBadge({ status, errorMsg }: {
       Synchronisé
     </span>
   )
-  if (status === 'push-error') return (
-    <span className="flex items-center gap-1.5 text-xs text-amber-400" title={errorMsg ?? 'Erreur lors du push'}>
+  if (status === 'syncing') return (
+    <span className="flex items-center gap-1.5 text-xs text-holo-text-faint" title={errorMsg ?? 'Synchronisation avec les modifications des collègues'}>
+      <RefreshCw size={10} className="shrink-0 animate-spin" />
+      Synchronisation…
+    </span>
+  )
+  // Enregistré sur ce poste, envoi au dépôt différé (hors connexion, identifiants…) : rien n'est perdu.
+  if (status === 'pending-sync') return (
+    <span className="flex items-center gap-1.5 text-xs text-holo-text-faint" title={errorMsg ?? 'Envoi au dépôt en attente'}>
       <Save size={10} className="shrink-0" />
-      <span>Commit local · push échoué</span>
+      Enregistré · envoi en attente
     </span>
   )
   if (status === 'error') return (
