@@ -25,36 +25,28 @@ async function git(cwd: string, ...args: string[]) {
   return stdout.trim()
 }
 
-/** Jeton API temporaire du runtime local, ou null si le relais n'est pas disponible. */
-async function createRelayToken(): Promise<{ token: string; id: string } | null> {
+/** Le relais local (projet holo-realtime déployé) répond-il ? */
+async function relayAvailable(): Promise<boolean> {
   try {
-    const probe = await fetch(`${RELAY_URL}/openapi`)
-    if (!probe.ok) return null
-    const expires = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10)
-    const { stdout } = await execFileAsync('cn', ['runtime', 'token', '--pat', '--name', `holo-e2e-${Date.now()}`, '--projects', 'holo_realtime', '--expires', expires, '--json'])
-    const parsed = JSON.parse(stdout) as { token?: string; id?: string }
-    return parsed.token && parsed.id ? { token: parsed.token, id: parsed.id } : null
+    return (await fetch(`${RELAY_URL}/openapi`)).ok
   } catch {
-    return null
+    return false
   }
-}
-
-async function revokeRelayToken(id: string) {
-  await execFileAsync('cn', ['runtime', 'tokens', 'revoke', id, '--yes']).catch(() => undefined)
 }
 
 type Launched = { app: ElectronApplication; page: Page; configHome: string }
 
-async function launchHolo(rootPath: string, filePath: string, author: string, email: string, token: string): Promise<Launched> {
+async function launchHolo(rootPath: string, filePath: string, author: string, email: string): Promise<Launched> {
   const configHome = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-rt-config-'))
   await fs.mkdir(path.join(configHome, 'holo'), { recursive: true })
   await fs.writeFile(path.join(configHome, 'holo', 'holo-config.json'), JSON.stringify({
     'app-onboarding-done': true,
+    'realtime-prompt-dismissed': true,
     'app-author': author,
     'git-email': email,
     'realtime-enabled': true,
+    // Aucun jeton : le relais est public, le contenu chiffré avec la clé du dépôt.
     'realtime-server-url': RELAY_URL,
-    'realtime-token': `plain:${Buffer.from(token, 'utf8').toString('base64')}`,
   }), 'utf8')
   const app = await electron.launch({
     executablePath: electronExecutable,
@@ -108,19 +100,17 @@ test.describe('Édition en temps réel (relais Codenotch)', () => {
   test.setTimeout(150_000)
 
   test('deux personnes éditent le même document et voient les modifications de l autre', async () => {
-    const relayToken = await createRelayToken()
-    test.skip(!relayToken, 'Runtime Codenotch local ou projet holo-realtime indisponible')
-    const token = relayToken!.token
+    test.skip(!(await relayAvailable()), 'Runtime Codenotch local ou projet holo-realtime indisponible')
 
     const initial = ['# Réunion', '', 'Point Alice.', '', 'Paragraphe tampon.', '', 'Point Bob.', ''].join('\n')
     const repos = await setupClones(initial)
     let alice: Launched | null = null
     let bob: Launched | null = null
     try {
-      alice = await launchHolo(repos.alice, path.join(repos.alice, 'doc.md'), 'Alice Martin', 'alice@example.com', token)
+      alice = await launchHolo(repos.alice, path.join(repos.alice, 'doc.md'), 'Alice Martin', 'alice@example.com')
       await expect(presence(alice.page)).toHaveAttribute('data-status', 'live', { timeout: 30_000 })
 
-      bob = await launchHolo(repos.bob, path.join(repos.bob, 'doc.md'), 'Bob Keller', 'bob@example.com', token)
+      bob = await launchHolo(repos.bob, path.join(repos.bob, 'doc.md'), 'Bob Keller', 'bob@example.com')
       await expect(presence(bob.page)).toHaveAttribute('data-status', 'live', { timeout: 30_000 })
 
       // Chacun voit l'autre.
@@ -173,7 +163,6 @@ test.describe('Édition en temps réel (relais Codenotch)', () => {
       if (bob) await bob.app.close().catch(() => {})
       await fs.rm(repos.base, { recursive: true, force: true }).catch(() => {})
       for (const launched of [alice, bob]) if (launched) await fs.rm(launched.configHome, { recursive: true, force: true }).catch(() => {})
-      await revokeRelayToken(relayToken!.id)
     }
   })
 })

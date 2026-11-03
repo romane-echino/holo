@@ -32,6 +32,7 @@ async function launchHolo(rootPath: string, filePath: string): Promise<Launched>
   await fs.mkdir(path.join(configHome, 'holo'), { recursive: true })
   await fs.writeFile(path.join(configHome, 'holo', 'holo-config.json'), JSON.stringify({
     'app-onboarding-done': true,
+    'realtime-prompt-dismissed': true,
     'app-author': 'Playwright',
     'git-email': 'playwright@example.com',
   }), 'utf8')
@@ -219,6 +220,51 @@ test.describe('Persistance du document ouvert', () => {
       await expect(launched.page.getByText('Dépôt git dans un dossier OneDrive')).toBeVisible({ timeout: 20_000 })
     } finally {
       await cleanup(launched, base)
+    }
+  })
+
+  test('au démarrage, l adresse du serveur de collaboration est demandée une fois', async () => {
+    const ws = await createWorkspace('Contenu.\n')
+    const configHome = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-persistence-config-'))
+    await fs.mkdir(path.join(configHome, 'holo'), { recursive: true })
+    // Poste déjà installé, jamais interrogé sur la collaboration.
+    await fs.writeFile(path.join(configHome, 'holo', 'holo-config.json'), JSON.stringify({
+      'app-onboarding-done': true,
+      'app-author': 'Playwright',
+      'git-email': 'playwright@example.com',
+    }), 'utf8')
+    const launchOnce = async () => {
+      const app = await electron.launch({
+        executablePath: electronExecutable,
+        args: [MAIN_PATH, `--holo-root=${ws.rootPath}`, `--holo-file=${ws.filePath}`],
+        cwd: process.cwd(),
+        env: { ...process.env, XDG_CONFIG_HOME: configHome, HOLO_APP_DATA_DIR: configHome },
+      })
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      return { app, page }
+    }
+    let launched = await launchOnce()
+    try {
+      const dialog = launched.page.getByRole('heading', { name: 'Édition en temps réel' })
+      await expect(dialog).toBeVisible({ timeout: 20_000 })
+      // Adresse invalide : message clair, rien n'est enregistré.
+      await launched.page.getByPlaceholder('https://cn.echino.com/holo-realtime').fill('https://127.0.0.1:9/holo-realtime')
+      await launched.page.getByRole('button', { name: 'Activer' }).click()
+      await expect(launched.page.getByRole('alert').filter({ hasText: 'injoignable' })).toBeVisible({ timeout: 15_000 })
+      await launched.page.getByRole('button', { name: 'Plus tard' }).click()
+      await expect(dialog).toBeHidden()
+      await launched.app.close()
+
+      // « Plus tard » : la question n'est pas reposée au démarrage suivant.
+      launched = await launchOnce()
+      await expect(paragraph(launched.page, 'Contenu.')).toBeVisible({ timeout: 20_000 })
+      await launched.page.waitForTimeout(1500)
+      await expect(launched.page.getByRole('heading', { name: 'Édition en temps réel' })).toBeHidden()
+    } finally {
+      await launched.app.close().catch(() => {})
+      await fs.rm(ws.rootPath, { recursive: true, force: true }).catch(() => {})
+      await fs.rm(configHome, { recursive: true, force: true }).catch(() => {})
     }
   })
 

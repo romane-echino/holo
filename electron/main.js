@@ -1909,9 +1909,16 @@ async function getUpstreamFileContent(filePath) {
   return result.ok ? result.stdout : null
 }
 
+/** Commit(s) racine du dépôt : identiques dans tous les clones. */
+async function getRootCommits(root) {
+  const result = await runGit(['rev-list', '--max-parents=0', 'HEAD'], root)
+  return result.ok ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : []
+}
+
 registerRealtimeIpc({
   ipcMain,
   net,
+  getRootCommits,
   getUpstreamFileContent,
   mergeText: mergeTextThreeWay,
   getConfigValue: (key) => getHoloConfigValue(key),

@@ -47,3 +47,41 @@ function isHighSurrogate(code: number) {
 function isLowSurrogate(code: number) {
   return code >= 0xdc00 && code <= 0xdfff
 }
+
+/**
+ * Chiffrement des messages échangés via le relais (AES-GCM 256, IV aléatoire
+ * préfixé). Sans clé, les messages passent en clair (relais authentifié).
+ * Un message qui ne se déchiffre pas (autre clé, altéré) est ignoré.
+ */
+export class PayloadCipher {
+  private readonly keyPromise: Promise<CryptoKey> | null
+
+  constructor(keyBase64: string | null | undefined) {
+    this.keyPromise = keyBase64
+      ? crypto.subtle.importKey('raw', base64ToBytes(keyBase64) as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt'])
+      : null
+  }
+
+  async seal(bytes: Uint8Array): Promise<string> {
+    if (!this.keyPromise) return bytesToBase64(bytes)
+    const key = await this.keyPromise
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes as BufferSource))
+    const sealed = new Uint8Array(iv.length + ciphertext.length)
+    sealed.set(iv)
+    sealed.set(ciphertext, iv.length)
+    return bytesToBase64(sealed)
+  }
+
+  async open(payload: string): Promise<Uint8Array | null> {
+    try {
+      const bytes = base64ToBytes(payload)
+      if (!this.keyPromise) return bytes
+      const key = await this.keyPromise
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12) as BufferSource }, key, bytes.subarray(12) as BufferSource)
+      return new Uint8Array(plain)
+    } catch {
+      return null
+    }
+  }
+}

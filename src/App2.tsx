@@ -16,6 +16,7 @@ import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
+import { RealtimeSetup, connectRealtimeServer } from './popup/RealtimeSetup'
 import { SpaceRoute } from './parts/SpacePanel'
 import type { SpaceFileNode, TreeFileMeta } from './parts/SpacePanel'
 import { Clock, Star, Bot, Archive, Folder, FileText, X, GitPullRequestArrow } from 'lucide-react'
@@ -258,7 +259,15 @@ export default function App2() {
       'app-author-last-name': v.lastName.trim(),
       'git-email': v.email.trim(),
       'app-onboarding-done': true,
+      // La question du serveur de collaboration a été posée à l'accueil.
+      'realtime-prompt-dismissed': true,
     })
+    const collaborationServer = v.collaborationServer?.trim()
+    if (collaborationServer) {
+      const failure = await connectRealtimeServer(collaborationServer)
+      if (failure) notifyError('Serveur de collaboration non enregistré', failure)
+      else notify({ kind: 'success', title: 'Édition en temps réel activée', durationMs: 3000 })
+    }
     // Sync settingsValue so the Settings dialog shows the submitted name/email
     setSettingsValue(prev => ({
       ...(prev ?? {} as HoloSettingsValue),
@@ -686,6 +695,26 @@ export default function App2() {
   }, [handleSelectFile, navigate, openRecentFolder])
 
   useLaunchPayloads(handleLaunchPayload)
+
+  // Postes déjà configurés : l'adresse du serveur de collaboration est demandée
+  // une fois au démarrage (« Plus tard » ne la redemande pas).
+  const [realtimeSetupOpen, setRealtimeSetupOpen] = useState(false)
+  useEffect(() => {
+    if (onboardingDone !== true || !window.holo?.realtime) return
+    let cancelled = false
+    void (async () => {
+      const [config, dismissed] = await Promise.all([
+        window.holo!.realtime.getConfig().catch(() => null),
+        window.holo!.getHoloConfigValue('realtime-prompt-dismissed').catch(() => null),
+      ])
+      if (!cancelled && config && !config.url && dismissed !== true) setRealtimeSetupOpen(true)
+    })()
+    return () => { cancelled = true }
+  }, [onboardingDone])
+  const closeRealtimeSetup = useCallback((_configured: boolean) => {
+    setRealtimeSetupOpen(false)
+    void window.holo?.setHoloConfigValue('realtime-prompt-dismissed', true)
+  }, [])
 
   // Dépôt git dans un dossier synchronisé (OneDrive…) : avertissement une fois par session.
   const warnedSyncedSpacesRef = useRef(new Set<string>())
@@ -1555,6 +1584,8 @@ export default function App2() {
         </div>
 
       </main>
+
+      <RealtimeSetup open={realtimeSetupOpen} onClose={closeRealtimeSetup} />
 
       <AddSpace
         open={addSpace.open}

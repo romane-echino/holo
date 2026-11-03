@@ -18,7 +18,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import * as Y from 'yjs'
 import { RealtimeSession } from '../../src/lib/realtime/session'
-import { singleSpliceDiff } from '../../src/lib/realtime/encoding'
+import { PayloadCipher, singleSpliceDiff } from '../../src/lib/realtime/encoding'
 
 const execFileAsync = promisify(execFile)
 
@@ -207,6 +207,8 @@ class FakeConnection implements HoloRealtimeApi {
 
 // ─── Éditeur simulé ───────────────────────────────────────────────────────────
 const DOCUMENT_ID = '00000000-0000-5000-8000-000000000001'
+// Clé du dépôt partagée par les participants (chiffrement de bout en bout)
+const REPOSITORY_KEY = Buffer.alloc(32, 7).toString('base64')
 
 class SimulatedEditor {
   text: string
@@ -217,14 +219,14 @@ class SimulatedEditor {
   readonly session: RealtimeSession
   readonly name: string
 
-  constructor(relay: FakeRelay, name: string, initialText: string, upstream: string | null = initialText) {
+  constructor(relay: FakeRelay, name: string, initialText: string, upstream: string | null = initialText, key: string = REPOSITORY_KEY) {
     this.name = name
     this.text = initialText
     this.upstream = upstream
     this.connection = relay.connect(name)
     this.session = new RealtimeSession(
       this.connection,
-      { documentId: DOCUMENT_ID, workspace: 'https://git.example.com/docs', path: 'doc.md' },
+      { documentId: DOCUMENT_ID, key },
       { name, email: `${name}@example.com`, color: '#888' },
       {
         getEditorMarkdown: () => this.text,
@@ -480,16 +482,18 @@ test.describe('RealtimeSession contre un relais simulé', () => {
     await waitLive([alice])
     // Longue session : 260 modifications distinctes journalisées par le relais.
     const writer = relay.connect('writer')
+    const cipher = new PayloadCipher(REPOSITORY_KEY)
     const server = await writer.getState(DOCUMENT_ID)
     const ghost = new Y.Doc()
-    if (server.state) Y.applyUpdate(ghost, Buffer.from(server.state, 'base64'))
-    for (const entry of server.updates) Y.applyUpdate(ghost, Buffer.from(entry.update, 'base64'))
+    for (const payload of [server.state, ...server.updates.map((entry) => entry.update)]) {
+      if (payload) Y.applyUpdate(ghost, (await cipher.open(payload))!)
+    }
     const expected: string[] = []
     for (let index = 0; index < 260; index += 1) {
       const before = Y.encodeStateVector(ghost)
       ghost.getText('markdown').insert(ghost.getText('markdown').length, `${index};`)
       expected.push(`${index};`)
-      await writer.pushUpdate(DOCUMENT_ID, { update: Buffer.from(Y.encodeStateAsUpdate(ghost, before)).toString('base64'), clientId: 'writer' })
+      await writer.pushUpdate(DOCUMENT_ID, { update: await cipher.seal(Y.encodeStateAsUpdate(ghost, before)), clientId: 'writer' })
     }
     await waitFor(() => alice.text === expected.join(''), 10_000, 'Alice reçoit la longue session')
     expect(relay.pendingUpdateCount(DOCUMENT_ID)).toBeGreaterThan(200)
@@ -505,6 +509,31 @@ test.describe('RealtimeSession contre un relais simulé', () => {
     const final = await waitConverged([alice, bob, carla])
     expect(final).toBe(expected.join(''))
     await Promise.all([alice, bob, carla].map((editor) => editor.session.stop()))
+  })
+
+  test('chiffrement : le relais ne voit jamais le texte, une mauvaise clé ne lit ni ne corrompt rien', async () => {
+    const relay = new FakeRelay(101)
+    const alice = new SimulatedEditor(relay, 'alice', 'Secret de fabrication.\n')
+    const bob = new SimulatedEditor(relay, 'bob', 'Secret de fabrication.\n')
+    await alice.start()
+    await waitLive([alice])
+    await bob.start()
+    await waitLive([alice, bob])
+    alice.insertAt(0, 'Confidentiel : ')
+
+    // Quelqu'un qui connaît l'identifiant mais pas la clé du dépôt.
+    const intruder = new SimulatedEditor(relay, 'intrus', 'Texte injecté.\n', null, Buffer.alloc(32, 9).toString('base64'))
+    await intruder.start()
+    await sleep(2500)
+    intruder.insertAt(0, 'Pirate ')
+
+    const final = await waitConverged([alice, bob])
+    expect(final).toBe('Confidentiel : Secret de fabrication.\n')
+    expect(intruder.text).not.toContain('Secret')
+    const stored = JSON.stringify([...relay.docs.values()])
+    expect(stored).not.toContain('Secret')
+    expect(stored).not.toContain('Confidentiel')
+    await Promise.all([alice, bob, intruder].map((editor) => editor.session.stop()))
   })
 
   test('départ d un participant : les autres ne le voient plus', async () => {

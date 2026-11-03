@@ -32,6 +32,7 @@ async function launchHolo(args: string[], recentFolders: string[] = []): Promise
   await fs.mkdir(holoDir, { recursive: true })
   await fs.writeFile(path.join(holoDir, 'holo-config.json'), JSON.stringify({
     'app-onboarding-done': true,
+    'realtime-prompt-dismissed': true,
     'app-author': 'Playwright',
     'git-email': 'playwright@example.com',
   }), 'utf8')

@@ -19,7 +19,9 @@ export const getState = process({
     id: 'GetState',
     description: 'État courant d\'un document : dernier état compacté et modifications suivantes',
     kind: 'ephemeral',
-    auth: { scope: 'internal' },
+    // Public : le contenu est chiffré de bout en bout par les postes (clé dérivée du
+    // dépôt git) et les identifiants de documents sont indevinables sans cette clé.
+    auth: { scope: 'public' },
     trigger: api.get('/docs/{id:guid}/state'),
     run: async (ctx, input: { id: string }): Promise<DocumentStateOutput> => {
         const documentId = input.id.toLowerCase();

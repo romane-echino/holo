@@ -298,16 +298,16 @@ function RealtimeSettingsSection({ draft, onChange }: { draft: RealtimeDraft; on
       </Field>
 
       <Field
-        label="Jeton d'accès"
+        label="Jeton d'accès (facultatif)"
         description={draft.hasToken
           ? 'Un jeton est enregistré (chiffré sur ce poste). Laissez vide pour le conserver.'
-          : 'Jeton API Codenotch personnel (portail → Mes jetons API), avec la portée process:*@holo_realtime:start.'}
+          : 'Inutile avec le relais holo-realtime standard. Seulement si votre serveur exige une authentification.'}
       >
         <PasswordInput value={draft.token} onChange={(token) => onChange({ token })} placeholder={draft.hasToken ? '••••••••  (inchangé)' : 'CN_…'} />
       </Field>
 
       <p className="text-xs leading-5 text-holo-text-faint">
-        Seuls les espaces liés à un dépôt git distant sont partagés en temps réel : le document est identifié par l'URL du dépôt et son chemin.
+        Seuls les espaces liés à un dépôt git distant sont partagés en temps réel. Le contenu est chiffré sur votre poste avec une clé propre au dépôt : le serveur ne le voit jamais, et seules les personnes qui ont le dépôt peuvent rejoindre un document.
       </p>
 
       <div className="flex items-center justify-between gap-3">

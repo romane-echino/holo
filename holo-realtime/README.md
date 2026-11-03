@@ -19,8 +19,12 @@ Conception : [docs/COLLABORATION_TEMPS_REEL.md](../docs/COLLABORATION_TEMPS_REEL
 | `GET /docs/{id}/state` | État compacté et modifications suivantes, pour rejoindre une session |
 | `PUT /docs/{id}/state` | Compaction, ou redémarrage de la session (`reset`) par un participant seul |
 
-Toutes les routes ont `auth: internal` : elles sont accessibles aux utilisateurs de
-l'organisation et à leurs jetons API.
+Les routes sont **publiques**, sans jeton ni compte.
+- **Contenu chiffré :** chaque poste chiffre tout ce qu'il envoie en AES-GCM avec une clé
+  dérivée du dépôt git (URL et premier commit). Le relais ne stocke et ne diffuse que du
+  chiffré.
+- **Identifiants indevinables :** ils sont dérivés de cette même clé. Seules les personnes qui
+  ont un clone du dépôt peuvent rejoindre un document.
 
 ## En local
 
@@ -30,10 +34,8 @@ npm install
 cn project start --no-open      # compile et déploie sur le runtime local (http://127.0.0.1:5005)
 ```
 
-Dans Holo, ouvrir **Paramètres → Collaboration** :
-
-- **Adresse** : `http://127.0.0.1:5005/holo-realtime`.
-- **Jeton** : `cn runtime token --pat --name holo --projects holo_realtime`.
+Dans Holo, ouvrir **Paramètres → Collaboration** avec l'adresse
+`http://127.0.0.1:5005/holo-realtime`. Aucun jeton n'est nécessaire.
 
 Le test de bout en bout `tests/e2e/realtimeCollab.spec.ts` lance deux instances Holo sur ce
 relais local.
@@ -58,11 +60,8 @@ La CLI ne déploie que sur le runtime local. Pour un serveur, on installe le paq
        -F "file=@.codenotch/<paquet>.zip" -F "serviceName=holo_realtime"
      ```
 
-4. Pour chaque collègue :
-   - **Jeton personnel** : portail → **Mes jetons API**, portée
-     `process:*@holo_realtime:start` (ou **Start any process** sur le projet).
-   - **Dans Holo** : **Paramètres → Collaboration**, adresse
-     `https://cn.echino.com/holo-realtime`, coller le jeton, **Tester la connexion**, puis
-     **Enregistrer**.
+4. Pour chaque collègue, il n'y a rien à créer dans le portail. Au premier démarrage, Holo
+   demande l'adresse du serveur : saisir `https://cn.echino.com/holo-realtime`. On peut la
+   modifier ensuite dans **Paramètres → Collaboration**.
 
 Les signaux du runtime sont partagés entre projets : ceux du relais sont préfixés par `holo.doc.`.

@@ -228,8 +228,8 @@ interface HoloApi {
 declare global {
   type HoloRealtimeConfig = { url: string; enabled: boolean; hasToken: boolean }
   type HoloRealtimeDocument =
-    | { available: true; documentId: string; workspace: string; path: string }
-    | { available: false; reason: 'disabled' | 'no-space' | 'no-remote' }
+    | { available: true; documentId: string; key: string; workspace: string; path: string }
+    | { available: false; reason: 'disabled' | 'no-space' | 'no-remote' | 'no-history' }
   type HoloRealtimeState = { state: string | null; version: number; epoch: string | null; updates: { id: string; update: string }[] }
   type HoloRealtimeEvent =
     | { documentId: string; type: 'ready'; data: unknown }

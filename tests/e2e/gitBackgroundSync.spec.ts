@@ -77,6 +77,7 @@ async function createTempConfigHome() {
   await fs.mkdir(holoDir, { recursive: true })
   await fs.writeFile(path.join(holoDir, 'holo-config.json'), JSON.stringify({
     'app-onboarding-done': true,
+    'realtime-prompt-dismissed': true,
     'app-author': 'Holo Tester',
     'git-email': 'tester@example.com',
   }, null, 2), 'utf8')

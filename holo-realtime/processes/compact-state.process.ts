@@ -28,7 +28,9 @@ export const compactState = process({
     id: 'CompactState',
     description: 'Remplace l\'état compacté d\'un document et purge les modifications intégrées',
     kind: 'ephemeral',
-    auth: { scope: 'internal' },
+    // Public : le contenu est chiffré de bout en bout par les postes (clé dérivée du
+    // dépôt git) et les identifiants de documents sont indevinables sans cette clé.
+    auth: { scope: 'public' },
     trigger: api.put('/docs/{id:guid}/state'),
     run: async (ctx, input: CompactInput): Promise<{ version: number; epoch: string }> => {
         const documentId = input.id.toLowerCase();

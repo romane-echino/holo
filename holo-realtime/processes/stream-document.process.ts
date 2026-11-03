@@ -11,7 +11,9 @@ export const streamDocument = process({
     id: 'StreamDocument',
     description: 'Flux en direct des modifications et de la présence sur un document',
     kind: 'ephemeral',
-    auth: { scope: 'internal' },
+    // Public : le contenu est chiffré de bout en bout par les postes (clé dérivée du
+    // dépôt git) et les identifiants de documents sont indevinables sans cette clé.
+    auth: { scope: 'public' },
     trigger: api.get('/docs/{id:guid}/stream'),
     run: async (ctx, input: { id: string }): Promise<void> => {
         await ctx.streamSignals([documentSignal(input.id)]);

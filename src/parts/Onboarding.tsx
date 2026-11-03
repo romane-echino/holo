@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { ArrowRight, Mail, Sparkles, UserRound } from 'lucide-react'
+import { ArrowRight, Mail, Sparkles, UserRound, Users } from 'lucide-react'
 import { cn } from '../utils/global'
 
 export type OnboardingWelcomeValue = {
   firstName: string
   lastName: string
   email: string
+  /** Adresse du serveur de collaboration (projet Codenotch holo-realtime), facultative */
+  collaborationServer?: string
 }
 
 export type OnboardingWelcomeFrameProps = {
@@ -63,11 +65,13 @@ export function Onboarding({
   const [firstName, setFirstName] = useState(value?.firstName ?? '')
   const [lastName, setLastName] = useState(value?.lastName ?? '')
   const [email, setEmail] = useState(value?.email ?? '')
+  const [collaborationServer, setCollaborationServer] = useState(value?.collaborationServer ?? '')
 
   const currentValue: OnboardingWelcomeValue = {
     firstName,
     lastName,
     email,
+    collaborationServer,
   }
 
   const update = (next: Partial<OnboardingWelcomeValue>) => {
@@ -79,6 +83,7 @@ export function Onboarding({
     if (next.firstName !== undefined) setFirstName(next.firstName)
     if (next.lastName !== undefined) setLastName(next.lastName)
     if (next.email !== undefined) setEmail(next.email)
+    if (next.collaborationServer !== undefined) setCollaborationServer(next.collaborationServer)
 
     onChange?.(merged)
   }
@@ -194,6 +199,15 @@ export function Onboarding({
                 placeholder="maria@example.com"
                 type="email"
                 onChange={(next) => update({ email: next })}
+              />
+
+              <Field
+                label="Serveur de collaboration (facultatif)"
+                icon={<Users size={15} />}
+                value={collaborationServer}
+                placeholder="https://cn.echino.com/holo-realtime"
+                type="url"
+                onChange={(next) => update({ collaborationServer: next })}
               />
             </div>
 

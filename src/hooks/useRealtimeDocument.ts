@@ -47,7 +47,7 @@ export function useRealtimeDocument(options: Options) {
       }
       session = new RealtimeSession(
         api,
-        { documentId: resolved.documentId, workspace: resolved.workspace, path: resolved.path },
+        { documentId: resolved.documentId, key: resolved.key },
         { name: user.name || user.email || 'Anonyme', email: user.email, color: colorForUser(user.email || user.name) },
         {
           getEditorMarkdown: () => optionsRef.current.getEditorMarkdown(),

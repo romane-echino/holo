@@ -12,7 +12,9 @@ export const pushUpdate = process({
     id: 'PushUpdate',
     description: 'Enregistre et diffuse une modification Yjs d\'un document',
     kind: 'ephemeral',
-    auth: { scope: 'internal' },
+    // Public : le contenu est chiffré de bout en bout par les postes (clé dérivée du
+    // dépôt git) et les identifiants de documents sont indevinables sans cette clé.
+    auth: { scope: 'public' },
     trigger: api.post('/docs/{id:guid}/updates'),
     run: async (ctx, input: { id: string; update: string; clientId: string; workspace?: string; path?: string }): Promise<{ id: string }> => {
         const documentId = input.id.toLowerCase();

@@ -16,7 +16,7 @@
  */
 import * as Y from 'yjs'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
-import { base64ToBytes, bytesToBase64, singleSpliceDiff } from './encoding'
+import { PayloadCipher, singleSpliceDiff } from './encoding'
 
 export type RealtimeUser = { name: string; email: string; color: string }
 export type RealtimePeer = RealtimeUser & { clientId: number }
@@ -37,7 +37,8 @@ export type RealtimeSessionCallbacks = {
   onStatus: (status: RealtimeStatus, detail?: string) => void
 }
 
-type DocumentRef = { documentId: string; workspace: string; path: string }
+/** `key` : clé du dépôt (base64) ; tout ce qui passe par le relais est chiffré avec. */
+type DocumentRef = { documentId: string; key?: string | null }
 type AwarenessState = { user: RealtimeUser; established: boolean; epoch: string | null }
 
 const LOCAL_ORIGIN = 'holo-local'
@@ -50,10 +51,15 @@ const MAX_JOIN_ATTEMPTS = 3
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-function buildDoc(serverState: HoloRealtimeState | null): Y.Doc {
+async function openAll(cipher: PayloadCipher, serverState: HoloRealtimeState | null): Promise<Uint8Array[]> {
+  const payloads = [serverState?.state, ...(serverState?.updates ?? []).map((entry) => entry.update)].filter((value): value is string => Boolean(value))
+  const opened = await Promise.all(payloads.map((payload) => cipher.open(payload)))
+  return opened.filter((bytes): bytes is Uint8Array => bytes !== null)
+}
+
+async function buildDoc(cipher: PayloadCipher, serverState: HoloRealtimeState | null): Promise<Y.Doc> {
   const doc = new Y.Doc()
-  if (serverState?.state) Y.applyUpdate(doc, base64ToBytes(serverState.state), REMOTE_ORIGIN)
-  for (const entry of serverState?.updates ?? []) Y.applyUpdate(doc, base64ToBytes(entry.update), REMOTE_ORIGIN)
+  for (const update of await openAll(cipher, serverState)) Y.applyUpdate(doc, update, REMOTE_ORIGIN)
   return doc
 }
 
@@ -62,6 +68,7 @@ export class RealtimeSession {
   private readonly ref: DocumentRef
   private readonly user: RealtimeUser
   private readonly callbacks: RealtimeSessionCallbacks
+  private readonly cipher: PayloadCipher
 
   private doc: Y.Doc | null = null
   // La présence vit sur son propre document, stable toute la session : le
@@ -88,6 +95,7 @@ export class RealtimeSession {
     this.ref = ref
     this.user = user
     this.callbacks = callbacks
+    this.cipher = new PayloadCipher(ref.key)
   }
 
   get documentId() {
@@ -140,7 +148,7 @@ export class RealtimeSession {
       const presenceId = this.presenceDoc.clientID
       removeAwarenessStates(this.awareness, [presenceId], 'leave')
       const update = encodeAwarenessUpdate(this.awareness, [presenceId])
-      await this.api.pushAwareness(this.ref.documentId, { awareness: bytesToBase64(update), clientId: String(presenceId) }).catch(() => undefined)
+      await this.api.pushAwareness(this.ref.documentId, { awareness: await this.cipher.seal(update), clientId: String(presenceId) }).catch(() => undefined)
     }
     this.unsubscribeEvents?.()
     await this.api.unsubscribe(this.ref.documentId).catch(() => undefined)
@@ -160,12 +168,17 @@ export class RealtimeSession {
       case 'update':
         if (this.doc && event.data.c === String(this.doc.clientID)) return
         // Gardé même pendant la jonction : rejoué ensuite (Yjs est idempotent).
-        this.remoteQueue.push(base64ToBytes(event.data.u))
-        if (this.joined) void this.processRemote()
+        void this.cipher.open(event.data.u).then((update) => {
+          if (!update || this.stopped) return
+          this.remoteQueue.push(update)
+          if (this.joined) void this.processRemote()
+        })
         break
       case 'awareness':
         if (!this.awareness || event.data.c === String(this.presenceDoc.clientID)) return
-        this.applyRemoteAwareness(base64ToBytes(event.data.a))
+        void this.cipher.open(event.data.a).then((update) => {
+          if (update && !this.stopped) this.applyRemoteAwareness(update)
+        })
         break
       case 'status':
         if (event.data.state === 'unauthorized') this.callbacks.onStatus('unauthorized', 'Jeton refusé par le relais.')
@@ -180,7 +193,7 @@ export class RealtimeSession {
     this.callbacks.onStatus('joining')
     try {
       const server = await this.api.getState(this.ref.documentId)
-      const serverDoc = buildDoc(server)
+      const serverDoc = await buildDoc(this.cipher, server)
       const serverText = serverDoc.getText('markdown').toString()
 
       // Annonce de notre arrivée, puis écoute des participants déjà présents.
@@ -199,11 +212,9 @@ export class RealtimeSession {
         const freshDoc = new Y.Doc()
         freshDoc.getText('markdown').insert(0, localText)
         const result = await this.api.compact(this.ref.documentId, {
-          state: bytesToBase64(Y.encodeStateAsUpdate(freshDoc)),
+          state: await this.cipher.seal(Y.encodeStateAsUpdate(freshDoc)),
           expectedVersion: server.version,
           reset: true,
-          workspace: this.ref.workspace,
-          path: this.ref.path,
         })
         if (!result.ok) {
           // Quelqu'un a démarré la session au même instant : on rejoint la sienne.
@@ -259,11 +270,13 @@ export class RealtimeSession {
         await this.join()
         return
       }
-      const serverDoc = buildDoc(server)
+      const serverUpdates = await openAll(this.cipher, server)
+      const serverDoc = new Y.Doc()
+      for (const update of serverUpdates) Y.applyUpdate(serverDoc, update, REMOTE_ORIGIN)
+      if (!this.doc) return
       const missingForServer = Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(serverDoc))
       serverDoc.destroy()
-      if (server.state) this.remoteQueue.push(base64ToBytes(server.state))
-      for (const entry of server.updates) this.remoteQueue.push(base64ToBytes(entry.update))
+      this.remoteQueue.push(...serverUpdates)
       await this.processRemote()
       if (server.updates.length > COMPACTION_THRESHOLD) void this.compact(server)
       if (missingForServer.length > 2) {
@@ -335,10 +348,8 @@ export class RealtimeSession {
     const batch = this.pendingLocal.splice(0)
     try {
       await this.api.pushUpdate(this.ref.documentId, {
-        update: bytesToBase64(Y.mergeUpdates(batch)),
+        update: await this.cipher.seal(Y.mergeUpdates(batch)),
         clientId: String(this.doc.clientID),
-        workspace: this.ref.workspace,
-        path: this.ref.path,
       })
     } catch (error) {
       // Réessayé à la prochaine saisie ou resynchronisation.
@@ -353,7 +364,7 @@ export class RealtimeSession {
   private async compact(server: HoloRealtimeState) {
     if (!this.doc) return
     await this.api.compact(this.ref.documentId, {
-      state: bytesToBase64(Y.encodeStateAsUpdate(this.doc)),
+      state: await this.cipher.seal(Y.encodeStateAsUpdate(this.doc)),
       expectedVersion: server.version,
       mergedUpdateIds: server.updates.map((entry) => entry.id),
     }).catch(() => undefined)
@@ -397,10 +408,9 @@ export class RealtimeSession {
       if (!this.awareness || this.stopped) return
       const presenceId = this.presenceDoc.clientID
       const update = encodeAwarenessUpdate(this.awareness, [presenceId])
-      void this.api.pushAwareness(this.ref.documentId, {
-        awareness: bytesToBase64(update),
-        clientId: String(presenceId),
-      }).catch(() => undefined)
+      void this.cipher.seal(update)
+        .then((awareness) => this.api.pushAwareness(this.ref.documentId, { awareness, clientId: String(presenceId) }))
+        .catch(() => undefined)
     }, AWARENESS_THROTTLE_MS)
   }
 
