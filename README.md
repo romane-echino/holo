@@ -27,11 +27,15 @@ Replace these placeholders with real screenshots when ready.
 - Slash commands (`/`) for quick blocks (titles, lists, tables, tasks, code, etc.)
 - Inline formatting toolbar on text selection
 - Editable metadata header (title, description, author, icon, tags)
-- Image drag & drop into documents
+- Image drag & drop / paste into documents and table cells, copy images to other apps
+- Tables with typed columns, resizable widths, sorting and summaries
 - Integrated search by content and tags
 - Git integration: fetch, pull, commit, merge, sync
 - Auto-commit flows for save and file structure changes
-- Remote freshness guard (warns/blocks editing when remote is newer until pull)
+- Safe collaboration: edits made elsewhere (colleague, OneDrive, another window) are merged
+  with yours instead of being overwritten, non-overlapping changes are reconciled
+  automatically, and conflicts are resolved per change
+- Minimal diffs: only the lines you actually edit change in the file
 
 ## Installation
 
@@ -68,12 +72,32 @@ To make Holo links clickable in tools like Microsoft Teams, use the HTTPS gatewa
 
 When configured, the “Copier le lien” action generates a clickable HTTPS link that redirects to `holo://...`.
 
+Links carry the repository URL (`holo://<folder>/<path>.md?remote=<repo url>`, credentials
+stripped): the recipient's space is found even if their folder has another name, a document
+created moments ago is fetched before opening, and an unknown repository can be cloned in one step.
+
+> Tip: keep git repositories **outside** OneDrive/Dropbox/iCloud folders. A repository in a
+> synced folder is synchronized twice (git + cloud); Holo protects your saves but warns about it.
+
 ## Tech Stack
 
-- Electron
+- Electron 45 (macOS 13+, Windows 10+, Linux)
 - React + TypeScript
 - Vite
 - Tailwind CSS
+
+## Development
+
+```bash
+npm ci
+npm run dev        # Vite + Electron
+npm run lint
+npm run build
+npm test           # Playwright: renderer fixtures + Electron end-to-end tests
+```
+
+Electron tests launch isolated app instances (`HOLO_APP_DATA_DIR`), so they never touch your
+own Holo configuration.
 
 ## Project Status
 

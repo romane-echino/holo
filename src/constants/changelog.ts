@@ -2,6 +2,25 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.7.0',
+    releasedAt: '2026-11-03',
+    items: [
+      'Fiabilité : plus aucune frappe perdue. Les saisies en attente sont enregistrées avant un changement de fichier, une synchronisation, la fermeture ou une mise à jour, et Ctrl/Cmd+S écrit immédiatement.',
+      'Fiabilité : enregistrements atomiques et réessayés quand OneDrive ou un antivirus verrouille le fichier ; la configuration (et la liste des espaces) ne peut plus être corrompue.',
+      'Édition à plusieurs : une modification faite ailleurs (collègue, OneDrive, autre fenêtre) est fusionnée avec la vôtre au lieu d\'être écrasée, et s\'affiche en direct dans le document ouvert.',
+      'Édition à plusieurs : la synchronisation réconcilie automatiquement les modifications qui ne se chevauchent pas ; en cas de vrai conflit, le document est verrouillé jusqu\'à la résolution, qui conserve désormais les modifications non conflictuelles des deux côtés.',
+      'Git : opérations sérialisées (fin des erreurs « index.lock »), ouvrir un document ne crée plus de commit, et seules les lignes réellement modifiées changent dans le fichier.',
+      'OneDrive : avertissement quand un dépôt git se trouve dans un dossier synchronisé (OneDrive, Dropbox, iCloud, Google Drive).',
+      'Tableaux : les images peuvent être collées ou déposées dans une cellule ; les colonnes se rétrécissent librement et leur largeur est enregistrée (double-clic sur la bordure pour revenir en automatique).',
+      'Tableaux : plus de caractère perdu en tapant juste après un clic, les <br>, le HTML, les formules et les en-têtes formatés sont conservés, Maj+Entrée crée un vrai retour à la ligne, et un montant en texte libre n\'est plus reformaté.',
+      'Images : bouton et clic droit « Copier l\'image » (et Cmd/Ctrl+C sur une image sélectionnée) pour la coller dans Teams, Word ou un mail.',
+      'Liens Holo : un lien vers un document tout juste créé récupère d\'abord les changements ; un lien vers un dépôt absent propose de le cloner ; les liens fonctionnent sur macOS et ne rechargent plus la fenêtre.',
+      'Fichiers : les noms avec des points (« Echino.Bundle 09.2026.01 ») sont conservés tels quels, et les noms invalides sous Windows sont refusés avec un message clair.',
+      'Notifications : les erreurs (création, renommage, synchronisation, enregistrement…) sont maintenant affichées au lieu de rester silencieuses.',
+      'Technique : passage à Electron 45 (macOS 13 minimum) et mise à jour des dépendances.',
+    ],
+  },
+  {
     version: '0.6.0',
     releasedAt: '2026-06-05',
     items: [
