@@ -12,6 +12,30 @@ const primaryButtonClassName =
 // eslint-disable-next-line react-refresh/only-export-components
 export const REALTIME_SERVER_PLACEHOLDER = 'https://cn.echino.com/holo-realtime'
 
+/** Message compréhensible pour un échec de connexion au serveur de collaboration. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function describeRealtimeConnectionFailure(result: { status?: number | null; error?: string }): string {
+  const error = result.error ?? ''
+  if (result.status === 401 || result.status === 403) {
+    return 'Le serveur a refusé la connexion : il exige un jeton (Paramètres → Collaboration).'
+  }
+  if (result.status === 404) return 'Aucun serveur de collaboration à cette adresse (projet holo-realtime introuvable).'
+  // macOS 15+ : accès au réseau local soumis à autorisation (serveur d'entreprise en 10.x / 192.168.x).
+  if (/ERR_ADDRESS_UNREACHABLE|EHOSTUNREACH|No route to host/i.test(error)) {
+    return navigator.userAgent.includes('Mac')
+      ? 'macOS bloque l\'accès au réseau local pour Holo. Autorisez-le dans Réglages Système → Confidentialité et sécurité → Réseau local, puis relancez Holo.'
+      : 'Serveur injoignable depuis ce poste (réseau de l\'entreprise ou VPN requis ?).'
+  }
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND|getaddrinfo/i.test(error)) {
+    return 'Adresse introuvable : vérifiez-la, ou connectez-vous au réseau de l\'entreprise (VPN).'
+  }
+  if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|ERR_CONNECTION_TIMED_OUT|ETIMEDOUT|ERR_INTERNET_DISCONNECTED/i.test(error)) {
+    return 'Serveur injoignable : vérifiez votre connexion (réseau de l\'entreprise ou VPN).'
+  }
+  if (/ERR_CERT|certificate/i.test(error)) return 'Certificat du serveur refusé (HTTPS).'
+  return `Serveur injoignable : ${error.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || 'erreur inconnue'}`
+}
+
 /** Teste puis enregistre l'adresse du relais ; renvoie un message d'erreur, ou null. */
 // eslint-disable-next-line react-refresh/only-export-components
 export async function connectRealtimeServer(url: string): Promise<string | null> {
@@ -19,11 +43,7 @@ export async function connectRealtimeServer(url: string): Promise<string | null>
   if (!api) return 'Indisponible dans cette version.'
   try {
     const result = await api.testConnection({ url })
-    if (!result.ok) {
-      return result.status === 404
-        ? 'Aucun serveur de collaboration à cette adresse (projet holo-realtime introuvable).'
-        : `Serveur injoignable : ${result.error ?? 'erreur inconnue'}`
-    }
+    if (!result.ok) return describeRealtimeConnectionFailure(result)
     await api.setConfig({ url, enabled: true })
     window.dispatchEvent(new CustomEvent('holo:realtime-config-changed'))
     return null

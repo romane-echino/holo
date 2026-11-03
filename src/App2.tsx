@@ -1604,6 +1604,7 @@ export default function App2() {
               externalRevision={externalRevision}
               realtimeStatus={realtime.status}
               realtimePeers={realtime.peers}
+              realtimeDetail={realtime.detail}
               onMarkdownChange={handleMarkdownChange}
               onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
               onToggleInspector={() => setInspectorOpen((o) => !o)}

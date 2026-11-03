@@ -124,6 +124,9 @@
       "icon": "public/app-icon-512.png",
       "identity": "-",
       "hardenedRuntime": false,
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Holo se connecte au serveur de collaboration de votre équipe et à vos dépôts git sur le réseau local."
+      },
       "target": [
         "dmg",
         "zip"

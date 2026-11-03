@@ -18,6 +18,7 @@ import { cn } from '../utils/global'
 import { buildAzureSasUrl, parseAzureSasUrl } from '../utils/azureSas'
 import { CHANGELOG_ENTRIES } from '../constants/changelog'
 import { notifyError } from '../lib/notify'
+import { describeRealtimeConnectionFailure } from '../popup/RealtimeSetup'
 
 type SettingsTab = 'profile' | 'storage' | 'collab' | 'ai' | 'appearance' | 'about'
 
@@ -251,12 +252,7 @@ function RealtimeSettingsSection({ draft, onChange }: { draft: RealtimeDraft; on
 
   if (!api) return null
 
-  const describeFailure = (result: { status?: number | null; error?: string }) =>
-    result.status === 401 || result.status === 403
-      ? 'Jeton refusé : vérifiez qu\'il est valide et qu\'il couvre le projet holo_realtime.'
-      : result.status === 404
-        ? 'Le relais n\'est pas installé à cette adresse (projet holo-realtime introuvable).'
-        : `Relais injoignable : ${result.error ?? 'erreur inconnue'}`
+  const describeFailure = describeRealtimeConnectionFailure
 
   const test = async () => {
     setTesting(true)
