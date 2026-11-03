@@ -41,6 +41,7 @@ import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
+import { flushPendingEdits } from '../../lib/editorFlush'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, ImageMetadata, ImageDisplayMode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -405,6 +406,25 @@ function convertHtmlUnderline(node: any): any {
   return node
 }
 
+/**
+ * Sérialise un tableau GFM en écrivant la ligne de séparation au format
+ * usuel `| --- |` (remark produit `| - |`) : un fichier écrit par un autre
+ * outil garde ainsi sa ligne de séparation intacte lors d'une édition.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function serializeTableNode(tableNode: any): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markdown = (serializer.stringify({ type: 'root', children: [tableNode] } as any) as string).replace(/\n+$/, '')
+  const lines = markdown.split('\n')
+  if (lines.length >= 2) {
+    lines[1] = lines[1].replace(/(?<=\|) *(:?)-+(:?) *(?=\|)/g, (_match, left: string, right: string) => {
+      const dashes = '-'.repeat(Math.max(1, 3 - left.length - right.length))
+      return ` ${left}${dashes}${right} `
+    })
+  }
+  return lines.join('\n')
+}
+
 function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string>): string {
   // Développe les listes alpha en [commentaire HTML + liste standard]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -422,7 +442,7 @@ function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string
         expanded.push({ type: 'html', value: metadataComment })
       }
       const { data: _d, ...nodeWithoutData } = tableNode
-      expanded.push(nodeWithoutData)
+      expanded.push({ type: 'html', value: serializeTableNode(nodeWithoutData) })
     } else if (paragraphSingleImage(b.node)) {
       const image = paragraphSingleImage(b.node) as ImageNode
       const comment = buildImageMetadataComment(image.data?.holoImage)
@@ -453,6 +473,49 @@ function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string
   }
 
   return result
+}
+
+/**
+ * Markdown tel que l'éditeur le réémettrait pour `markdown` sans aucune
+ * modification. Sert de base à la fusion 3 voies à l'enregistrement : seules
+ * les différences entre cette forme et la saisie sont appliquées au fichier,
+ * le reste de sa mise en forme d'origine est conservé.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function normalizeBodyMarkdown(markdown: string): string {
+  return blocksToMarkdown(markdownToBlocks(markdown), extractFootnoteMapFromMarkdown(markdown))
+}
+
+/**
+ * Remplace les blocs par ceux d'un nouveau markdown en réutilisant les blocs
+ * inchangés (même identité) : leurs éditeurs restent montés, le focus et le
+ * curseur de l'utilisateur sont préservés lors d'une mise à jour externe.
+ */
+function reconcileBlocks(previous: BlockState[], nextBlocks: BlockState[]): BlockState[] {
+  const available = new Map<string, BlockState[]>()
+  for (const block of previous) {
+    const key = JSON.stringify(stripPositions(block.node))
+    const bucket = available.get(key)
+    if (bucket) bucket.push(block)
+    else available.set(key, [block])
+  }
+  return nextBlocks.map((block) => {
+    const bucket = available.get(JSON.stringify(stripPositions(block.node)))
+    return bucket?.shift() ?? block
+  })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function stripPositions(node: any): any {
+  if (Array.isArray(node)) return node.map(stripPositions)
+  if (!node || typeof node !== 'object') return node
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out: Record<string, any> = {}
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'position') continue
+    out[key] = stripPositions(value)
+  }
+  return out
 }
 
 function blocksToClipboardPayload(blocks: BlockState[], footnoteMap?: Map<string, string>) {
@@ -694,7 +757,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     if (markdown !== lastEmittedRef.current) {
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
-      setBlocks(markdownToBlocks(markdown))
+      setBlocks((previous) => reconcileBlocks(previous, markdownToBlocks(markdown)))
       initFootnotes(extractFootnoteMapFromMarkdown(markdown))
       // Réinitialise l'historique quand le document change de l'extérieur
       historyRef.current = { stack: [markdown], pos: 0 }
@@ -1158,7 +1221,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       }, 'immediate')
     },
     flushPendingChanges() {
-      // no-op: changes are emitted via useEffect after render
+      flushPendingEdits()
     },
   }), [applyBlocksMutation])
 

@@ -20,8 +20,19 @@ import { EditorFrame } from './parts/EditorFrame'
 import { SpaceCredentialsModal } from './parts/SpaceCredentialsModal'
 import type { SpaceCredentials } from './parts/Settings'
 import { AppUpdateNotification } from './parts/AppUpdateNotification'
+import { ToastHost } from './parts/ToastHost'
+import { errorMessage, notify, notifyError } from './lib/notify'
 import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
+import { normalizeDocumentMarkdown } from './parts/EditorFrame'
+import { flushPendingEdits, registerDocumentSession, saveOpenDocument } from './lib/editorFlush'
+
+function isSamePath(a?: string | null, b?: string | null) {
+  if (!a || !b) return false
+  return a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
+}
+
+const nextTick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 // Extraction rapide des 3 champs frontmatter pour la mise à jour live de l'arborescence
 function extractFmMeta(md: string): TreeFileMeta {
@@ -110,7 +121,6 @@ export default function App2() {
 
   // ─── Favoris de fichiers ──────────────────────────────────────────────────
   const [favoriteFilePaths, setFavoriteFilePaths] = useState<string[]>([])
-  const [operationFeedback, setOperationFeedback] = useState<string | null>(null)
 
   // ─── Recherche modale ─────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false)
@@ -565,6 +575,19 @@ export default function App2() {
   openedFileRef.current = openedFile
   // Ref stable pour appeler performGitSave sans forward reference
   const performGitSaveRef = useRef<() => Promise<void>>(async () => {})
+  // Enregistre les frappes en attente et attend la fin des écritures disque
+  const flushDocumentRef = useRef<() => Promise<void>>(async () => {})
+
+  // ─── Persistance du document ouvert ───────────────────────────────────────
+  // editorState  : markdown que l'éditeur représente actuellement. C'est la base
+  //                de la fusion 3 voies faite par fs:write-document.
+  // expectedDisk : dernier contenu disque connu (lu ou écrit) ; toute
+  //                différence signale une modification externe (pull, OneDrive…).
+  const docSyncRef = useRef<{ path: string; editorState: string; expectedDisk: string } | null>(null)
+  const [externalRevision, setExternalRevision] = useState(0)
+  const initDocumentSync = useCallback((path: string, diskContent: string) => {
+    docSyncRef.current = { path, editorState: normalizeDocumentMarkdown(diskContent), expectedDisk: diskContent }
+  }, [])
   // Markdown live (mis à jour à chaque keystroke) — pour l'Inspector en temps réel
   const [liveMarkdown, setLiveMarkdown] = useState<string | null>(null)
 
@@ -578,6 +601,9 @@ export default function App2() {
 
   const handleSelectFile = useCallback(async (node: SpaceFileNode) => {
     if (node.type !== 'file') return
+    // Les frappes du document courant encore en attente doivent être écrites
+    // avant que son éditeur ne soit démonté.
+    await flushDocumentRef.current().catch(() => undefined)
     switchingToFilePathRef.current = node.path
     setSaveStatus('idle')
     setSaveErrorMsg(null)
@@ -608,6 +634,7 @@ export default function App2() {
         }
         throw new Error(`Impossible de lire : ${node.path}`)
       }) ?? ''
+      initDocumentSync(node.path, content)
       setOpenedFile({ path: node.path, name: node.name, content })
       setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
       setRecentFilePaths(prev => [node.path, ...prev.filter(p => p !== node.path)].slice(0, 50))
@@ -617,7 +644,7 @@ export default function App2() {
       switchingToFilePathRef.current = null
       console.error('[App2] Impossible de charger le fichier :', err)
     }
-  }, [navigate, resolveOwningSpace, rootPath, setRecentFilePaths])
+  }, [initDocumentSync, navigate, resolveOwningSpace, rootPath, setRecentFilePaths])
 
   useStartupNavigation({
     openRecentFolder,
@@ -701,7 +728,12 @@ export default function App2() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingWriteRef = useRef<Promise<void> | null>(null)
+  // File d'écritures : une seule écriture à la fois, les frappes successives
+  // d'un même document sont fusionnées (seule la dernière version est écrite).
+  const writeQueueRef = useRef<Array<{ path: string; content: string; base: string | null; attempts?: number }>>([])
+  const WRITE_MAX_ATTEMPTS = 3
+  const writeLoopRef = useRef<Promise<void> | null>(null)
+  const externalChangePendingRef = useRef(false)
   const switchingToFilePathRef = useRef<string | null>(null)
   const AUTO_GIT_SAVE_DELAY_MS = 1500
   const appAuthorRef = useRef(appAuthor)
@@ -718,8 +750,8 @@ export default function App2() {
       const switchingTarget = switchingToFilePathRef.current
       return Boolean(switchingTarget && switchingTarget !== targetPath)
     }
-    if (pendingWriteRef.current) {
-      await pendingWriteRef.current.catch(() => undefined)
+    while (writeLoopRef.current) {
+      await writeLoopRef.current.catch(() => undefined)
     }
     const emitActivityRefresh = () => {
       window.dispatchEvent(new CustomEvent('holo:file-activity-updated', { detail: { path: file.path } }))
@@ -758,8 +790,14 @@ export default function App2() {
         void runBackgroundGitSyncRef.current()
         return
       }
-      // not-a-repo ou no-remote : le fichier est enregistré localement uniquement
-      if (result.reason === 'not-a-repo' || result.reason === 'no-remote') {
+      // Enregistré sur disque mais pas (encore) dans git : pas de dépôt, pas de
+      // distant, ou opération git / conflit en cours.
+      if (
+        result.reason === 'not-a-repo'
+        || result.reason === 'no-remote'
+        || result.reason === 'operation-in-progress'
+        || result.reason === 'conflicts-present'
+      ) {
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 3000)
         return
@@ -782,21 +820,118 @@ export default function App2() {
     saveTimerRef.current = setTimeout(performGitSave, AUTO_GIT_SAVE_DELAY_MS)
   }, [AUTO_GIT_SAVE_DELAY_MS, performGitSave])
 
+  // Met à jour l'éditeur avec un contenu modifié hors de lui (pull, OneDrive,
+  // autre instance, fusion à l'écriture) sans le remonter.
+  const applyExternalContent = useCallback((path: string, diskContent: string) => {
+    const sync = docSyncRef.current
+    if (!sync || !isSamePath(sync.path, path)) return
+    sync.expectedDisk = diskContent
+    const normalized = normalizeDocumentMarkdown(diskContent)
+    if (normalized === sync.editorState) return
+    sync.editorState = normalized
+    setOpenedFile((prev) => (prev && isSamePath(prev.path, path) ? { ...prev, content: diskContent } : prev))
+    setExternalRevision((revision) => revision + 1)
+    setLiveMarkdown(diskContent)
+    updateIndexEntry(path, diskContent)
+  }, [updateIndexEntry])
+
+  const drainWriteQueue = useCallback(async () => {
+    for (;;) {
+      const job = writeQueueRef.current.shift()
+      if (!job) {
+        // File vide : si une écriture a révélé une modification externe, on
+        // l'affiche maintenant (après avoir remonté une éventuelle saisie).
+        const sync = docSyncRef.current
+        if (!externalChangePendingRef.current || !sync) return
+        flushPendingEdits()
+        await nextTick()
+        if (writeQueueRef.current.length > 0) continue
+        externalChangePendingRef.current = false
+        applyExternalContent(sync.path, sync.expectedDisk)
+        notify({ kind: 'info', title: 'Document mis à jour', message: 'Des modifications faites ailleurs ont été fusionnées avec les vôtres.' })
+        return
+      }
+      const sync = docSyncRef.current
+      const isTracked = Boolean(sync && isSamePath(sync.path, job.path))
+      const isCurrent = () => isSamePath(openedFileRef.current?.path, job.path)
+      try {
+        const holo = window.holo
+        if (!holo) return
+        const result = await holo.writeDocument(job.path, job.content, job.base, isTracked ? sync!.expectedDisk : null)
+        const current = docSyncRef.current
+        if (current && isSamePath(current.path, job.path)) {
+          current.expectedDisk = result.content
+          if (result.externalChange && result.content !== job.content) externalChangePendingRef.current = true
+        }
+        updateIndexEntry(job.path, result.content)
+        if (isCurrent()) {
+          setSaveStatus('saved')
+          setSaveErrorMsg(null)
+          scheduleGitSave()
+        }
+      } catch (err) {
+        console.error('[App2] Impossible de sauvegarder le fichier :', err)
+        const attempts = (job.attempts ?? 0) + 1
+        const willRetry = attempts < WRITE_MAX_ATTEMPTS
+          && !writeQueueRef.current.some((pending) => isSamePath(pending.path, job.path))
+        if (isCurrent()) {
+          setSaveErrorMsg(null)
+          setSaveStatus('error')
+          notifyError(
+            willRetry ? 'Enregistrement impossible, nouvel essai…' : 'Enregistrement impossible',
+            err,
+          )
+        }
+        // Un verrou OneDrive ou réseau est souvent temporaire : on réessaie
+        // quelques fois (sauf si une version plus récente attend déjà).
+        if (willRetry) {
+          writeQueueRef.current.unshift({ ...job, attempts })
+          await new Promise((resolve) => setTimeout(resolve, 2000))
+        }
+      }
+    }
+  }, [applyExternalContent, scheduleGitSave, updateIndexEntry])
+
+  const enqueueDocumentWrite = useCallback((path: string, content: string) => {
+    const sync = docSyncRef.current
+    const tracked = sync && isSamePath(sync.path, path) ? sync : null
+    const base = tracked ? tracked.editorState : null
+    if (tracked) tracked.editorState = content
+    const queue = writeQueueRef.current
+    const last = queue[queue.length - 1]
+    if (last && isSamePath(last.path, path)) {
+      // Fusion avec l'écriture en attente : on garde sa base, on prend le contenu le plus récent.
+      last.content = content
+    } else {
+      queue.push({ path, content, base })
+    }
+    if (!writeLoopRef.current) {
+      writeLoopRef.current = drainWriteQueue().finally(() => { writeLoopRef.current = null })
+    }
+    return writeLoopRef.current
+  }, [drainWriteQueue])
+
+  const waitForWritesIdle = useCallback(async () => {
+    while (writeLoopRef.current) {
+      await writeLoopRef.current.catch(() => undefined)
+    }
+  }, [])
+
+  const flushDocument = useCallback(async () => {
+    // Remonte les frappes en attente (éditeur visuel ou mode brut), puis attend l'écriture.
+    window.dispatchEvent(new CustomEvent('holo:flush-editor'))
+    flushPendingEdits()
+    await nextTick()
+    await waitForWritesIdle()
+  }, [waitForWritesIdle])
+  flushDocumentRef.current = flushDocument
+
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
-    const targetPath = file.path
-
-    // Après un rechargement programmatique (pull/résolution de conflit), l'éditeur
-    // se remonte et émet un écho onChange avec un markdown re-normalisé qui peut
-    // différer des octets sur disque. On ignore ce premier écho pour ne pas
-    // réécrire le fichier ni déclencher un commit auto inutile (source de
-    // divergences / faux conflits côté collaborateur).
-    if (lastProgrammaticReloadRef.current > 0 && Date.now() - lastProgrammaticReloadRef.current < 2000) {
-      lastProgrammaticReloadRef.current = 0
-      setLiveMarkdown(markdown)
-      return
-    }
+    const sync = docSyncRef.current
+    // Rien de nouveau par rapport à ce que l'éditeur représente déjà (écho).
+    if (sync && isSamePath(sync.path, file.path) && sync.editorState === markdown) return
 
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
@@ -808,7 +943,7 @@ export default function App2() {
       // Ne pas sauvegarder un markdown manifestement dégradé
       return
     }
-    
+
     // Mettre à jour le markdown live pour l'Inspector (TOC en temps réel)
     setLiveMarkdown(markdown)
     // Mettre à jour immédiatement les métadonnées live pour l'arborescence
@@ -824,25 +959,8 @@ export default function App2() {
         icon: nextMeta.icon,
       },
     }))
-    const writePromise = (async () => {
-    try {
-      await window.holo?.writeFile(file.path, markdown)
-      if (openedFileRef.current?.path !== targetPath) return
-      updateIndexEntry(file.path, markdown)
-      setSaveStatus('saved')
-      scheduleGitSave()
-    } catch (err) {
-      if (openedFileRef.current?.path !== targetPath) return
-      console.error('[App2] Impossible de sauvegarder le fichier :', err)
-      setSaveStatus('error')
-    }
-    })()
-    pendingWriteRef.current = writePromise
-    await writePromise
-    if (pendingWriteRef.current === writePromise) {
-      pendingWriteRef.current = null
-    }
-  }, [scheduleGitSave, setFileMetaByPath, updateIndexEntry])
+    await enqueueDocumentWrite(file.path, markdown)
+  }, [enqueueDocumentWrite, setFileMetaByPath])
 
   // Ctrl+S → sauvegarde immédiate
   useEffect(() => {
@@ -850,10 +968,10 @@ export default function App2() {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
         if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
-        window.dispatchEvent(new CustomEvent('holo:flush-editor'))
-        window.setTimeout(() => {
-          void performGitSaveRef.current()
-        }, 0)
+        void (async () => {
+          await flushDocumentRef.current()
+          await performGitSaveRef.current()
+        })()
       }
     }
     window.addEventListener('keydown', handler)
@@ -863,30 +981,32 @@ export default function App2() {
   // Nettoyage du timer au démontage
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
-  // Git save à la fermeture de l'app
+  // Fermeture de l'app : le main attend que le document soit écrit et commité.
   useEffect(() => {
-    const handler = () => {
-      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
-      performGitSaveRef.current()
-    }
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
+    const holo = window.holo
+    if (!holo?.onBeforeClose) return
+    return holo.onBeforeClose(() => {
+      void (async () => {
+        try {
+          await flushDocumentRef.current()
+          if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+          await Promise.race([
+            performGitSaveRef.current(),
+            new Promise((resolve) => setTimeout(resolve, 4000)),
+          ])
+        } finally {
+          await holo.confirmClose()
+        }
+      })()
+    })
   }, [])
 
   // ─── Synchronisation distante en arrière-plan (fetch récurrent) ─────────────
-  // Nonce pour forcer le remontage de l'éditeur quand on recharge le fichier
-  // ouvert avec une version distante (stratégie C).
-  const [reloadNonce, setReloadNonce] = useState(0)
   // Bannière douce affichée quand des modifications distantes existent mais
   // n'ont pas pu être rapatriées sans risque (stratégie B).
   const [remoteBanner, setRemoteBanner] = useState<{ message: string; kind?: 'info' | 'conflict' } | null>(null)
   const rootPathRef = useRef(rootPath)
   rootPathRef.current = rootPath
-
-  // Horodatage du dernier rechargement programmatique (pull/résolution). Sert à
-  // ignorer l'« écho » onChange émis par l'éditeur lors de son remontage, qui
-  // réécrirait le fichier et déclencherait un commit automatique inutile.
-  const lastProgrammaticReloadRef = useRef(0)
 
   const samePath = useCallback((a?: string | null, b?: string | null) => {
     if (!a || !b) return false
@@ -897,20 +1017,75 @@ export default function App2() {
     const holo = window.holo
     const openPath = openedFileRef.current?.path
     if (!holo || !openPath) return
+    // Écrit d'abord la saisie en cours : la fusion à l'écriture intègre alors
+    // la version disque, puis l'éditeur affiche le résultat.
+    await flushDocumentRef.current()
     const fresh = await holo.readFile(openPath).catch(() => null)
     if (fresh == null || !samePath(openedFileRef.current?.path, openPath)) return
-    lastProgrammaticReloadRef.current = Date.now()
-    setOpenedFile((prev) => (prev && samePath(prev.path, openPath) ? { ...prev, content: fresh } : prev))
-    setLiveMarkdown(null)
-    setReloadNonce((n) => n + 1)
-  }, [samePath])
+    applyExternalContent(openPath, fresh)
+  }, [applyExternalContent, samePath])
+
+  // Surveillance du document ouvert : toute modification faite hors de
+  // l'éditeur (OneDrive, autre application, git) est reflétée à l'écran.
+  useEffect(() => {
+    const holo = window.holo
+    const openPath = openedFile?.path
+    if (!holo?.watchDocument || !openPath) return
+    let disposed = false
+    const checkDisk = async () => {
+      // Une écriture en cours détectera et fusionnera elle-même le changement.
+      if (disposed || writeLoopRef.current) return
+      const fresh = await holo.readFile(openPath).catch(() => null)
+      const sync = docSyncRef.current
+      if (disposed || fresh == null || !sync || !samePath(sync.path, openPath) || fresh === sync.expectedDisk) return
+      flushPendingEdits()
+      await nextTick()
+      // La saisie remontée est en cours d'écriture : elle fusionnera la version disque.
+      if (writeLoopRef.current) return
+      applyExternalContent(openPath, fresh)
+    }
+    const unsubscribe = holo.onDocumentChanged(({ path }) => {
+      if (samePath(path, openPath)) void checkDisk()
+    })
+    // Rattrape une modification survenue entre la lecture et le début de la surveillance.
+    void holo.watchDocument(openPath).then(() => checkDisk()).catch(() => undefined)
+    return () => {
+      disposed = true
+      unsubscribe()
+      void holo.watchDocument(null).catch(() => undefined)
+    }
+  }, [applyExternalContent, openedFile?.path, samePath])
+
+  useEffect(() => registerDocumentSession({
+    flush: () => flushDocumentRef.current(),
+    reload: () => reloadOpenFileFromDisk(),
+    save: async () => {
+      await flushDocumentRef.current()
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      await performGitSaveRef.current()
+    },
+  }), [reloadOpenFileFromDisk])
+
+  // Une seule synchronisation à la fois (fond ou « Récupérer ») : une synchro
+  // de fond qui tomberait au milieu d'un rebase effacerait l'état de conflit.
+  const gitSyncInFlightRef = useRef(false)
 
   const runBackgroundGitSync = useCallback(async () => {
     const holo = window.holo
     if (!holo?.gitPullIfSafe) return
     if (!rootPathRef.current) return
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (gitSyncInFlightRef.current) return
+    gitSyncInFlightRef.current = true
     try {
+      // Les modifications locales sont d'abord écrites et commitées : git peut
+      // alors réconcilier automatiquement avec le distant (rebase sans conflit).
+      await flushDocumentRef.current()
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+        await performGitSaveRef.current()
+      }
       const result = await holo.gitPullIfSafe()
       if (!result) return
       // Rafraîchir badges (incoming / conflits) sans refetch supplémentaire
@@ -923,22 +1098,33 @@ export default function App2() {
       )
 
       if (result.pulled) {
-        // Avance rapide silencieuse réussie (arbre propre garanti). On recharge
-        // le document ouvert s'il a été mis à jour côté distant.
+        // Avance rapide ou rebase sans conflit réussi. On recharge le document
+        // ouvert s'il a été mis à jour côté distant.
         if (openFileChangedRemotely) await reloadOpenFileFromDisk()
+        if (result.pushed) setSaveStatus((prev) => (prev === 'push-error' ? 'synced' : prev))
         setRemoteBanner(null)
+      } else if (result.reason === 'pushed') {
+        setSaveStatus((prev) => (prev === 'push-error' ? 'synced' : prev))
+        setRemoteBanner(null)
+      } else if (result.reason === 'operation-in-progress') {
+        // Rebase / merge interrompu par un conflit : la résolution reste à faire.
+        setRemoteBanner({ message: 'Conflit à résoudre : choisissez la version à conserver.', kind: 'conflict' })
       } else if ((result.reason === 'dirty' || result.reason === 'diverged') && result.incoming > 0) {
         // Changements distants présents mais rapatriement non sûr → bannière douce.
         setRemoteBanner({
-          message: openFileChangedRemotely
-            ? 'Ce document a été modifié ailleurs. Récupérez la dernière version.'
-            : 'Des modifications sont disponibles. Récupérez-les quand vous voulez.',
+          message: result.reason === 'diverged'
+            ? 'Vos modifications et celles d\'un collègue se chevauchent. Récupérez pour choisir la version à garder.'
+            : openFileChangedRemotely
+              ? 'Ce document a été modifié ailleurs. Récupérez la dernière version.'
+              : 'Des modifications sont disponibles. Récupérez-les quand vous voulez.',
         })
       } else {
-        setRemoteBanner(null)
+        setRemoteBanner((previous) => (previous?.kind === 'conflict' ? previous : null))
       }
     } catch {
       // La synchronisation de fond ne doit jamais perturber l'utilisateur.
+    } finally {
+      gitSyncInFlightRef.current = false
     }
   }, [reloadOpenFileFromDisk, samePath, setGitState])
 
@@ -963,9 +1149,11 @@ export default function App2() {
     }
 
     setRemoteBanner(null)
+    // Attendre une éventuelle synchro de fond en cours, puis bloquer les suivantes.
+    while (gitSyncInFlightRef.current) await new Promise((resolve) => setTimeout(resolve, 100))
+    gitSyncInFlightRef.current = true
     try {
-      window.dispatchEvent(new CustomEvent('holo:flush-editor'))
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await flushDocumentRef.current()
       await performGitSaveRef.current()
       const result = await holo.gitSync()
       const nextState = await holo.gitGetState(false).catch(() => null)
@@ -976,7 +1164,9 @@ export default function App2() {
       }
       await reloadOpenFileFromDisk()
     } catch (err) {
-      setRemoteBanner({ message: err instanceof Error ? err.message : 'Échec de la récupération.' })
+      setRemoteBanner({ message: errorMessage(err) || 'Échec de la récupération.' })
+    } finally {
+      gitSyncInFlightRef.current = false
     }
   }, [reloadOpenFileFromDisk, setGitState])
 
@@ -1022,13 +1212,15 @@ export default function App2() {
     const path = openedFile?.path
     if (!path) return
     const cur = Boolean(fileMetaByPath[path]?.isTemplate)
+    await flushDocumentRef.current()
     const content = await window.holo?.readFile(path)
     if (content == null) return
     const next = updateMarkdownBooleanHeaderField(content, 'template', !cur)
     await window.holo?.writeFile(path, next)
     setFileMetaByPath(prev => ({ ...prev, [path]: { ...(prev[path] ?? { title: '', description: '', isTemplate: false }), isTemplate: !cur } }))
-    setOpenedFile(prev => prev ? { ...prev, content: next } : prev)
-  }, [openedFile?.path, fileMetaByPath, setFileMetaByPath])
+    applyExternalContent(path, next)
+    scheduleGitSave()
+  }, [openedFile?.path, fileMetaByPath, setFileMetaByPath, applyExternalContent, scheduleGitSave])
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -1078,6 +1270,9 @@ export default function App2() {
         return nextPath === previous.path ? previous : { ...previous, path: nextPath }
       })
 
+      if (docSyncRef.current) {
+        docSyncRef.current = { ...docSyncRef.current, path: remapPath(docSyncRef.current.path, from, to) }
+      }
       setOpenedFile((previous) => {
         if (!previous) return previous
         const nextPath = remapPath(previous.path, from, to)
@@ -1090,25 +1285,6 @@ export default function App2() {
     return () => window.removeEventListener('holo:path-moved', handler)
   }, [setFileMetaByPath, setRecentFilePaths])
 
-  useEffect(() => {
-    let clearTimer: ReturnType<typeof setTimeout> | null = null
-
-    const handler = (event: Event) => {
-      const message = (event as CustomEvent<{ message?: string }>).detail?.message
-      if (!message) return
-      setOperationFeedback(message)
-      if (clearTimer) clearTimeout(clearTimer)
-      clearTimer = setTimeout(() => {
-        setOperationFeedback((current) => current === message ? null : current)
-      }, 4000)
-    }
-
-    window.addEventListener('holo:operation-feedback', handler)
-    return () => {
-      if (clearTimer) clearTimeout(clearTimer)
-      window.removeEventListener('holo:operation-feedback', handler)
-    }
-  }, [])
 
   const desktopGridColumns = hasPanel
     ? (isDesktopMainSidebarCollapsed
@@ -1238,9 +1414,10 @@ export default function App2() {
           <div className="min-h-0 flex-1 overflow-y-auto holo-scrollbar">
           {openedFile ? (
             <EditorFrame
-              key={`${openedFile.path}#${reloadNonce}`}
+              key={openedFile.path}
               filepath={openedFile.path}
               markdown={openedFile.content}
+              externalRevision={externalRevision}
               onMarkdownChange={handleMarkdownChange}
               onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
               onToggleInspector={() => setInspectorOpen((o) => !o)}
@@ -1319,19 +1496,12 @@ export default function App2() {
         <AppUpdateNotification
           updateReady={updateReady}
           updateProgress={updateProgress}
-          onInstall={() => window.holo?.installUpdate?.()}
+          onInstall={() => { void saveOpenDocument().finally(() => window.holo?.installUpdate?.()) }}
           onDismiss={dismissUpdate}
         />
       )}
 
-      {operationFeedback && (
-        <div className={cn(
-          'fixed right-5 z-[149] w-[320px] rounded-[1.1rem] border border-holo-border-soft bg-holo-bg/95 px-4 py-3 text-sm text-holo-text shadow-[0_20px_60px_rgba(0,0,0,.45)] backdrop-blur-2xl transition-all',
-          updateAvailable ? 'bottom-[7.5rem]' : 'bottom-5',
-        )}>
-          {operationFeedback}
-        </div>
-      )}
+      <ToastHost bottomOffsetClassName={updateAvailable ? 'bottom-[7.5rem]' : 'bottom-5'} />
 
       {/* Modal identifiants espace */}
       {pendingCredentials && (

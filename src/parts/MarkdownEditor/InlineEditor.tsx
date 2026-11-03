@@ -18,6 +18,7 @@ import type { FormatToolbarState } from './FormatToolbar'
 import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
+import { registerPendingEditFlusher } from '../../lib/editorFlush'
 
 interface MentionSuggestion {
   mention: string
@@ -368,6 +369,12 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       save()
     }, 400)
   }, [save])
+
+  // Enregistrement forcé (Ctrl+S, pull, fermeture…) : remonte immédiatement
+  // une saisie encore en attente du délai de 400 ms.
+  useEffect(() => registerPendingEditFlusher(() => {
+    if (saveTimerRef.current) save()
+  }), [save])
 
   useEffect(() => {
     if (!rootPath || !window.holo?.gitGetContributors) {
@@ -1168,6 +1175,9 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
         }}
         onMouseDown={(e) => {
           if (!selectAllOnFocus || e.button !== 0) return
+          // Un nouveau clic annule la re-sélection différée du clic précédent :
+          // sinon un double clic rapide re-sélectionnerait tout après avoir placé le curseur.
+          cancelPointerSelectAll()
           if (document.activeElement === e.currentTarget) {
             if (isEntireContentSelected(e.currentTarget)) return
             return

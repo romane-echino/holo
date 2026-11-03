@@ -141,17 +141,15 @@ test.describe('Synchronisation git en arrière-plan (fetch + merge)', () => {
     try {
       await expect(paragraph(launched.page, INITIAL_BODY)).toBeVisible({ timeout: 25_000 })
 
-      // À l'ouverture, l'éditeur normalise le markdown puis l'auto-save de l'app
-      // commit + pousse cette version. On attend donc que le distant avance et que
-      // l'arbre local redevienne propre : c'est la base "sans risque" requise pour
-      // une avance rapide silencieuse.
+      // Ouvrir un document ne doit pas le réécrire (aucun commit de
+      // « normalisation ») : l'arbre reste propre et aligné sur le distant,
+      // base "sans risque" requise pour une avance rapide silencieuse.
       const initialRemoteTip = await git(repos.remoteDir, 'rev-parse', repos.branch)
-      await expect
-        .poll(async () => git(repos.remoteDir, 'rev-parse', repos.branch), { timeout: 25_000 })
-        .not.toBe(initialRemoteTip)
+      await launched.page.waitForTimeout(2500)
       await expect
         .poll(async () => git(repos.workspaceDir, 'status', '--porcelain'), { timeout: 10_000 })
         .toBe('')
+      expect(await git(repos.remoteDir, 'rev-parse', repos.branch)).toBe(initialRemoteTip)
 
       // Le collègue récupère cette base normalisée puis pousse une modification par-dessus.
       await git(repos.collabDir, '-c', 'pull.rebase=false', 'pull')

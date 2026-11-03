@@ -38,6 +38,24 @@ contextBridge.exposeInMainWorld('holo', {
   readFileOptional: (filePath) => ipcRenderer.invoke('fs:read-file-optional', filePath),
   getPathStats: (targetPath) => ipcRenderer.invoke('fs:get-path-stats', targetPath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:write-file', filePath, content),
+  writeDocument: (filePath, content, baseContent, expectedDiskContent) => ipcRenderer.invoke('fs:write-document', filePath, content, baseContent, expectedDiskContent),
+  watchDocument: (filePath) => ipcRenderer.invoke('fs:watch-document', filePath ?? null),
+  onDocumentChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('fs:document-changed', listener)
+    return () => ipcRenderer.removeListener('fs:document-changed', listener)
+  },
+  // Fermeture : le main demande au renderer d'enregistrer avant de fermer.
+  onBeforeClose: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('app:before-close', listener)
+    ipcRenderer.invoke('app:register-close-handler')
+    return () => {
+      ipcRenderer.removeListener('app:before-close', listener)
+      ipcRenderer.invoke('app:unregister-close-handler')
+    }
+  },
+  confirmClose: () => ipcRenderer.invoke('app:confirm-close'),
   createFile: (parentDirectoryPath, name) =>
     ipcRenderer.invoke('fs:create-file', parentDirectoryPath, name),
   createDirectory: (parentDirectoryPath, name) =>

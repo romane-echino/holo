@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, Layers, PanelRight, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
 import { cn } from '../utils/global'
-import { BlockEditor, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
+import { BlockEditor, normalizeBodyMarkdown, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { FootnotesProvider } from '../contexts/FootnotesContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -31,6 +31,11 @@ type EditorFrameProps = {
   onRestore?: () => void
   isTemplate?: boolean
   onToggleTemplate?: () => void
+  /**
+   * Incrémenté quand `markdown` a été modifié hors de l'éditeur (pull, autre
+   * instance, OneDrive…) : l'éditeur se met à jour sans être remonté.
+   */
+  externalRevision?: number
 }
 
 type ScrollTarget = Window | HTMLElement
@@ -436,7 +441,9 @@ interface FrontmatterData {
   [key: string]: string | string[] | undefined
 }
 
-function parseFrontmatter(markdown: string): { fm: FrontmatterData; body: string } {
+function parseFrontmatter(rawMarkdown: string): { fm: FrontmatterData; body: string } {
+  // Un BOM UTF-8 (fréquent avec certains éditeurs Windows) empêcherait de reconnaître le frontmatter.
+  const markdown = rawMarkdown.replace(/^\uFEFF/, '')
   const match = markdown.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)/)
   if (!match) return { fm: {}, body: markdown }
   const yamlStr = match[1]
@@ -455,6 +462,19 @@ function parseFrontmatter(markdown: string): { fm: FrontmatterData; body: string
     }
   }
   return { fm, body }
+}
+
+/**
+ * Document tel que l'éditeur le réémettrait sans modification (frontmatter +
+ * corps normalisés). Base de la fusion 3 voies à l'enregistrement.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function normalizeDocumentMarkdown(markdown: string): string {
+  if (markdown.trim() === '') return markdown
+  const { fm, body } = parseFrontmatter(markdown)
+  const nextFm = { ...fm }
+  delete nextFm.updated
+  return serializeFrontmatter(nextFm) + normalizeBodyMarkdown(body)
 }
 
 function serializeFrontmatter(fm: FrontmatterData): string {
@@ -559,6 +579,7 @@ export function EditorFrame({
   onRestore,
   isTemplate,
   onToggleTemplate,
+  externalRevision = 0,
 }: EditorFrameProps) {
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
@@ -630,6 +651,21 @@ export function EditorFrame({
   fmRef.current = fm
   const bodyRef = useRef(body)
   bodyRef.current = body
+
+  // Mise à jour externe du document : on remplace frontmatter et corps sans
+  // réémettre (ce n'est pas une modification de l'utilisateur).
+  const appliedExternalRevisionRef = useRef(externalRevision)
+  useEffect(() => {
+    if (appliedExternalRevisionRef.current === externalRevision) return
+    appliedExternalRevisionRef.current = externalRevision
+    const parsed = parseFrontmatter(markdown)
+    fmRef.current = parsed.fm
+    bodyRef.current = parsed.body
+    setFm(parsed.fm)
+    setBody(parsed.body)
+    lastPublishedMarkdownRef.current = markdown
+    if (rawMode) setRawValue(markdown)
+  }, [externalRevision, markdown, rawMode])
 
   // Date de « Modifié » dérivée du mtime disque (l'horodatage n'est plus stocké
   // dans le frontmatter pour éviter les conflits git à chaque édition concurrente).
@@ -1305,7 +1341,7 @@ export function EditorFrame({
             {isConflicted && (
               <div className="mb-4 flex items-center gap-3 rounded-holo-xl border border-amber-600/30 bg-amber-500/10 px-4 py-3">
                 <span className="text-amber-400 text-sm">⚠️</span>
-                <p className="flex-1 text-sm text-amber-200">Ce fichier contient des conflits de fusion non résolus.</p>
+                <p className="flex-1 text-sm text-amber-200">Ce fichier contient des conflits de fusion non résolus. L'édition reprendra une fois le conflit résolu.</p>
                 <button
                   onClick={() => setDiffModalOpen(true)}
                   className="rounded-holo-lg border border-amber-600/40 bg-amber-900/30 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-800/40"
@@ -1316,7 +1352,15 @@ export function EditorFrame({
             )}
             <EditorFileContext.Provider value={{ currentFilePath: filepath }}>
               <FootnotesProvider key={filepath}>
-                <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} onOpenLinkedFile={onOpenLinkedFile} fontScale={contentFontScale} />
+                {/* Pendant un conflit git, le fichier sur disque contient des marqueurs :
+                    toute saisie l'écraserait. L'édition est bloquée jusqu'à la résolution. */}
+                <div
+                  inert={isConflicted || undefined}
+                  aria-disabled={isConflicted || undefined}
+                  className={cn(isConflicted && 'pointer-events-none select-none opacity-60')}
+                >
+                  <BlockEditor ref={blockEditorRef} markdown={body} onChange={handleBodyChange} onOpenLinkedFile={onOpenLinkedFile} fontScale={contentFontScale} />
+                </div>
               </FootnotesProvider>
             </EditorFileContext.Provider>
           </article>

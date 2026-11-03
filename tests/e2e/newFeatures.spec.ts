@@ -701,7 +701,7 @@ test.describe('YouTubeBlock — édition et sérialisation', () => {
 
     const input = page.locator('input[type="url"]').first()
     await expect(input).toBeVisible()
-    await input.press('Control+A')
+    await input.press('ControlOrMeta+A')
     await input.type('https://www.youtube.com/watch?v=eNhx-ehhumg')
     await page.getByRole('button', { name: 'Valider' }).click()
 
@@ -870,8 +870,10 @@ test.describe('Footnotes — référence inline, tooltip et sérialisation', () 
     await expect(page.locator('[data-block-type="footnoteDefinition"]')).toHaveCount(0)
 
     // La référence inline est visible et son tooltip montre le contenu existant
-    const anchor = page.locator('sup[data-footnote-ref]').first()
+    // La référence est rattachée au mot qui la précède (ancre surlignée + badge)
+    const anchor = page.locator('.holo-footnote-anchor').first()
     await expect(anchor).toBeVisible()
+    await expect(anchor).toContainText('note')
     await anchor.hover()
 
     const tooltip = page.getByTestId('footnote-editor-tooltip')
@@ -1172,7 +1174,7 @@ test.describe('CodeBlock — édition WYSIWYG', () => {
     const editor = page.locator('.cm-content').first()
     await expect(editor).toBeVisible()
     await editor.click()
-    await page.keyboard.press('Control+A')
+    await page.keyboard.press('ControlOrMeta+A')
     await page.keyboard.press('Backspace')
     await page.keyboard.type('const replaced = true')
     await page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Gamma-dernier' }).click()

@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from 'react'
+import { reloadOpenDocument } from '../lib/editorFlush'
 import { DEFAULT_GIT_STATE, normalizeGitState } from '../lib/gitUtils'
 import type { OpenFolderResult } from '../types/app'
 import { useWorkspace } from '../contexts/WorkspaceContext'
@@ -98,8 +99,12 @@ export function useWorkspaceFolders({
       setGitState(normalizeGitState(nextGitState))
 
       if (nextGitState?.isRepo) {
+        // Rapatriement sûr uniquement (avance rapide ou rebase sans conflit),
+        // puis rechargement du document ouvert s'il a changé : un `git pull`
+        // brut ici faisait écraser la version distante par l'éditeur.
         try {
-          await holo.gitPull()
+          const pullResult = await holo.gitPullIfSafe()
+          if (pullResult?.pulled) await reloadOpenDocument()
         } catch {
           // silent
         }

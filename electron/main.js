@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import crypto from 'node:crypto'
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import os from 'node:os'
+import { watchFile, unwatchFile } from 'node:fs'
+import { cleanupStaleTempFiles, createKeyedLock, readFileIfExists, readFileWithRetry, writeFileAtomic } from './fsSafe.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -82,8 +85,7 @@ async function readRecentFoldersRaw() {
 }
 
 async function writeRecentFolders(folders) {
-  await fs.mkdir(path.dirname(getRecentFoldersFilePath()), { recursive: true })
-  await fs.writeFile(getRecentFoldersFilePath(), JSON.stringify(folders, null, 2), 'utf8')
+  await writeFileAtomic(getRecentFoldersFilePath(), JSON.stringify(folders, null, 2))
 }
 
 // Sérialise toutes les mutations de recent-folders.json pour éviter les pertes
@@ -180,8 +182,7 @@ async function readHoloConfig() {
 }
 
 async function writeHoloConfig(config) {
-  await fs.mkdir(path.dirname(getHoloConfigPath()), { recursive: true })
-  await fs.writeFile(getHoloConfigPath(), JSON.stringify(config, null, 2), 'utf8')
+  await writeFileAtomic(getHoloConfigPath(), JSON.stringify(config, null, 2))
 }
 
 // Sérialise toutes les mutations de la config pour éviter les pertes de mises à jour
@@ -274,7 +275,6 @@ function assertPathInsideRoot(targetPath) {
 }
 
 const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
-// eslint-disable-next-line no-control-regex
 const FORBIDDEN_NAME_CHARS = /[<>:"|?*\u0000-\u001f]/
 
 function sanitizeName(name) {
@@ -877,7 +877,7 @@ async function getCurrentTreePayload() {
   }
 }
 
-async function runGit(args, cwd) {
+async function runGitOnce(args, cwd, { raw = false } = {}) {
   try {
     // core.quotePath=false : évite l'échappement octal des noms non-ASCII (accents)
     // dans les sorties porcelain/numstat, pour que les chemins restent exploitables.
@@ -892,17 +892,137 @@ async function runGit(args, cwd) {
 
     return {
       ok: true,
-      stdout: stdout.trim(),
+      // raw : sortie exacte (contenu de fichier), sans suppression des blancs finaux
+      stdout: raw ? stdout : stdout.trim(),
       stderr: stderr.trim(),
       code: 0,
     }
   } catch (error) {
     return {
       ok: false,
-      stdout: (error.stdout ?? '').toString().trim(),
+      stdout: raw ? (error.stdout ?? '').toString() : (error.stdout ?? '').toString().trim(),
       stderr: (error.stderr ?? '').toString().trim(),
       code: error.code ?? 1,
     }
+  }
+}
+
+// Un index.lock plus vieux que ce délai est considéré comme orphelin (git
+// interrompu, dossier synchronisé par OneDrive…) et peut être supprimé.
+const STALE_GIT_LOCK_MS = 2 * 60 * 1000
+const GIT_LOCK_RETRY_DELAYS_MS = [250, 750, 1500]
+
+async function removeStaleGitIndexLock(cwd) {
+  const gitDirResult = await runGitOnce(['rev-parse', '--git-dir'], cwd)
+  if (!gitDirResult.ok || !gitDirResult.stdout) return false
+  const gitDir = path.isAbsolute(gitDirResult.stdout) ? gitDirResult.stdout : path.join(cwd, gitDirResult.stdout)
+  const lockPath = path.join(gitDir, 'index.lock')
+  const stats = await fs.stat(lockPath).catch(() => null)
+  if (!stats || Date.now() - stats.mtimeMs < STALE_GIT_LOCK_MS) return false
+  console.warn('[git] Suppression d\'un index.lock orphelin :', lockPath)
+  await fs.rm(lockPath, { force: true }).catch(() => {})
+  return true
+}
+
+async function runGit(args, cwd) {
+  let result = await runGitOnce(args, cwd)
+  // Un autre processus git (ou une synchro OneDrive) tient l'index : on patiente
+  // un peu plutôt que d'échouer, puis on nettoie un verrou manifestement orphelin.
+  for (const delay of GIT_LOCK_RETRY_DELAYS_MS) {
+    if (result.ok || !/index\.lock/i.test(`${result.stderr}\n${result.stdout}`)) return result
+    await new Promise((resolve) => setTimeout(resolve, delay))
+    await removeStaleGitIndexLock(cwd)
+    result = await runGitOnce(args, cwd)
+  }
+  return result
+}
+
+// Sérialise toutes les opérations git / écritures de documents d'un même
+// dépôt : un auto-save ne peut plus croiser un pull, un rebase ou une autre
+// sauvegarde (cause des erreurs « index.lock » et des écritures perdues).
+const withRepoLock = createKeyedLock()
+
+function repoLockKey(cwd) {
+  const resolved = path.resolve(String(cwd ?? ''))
+  return process.platform === 'win32' || process.platform === 'darwin' ? resolved.toLowerCase() : resolved
+}
+
+function withCurrentRepoLock(handler) {
+  return (...args) => withRepoLock(repoLockKey(currentRootPath ?? ''), () => handler(...args))
+}
+
+function findOwningRoot(targetPath) {
+  const normalizedTarget = path.resolve(String(targetPath ?? ''))
+  const candidates = [currentRootPath, ...knownRootPaths]
+    .filter(Boolean)
+    .map((root) => path.resolve(root))
+    .sort((a, b) => b.length - a.length)
+  return candidates.find((root) => normalizedTarget === root || normalizedTarget.startsWith(root + path.sep)) ?? null
+}
+
+/**
+ * Fusion 3 voies texte via `git merge-file` : applique sur `theirs` (disque)
+ * les changements faits entre `base` et `ours` (éditeur). Les zones en conflit
+ * sont résolues en faveur de `ours` ; aucun marqueur n'est jamais produit.
+ */
+async function mergeTextThreeWay(base, ours, theirs) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-merge-'))
+  try {
+    const oursPath = path.join(tempDir, 'ours')
+    const basePath = path.join(tempDir, 'base')
+    const theirsPath = path.join(tempDir, 'theirs')
+    await Promise.all([
+      fs.writeFile(oursPath, ours, 'utf8'),
+      fs.writeFile(basePath, base, 'utf8'),
+      fs.writeFile(theirsPath, theirs, 'utf8'),
+    ])
+    const probe = await runGitOnce(['merge-file', '-p', oursPath, basePath, theirsPath], tempDir, { raw: true })
+    if (probe.ok) return { text: probe.stdout, conflict: false }
+    // Code de sortie > 0 = nombre de conflits ; < 0 ou erreur = git indisponible.
+    if (typeof probe.code !== 'number' || probe.code < 0 || probe.code > 127) return { text: ours, conflict: true, unavailable: true }
+    const resolved = await runGitOnce(['merge-file', '-p', '--ours', oursPath, basePath, theirsPath], tempDir, { raw: true })
+    return { text: resolved.ok ? resolved.stdout : ours, conflict: true }
+  } catch {
+    return { text: ours, conflict: true, unavailable: true }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/**
+ * Résout un fichier en conflit à partir des trois versions de l'index
+ * (base, la mienne, la distante) : seules les zones réellement en conflit
+ * suivent la stratégie choisie, les modifications non conflictuelles des deux
+ * côtés sont conservées. Retourne null si les versions ne sont pas disponibles
+ * (ex. fichier supprimé d'un côté).
+ */
+async function resolveConflictFromStages(cwd, relativePath, operation, strategy) {
+  const gitPath = relativePath.split(path.sep).join('/')
+  const readStage = async (stage) => {
+    const result = await runGitOnce(['show', `:${stage}:${gitPath}`], cwd, { raw: true })
+    return result.ok ? result.stdout : null
+  }
+  const [base, stageOurs, stageTheirs] = await Promise.all([readStage(1), readStage(2), readStage(3)])
+  if (stageOurs === null || stageTheirs === null) return null
+  // Pendant un rebase, git inverse les côtés : stage 2 = distant, stage 3 = mon commit rejoué.
+  const mine = operation === 'rebase' ? stageTheirs : stageOurs
+  const other = operation === 'rebase' ? stageOurs : stageTheirs
+  const flag = strategy === 'both' ? '--union' : strategy === 'theirs' ? '--theirs' : '--ours'
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-resolve-'))
+  try {
+    const minePath = path.join(tempDir, 'mine')
+    const basePath = path.join(tempDir, 'base')
+    const otherPath = path.join(tempDir, 'other')
+    await Promise.all([
+      fs.writeFile(minePath, mine, 'utf8'),
+      fs.writeFile(basePath, base ?? '', 'utf8'),
+      fs.writeFile(otherPath, other, 'utf8'),
+    ])
+    const result = await runGitOnce(['merge-file', '-p', flag, minePath, basePath, otherPath], tempDir, { raw: true })
+    return result.ok ? result.stdout : null
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -1569,8 +1689,54 @@ function createWindow(launchPayload = null) {
     window.show()
   })
 
+  // Avant de fermer, on laisse le renderer enregistrer le document ouvert
+  // (modifications en attente + commit). Délai de sécurité si rien ne répond.
+  window.on('close', (event) => {
+    const state = closeStateByWindow.get(window.id)
+    if (!state?.handlerRegistered || state.confirmed || window.webContents.isDestroyed()) return
+    event.preventDefault()
+    if (state.pending) return
+    state.pending = true
+    window.webContents.send('app:before-close')
+    state.timeout = setTimeout(() => confirmWindowClose(window), 6000)
+  })
+  window.on('closed', () => closeStateByWindow.delete(window.id))
+
   navigateWindowToLaunchPayload(window, launchPayload)
 }
+
+const closeStateByWindow = new Map()
+let isAppQuitting = false
+
+function confirmWindowClose(window) {
+  if (!window || window.isDestroyed()) return
+  const state = closeStateByWindow.get(window.id) ?? {}
+  if (state.timeout) clearTimeout(state.timeout)
+  closeStateByWindow.set(window.id, { ...state, confirmed: true, pending: false, timeout: null })
+  window.close()
+  if (isAppQuitting) app.quit()
+}
+
+app.on('before-quit', () => { isAppQuitting = true })
+
+ipcMain.handle('app:register-close-handler', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (window) closeStateByWindow.set(window.id, { ...(closeStateByWindow.get(window.id) ?? {}), handlerRegistered: true })
+  return { ok: true }
+})
+
+ipcMain.handle('app:unregister-close-handler', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (window) closeStateByWindow.set(window.id, { ...(closeStateByWindow.get(window.id) ?? {}), handlerRegistered: false })
+  return { ok: true }
+})
+
+ipcMain.handle('app:confirm-close', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  // Laisse l'IPC répondre avant que la fenêtre ne soit détruite.
+  setImmediate(() => confirmWindowClose(window))
+  return { ok: true }
+})
 
 function navigateWindowToLaunchPayload(window, launchPayload = null) {
   const query = {}
@@ -1791,8 +1957,7 @@ ipcMain.handle('search-index:read', async () => {
 })
 
 ipcMain.handle('search-index:write', async (_event, content) => {
-  await fs.mkdir(path.dirname(getSearchIndexPath()), { recursive: true })
-  await fs.writeFile(getSearchIndexPath(), String(content ?? ''), 'utf8')
+  await writeFileAtomic(getSearchIndexPath(), String(content ?? ''))
   return { ok: true }
 })
 
@@ -1959,6 +2124,10 @@ ipcMain.handle('app:check-for-updates', async () => {
 
 ipcMain.handle('app:install-update', async () => {
   try {
+    // Le renderer a déjà enregistré le document avant de demander l'installation.
+    for (const window of BrowserWindow.getAllWindows()) {
+      closeStateByWindow.set(window.id, { ...(closeStateByWindow.get(window.id) ?? {}), confirmed: true })
+    }
     autoUpdater.quitAndInstall()
     return { ok: true }
   } catch (error) {
@@ -2063,21 +2232,14 @@ ipcMain.handle('fs:read-file', async (_event, filePath) => {
   if (!isPathInsideAnyKnownRoot(filePath)) {
     throw new Error('Chemin hors du dossier ouvert.')
   }
-  return fs.readFile(filePath, 'utf8')
+  return readFileWithRetry(filePath)
 })
 
 ipcMain.handle('fs:read-file-optional', async (_event, filePath) => {
   if (!isPathInsideAnyKnownRoot(filePath)) {
     throw new Error('Chemin hors du dossier ouvert.')
   }
-  try {
-    return await fs.readFile(filePath, 'utf8')
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return null
-    }
-    throw error
-  }
+  return readFileIfExists(filePath)
 })
 
 ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
@@ -2092,10 +2254,88 @@ ipcMain.handle('fs:get-path-stats', async (_event, targetPath) => {
   }
 })
 
+function assertWritableDocumentPath(filePath) {
+  // Le document ouvert peut appartenir à un autre espace que l'espace courant
+  // (navigation dans la barre latérale) : on accepte tous les espaces connus.
+  if (!isPathInsideAnyKnownRoot(filePath)) {
+    throw new Error('Chemin hors du dossier ouvert.')
+  }
+}
+
 ipcMain.handle('fs:write-file', async (_event, filePath, content) => {
-  assertPathInsideRoot(filePath)
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(filePath, content, 'utf8')
+  assertWritableDocumentPath(filePath)
+  const owningRoot = findOwningRoot(filePath) ?? path.dirname(filePath)
+  await withRepoLock(repoLockKey(owningRoot), () => writeFileAtomic(filePath, String(content ?? '')))
+  return { ok: true }
+})
+
+// Écriture du document ouvert dans l'éditeur. `baseContent` est la version à
+// partir de laquelle l'éditeur a produit `content`. Si le disque a changé
+// entre-temps (pull git, OneDrive, autre instance), on fusionne au lieu
+// d'écraser : la modification distante n'est jamais perdue.
+ipcMain.handle('fs:write-document', async (_event, filePath, content, baseContent, expectedDiskContent) => {
+  assertWritableDocumentPath(filePath)
+  const nextContent = String(content ?? '')
+  const owningRoot = findOwningRoot(filePath) ?? path.dirname(filePath)
+  return withRepoLock(repoLockKey(owningRoot), async () => {
+    const diskContent = await readFileIfExists(filePath)
+    let finalContent = nextContent
+    let merged = false
+    let conflict = false
+    if (
+      typeof baseContent === 'string'
+      && diskContent !== null
+      && diskContent !== baseContent
+      && diskContent !== nextContent
+    ) {
+      const result = await mergeTextThreeWay(baseContent, nextContent, diskContent)
+      finalContent = result.text
+      merged = finalContent !== nextContent
+      conflict = result.conflict
+    }
+    if (diskContent !== finalContent) await writeFileAtomic(filePath, finalContent)
+    // externalChange : le disque avait changé depuis la dernière version connue
+    // du renderer → l'éditeur doit afficher le résultat de la fusion.
+    const externalChange = typeof expectedDiskContent === 'string' && diskContent !== null && diskContent !== expectedDiskContent
+    return { ok: true, content: finalContent, merged, conflict, externalChange }
+  })
+})
+
+// Surveillance du document ouvert (une par fenêtre) : signale toute
+// modification faite hors de l'éditeur (pull, OneDrive, autre application).
+const watchedDocumentByWindow = new Map()
+const watchCleanupRegistered = new Set()
+
+function stopWatchingDocument(webContentsId) {
+  const watched = watchedDocumentByWindow.get(webContentsId)
+  if (!watched) return
+  unwatchFile(watched.path, watched.listener)
+  watchedDocumentByWindow.delete(webContentsId)
+}
+
+ipcMain.handle('fs:watch-document', async (event, filePath) => {
+  const webContents = event.sender
+  stopWatchingDocument(webContents.id)
+  if (!filePath) return { ok: true }
+  assertWritableDocumentPath(filePath)
+  const listener = (current, previous) => {
+    if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) return
+    if (webContents.isDestroyed()) {
+      stopWatchingDocument(webContents.id)
+      return
+    }
+    webContents.send('fs:document-changed', { path: filePath })
+  }
+  watchFile(filePath, { interval: 1000, persistent: false }, listener)
+  watchedDocumentByWindow.set(webContents.id, { path: filePath, listener })
+  if (!watchCleanupRegistered.has(webContents.id)) {
+    watchCleanupRegistered.add(webContents.id)
+    webContents.once('destroyed', () => {
+      watchCleanupRegistered.delete(webContents.id)
+      stopWatchingDocument(webContents.id)
+    })
+  }
+  void cleanupStaleTempFiles(path.dirname(filePath))
   return { ok: true }
 })
 
@@ -2462,7 +2702,10 @@ ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail
     }
   }
   if (!cwd) return { ok: true, committed: false, reason: 'no-root-path' }
+  return withRepoLock(repoLockKey(cwd), () => runAutoSave(cwd, filePath, authorName, authorEmail))
+})
 
+async function runAutoSave(cwd, filePath, authorName, authorEmail) {
   const isRepo = await isGitRepository(cwd)
   if (!isRepo) return { ok: true, committed: false, reason: 'not-a-repo' }
 
@@ -2540,7 +2783,7 @@ ipcMain.handle('git:auto-save', async (_event, filePath, authorName, authorEmail
   }
 
   return { ok: true, committed: true, pushed: true }
-})
+}
 
 ipcMain.handle('holo:read-repo-config', async () => {
   if (!currentRootPath) {
@@ -2583,7 +2826,7 @@ ipcMain.handle('holo:write-space-config', async (_event, spacePath, config) => {
     throw new Error('Chemin non autorisé.')
   }
   const configPath = path.join(normalizedSpacePath, '.holo.json')
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
+  await writeFileAtomic(configPath, JSON.stringify(config, null, 2))
   return { ok: true }
 })
 
@@ -2593,11 +2836,11 @@ ipcMain.handle('holo:write-repo-config', async (_event, config) => {
   }
 
   const configPath = path.join(currentRootPath, '.holo.json')
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8')
+  await writeFileAtomic(configPath, JSON.stringify(config, null, 2))
   return { ok: true }
 })
 
-ipcMain.handle('git:fetch', async () => {
+ipcMain.handle('git:fetch', withCurrentRepoLock(async () => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2611,9 +2854,9 @@ ipcMain.handle('git:fetch', async () => {
     ok: true,
     output: result.stdout,
   }
-})
+}))
 
-ipcMain.handle('git:commit', async (_event, message) => {
+ipcMain.handle('git:commit', withCurrentRepoLock(async (_event, message) => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2669,9 +2912,9 @@ ipcMain.handle('git:commit', async (_event, message) => {
     output: commitResult.stdout,
     pushError: null,
   }
-})
+}))
 
-ipcMain.handle('git:sync', async () => {
+ipcMain.handle('git:sync', withCurrentRepoLock(async () => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2796,9 +3039,9 @@ ipcMain.handle('git:sync', async () => {
     commitMessage,
     error: pushError,
   }
-})
+}))
 
-ipcMain.handle('git:pull', async () => {
+ipcMain.handle('git:pull', withCurrentRepoLock(async () => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2812,15 +3055,26 @@ ipcMain.handle('git:pull', async () => {
     ok: true,
     output: result.stdout,
   }
-})
+}))
 
-// Récupération récurrente en arrière-plan : fetch puis pull en avance rapide
-// (fast-forward) UNIQUEMENT si c'est totalement sans risque, c.-à-d. :
-//   - l'arbre de travail est propre (aucune édition locale non commitée), et
-//   - aucun commit local en attente (pas de divergence).
-// Dans tous les autres cas on ne touche à rien et on renvoie la raison, afin
-// que le renderer affiche une bannière douce plutôt que de risquer un conflit.
-ipcMain.handle('git:pull-if-safe', async () => {
+async function pushCurrentBranch(cwd) {
+  let pushResult = await runGit(['push'], cwd)
+  if (!pushResult.ok) {
+    const branchName = await getCurrentBranch(cwd)
+    if (branchName && /set-upstream|no upstream/i.test(`${pushResult.stderr}\n${pushResult.stdout}`)) {
+      pushResult = await runGit(['push', '--set-upstream', 'origin', branchName], cwd)
+    }
+  }
+  return pushResult
+}
+
+// Synchronisation récurrente en arrière-plan, sans jamais créer de conflit :
+//   - arbre de travail modifié → on ne touche à rien (le renderer committe d'abord) ;
+//   - en retard seulement → avance rapide ;
+//   - en avance seulement → push des commits en attente ;
+//   - divergé → rebase automatique s'il passe sans conflit, sinon annulation
+//     complète et retour 'diverged' (l'utilisateur résout via « Récupérer »).
+ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async () => {
   const cwd = currentRootPath
   if (!cwd) return { ok: true, pulled: false, reason: 'no-root', incoming: 0, outgoing: 0, changedFiles: [] }
 
@@ -2830,6 +3084,10 @@ ipcMain.handle('git:pull-if-safe', async () => {
   const hasOrigin = await hasRemoteNamed(cwd, 'origin')
   if (!hasOrigin) return { ok: true, pulled: false, reason: 'no-remote', incoming: 0, outgoing: 0, changedFiles: [] }
 
+  if ((await getInProgressOperation(cwd)) !== 'none') {
+    return { ok: true, pulled: false, reason: 'operation-in-progress', incoming: 0, outgoing: 0, changedFiles: [] }
+  }
+
   const fetchResult = await runGit(['fetch', '--all', '--prune'], cwd)
   if (!fetchResult.ok) {
     return { ok: false, pulled: false, reason: 'fetch-failed', error: fetchResult.stderr, incoming: 0, outgoing: 0, changedFiles: [] }
@@ -2837,8 +3095,29 @@ ipcMain.handle('git:pull-if-safe', async () => {
 
   const { incoming, outgoing } = await getAheadBehind(cwd)
 
-  // Liste des fichiers qui diffèrent entre l'état local et le distant.
-  const diffResult = await runGit(['diff', '--name-only', 'HEAD', '@{upstream}'], cwd)
+  if (incoming === 0) {
+    if (outgoing > 0) {
+      const statusResult = await runGit(['status', '--porcelain'], cwd)
+      const clean = statusResult.ok && statusResult.stdout.trim() === ''
+      if (clean) {
+        const pushResult = await pushCurrentBranch(cwd)
+        return {
+          ok: true,
+          pulled: false,
+          pushed: pushResult.ok,
+          reason: pushResult.ok ? 'pushed' : 'push-failed',
+          error: pushResult.ok ? undefined : pushResult.stderr,
+          incoming: 0,
+          outgoing: pushResult.ok ? 0 : outgoing,
+          changedFiles: [],
+        }
+      }
+    }
+    return { ok: true, pulled: false, reason: 'up-to-date', incoming, outgoing, changedFiles: [] }
+  }
+
+  // Fichiers modifiés côté distant depuis l'ancêtre commun.
+  const diffResult = await runGit(['diff', '--name-only', 'HEAD...@{upstream}'], cwd)
   const changedFiles = diffResult.ok
     ? diffResult.stdout
       .split('\n')
@@ -2847,11 +3126,7 @@ ipcMain.handle('git:pull-if-safe', async () => {
       .map((rel) => path.join(cwd, rel))
     : []
 
-  if (incoming === 0) {
-    return { ok: true, pulled: false, reason: 'up-to-date', incoming, outgoing, changedFiles: [] }
-  }
-
-  // Y a-t-il des modifications locales non commitées ? → pas sûr, on diffère.
+  // Modifications locales non commitées → pas sûr, on diffère.
   const statusResult = await runGit(['status', '--porcelain'], cwd)
   const hasLocalChanges = statusResult.ok
     && statusResult.stdout.split('\n').map((line) => line.trim()).filter(Boolean).length > 0
@@ -2859,21 +3134,37 @@ ipcMain.handle('git:pull-if-safe', async () => {
     return { ok: true, pulled: false, reason: 'dirty', incoming, outgoing, changedFiles }
   }
 
-  // Commits locaux non poussés → divergence → un rebase pourrait créer un conflit.
   if (outgoing > 0) {
-    return { ok: true, pulled: false, reason: 'diverged', incoming, outgoing, changedFiles }
+    // Divergence : rebase de nos commits sur le distant, uniquement s'il passe
+    // sans conflit. En cas d'échec, on restaure exactement l'état précédent.
+    const rebaseResult = await runGit(['-c', 'core.editor=true', 'rebase', '@{upstream}'], cwd)
+    if (!rebaseResult.ok) {
+      await runGit(['rebase', '--abort'], cwd)
+      return { ok: true, pulled: false, reason: 'diverged', incoming, outgoing, changedFiles }
+    }
+    const pushResult = await pushCurrentBranch(cwd)
+    return {
+      ok: true,
+      pulled: true,
+      pushed: pushResult.ok,
+      reason: 'rebased',
+      error: pushResult.ok ? undefined : pushResult.stderr,
+      incoming: 0,
+      outgoing: pushResult.ok ? 0 : outgoing,
+      changedFiles,
+    }
   }
 
-  // Cas sûr : avance rapide garantie sans conflit ni commit de merge.
+  // Cas simple : avance rapide garantie sans conflit ni commit de merge.
   const ffResult = await runGit(['merge', '--ff-only', '@{upstream}'], cwd)
   if (!ffResult.ok) {
     return { ok: true, pulled: false, reason: 'ff-failed', incoming, outgoing, changedFiles }
   }
 
   return { ok: true, pulled: true, reason: 'pulled', incoming: 0, outgoing, changedFiles }
-})
+}))
 
-ipcMain.handle('git:merge', async (_event, branch) => {
+ipcMain.handle('git:merge', withCurrentRepoLock(async (_event, branch) => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2893,9 +3184,9 @@ ipcMain.handle('git:merge', async (_event, branch) => {
     ok: true,
     output: result.stdout,
   }
-})
+}))
 
-ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
+ipcMain.handle('git:resolve-conflict', withCurrentRepoLock(async (_event, filePath, strategy) => {
   const cwd = ensureRootPath()
   await ensureGitRepository(cwd)
 
@@ -2920,8 +3211,13 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
   const wantMine = normalizedStrategy === 'ours'
 
   const operation = await getInProgressOperation(cwd)
+  const stagedResolution = normalizedStrategy === 'manual'
+    ? null
+    : await resolveConflictFromStages(cwd, relativePath, operation, normalizedStrategy).catch(() => null)
 
-  if (normalizedStrategy === 'both') {
+  if (stagedResolution !== null) {
+    await writeFileAtomic(absoluteFilePath, stagedResolution)
+  } else if (normalizedStrategy === 'both') {
     // Conserver les deux versions : on supprime uniquement les lignes de marqueurs
     // (<<<<<<< / ======= / >>>>>>>) à l'intérieur des blocs de conflit.
     let raw
@@ -2931,7 +3227,7 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
       throw new Error('Impossible de lire le fichier en conflit.')
     }
     const merged = resolveKeepBothSides(raw)
-    await fs.writeFile(absoluteFilePath, merged, 'utf8')
+    await writeFileAtomic(absoluteFilePath, merged)
   } else if (normalizedStrategy === 'manual') {
     // Résolution manuelle : le renderer a déjà écrit le contenu final sur disque.
     // On refuse simplement de finaliser s'il reste des marqueurs de conflit non levés
@@ -3058,7 +3354,7 @@ ipcMain.handle('git:resolve-conflict', async (_event, filePath, strategy) => {
     pushed,
     pushError,
   }
-})
+}))
 
 ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions) => {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')

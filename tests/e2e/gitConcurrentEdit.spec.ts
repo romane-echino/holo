@@ -194,15 +194,12 @@ test.describe('Édition concurrente d un fichier (deux instances Holo, même dé
       await appendToParagraph(instanceB.page, LINE_B, ' (modif Bob)')
       await waitForNewLocalCommit(cloneBDir, bobBaseHead)
 
-      // 5. La sync de fond chez Bob détecte la divergence → bannière douce "Récupérer".
+      // 5-6. La sync de fond chez Bob détecte la divergence et, comme les deux
+      // modifications ne se chevauchent pas, rebase automatiquement : aucune
+      // action de l'utilisateur n'est nécessaire.
       await fireWindowFocus(instanceB.page)
-      const recuperer = instanceB.page.getByRole('button', { name: 'Récupérer', exact: true })
-      await expect(recuperer).toBeVisible({ timeout: 20_000 })
 
-      // 6. Bob clique "Récupérer" → rebase fusionne les deux lignes (pas de conflit).
-      await recuperer.click()
-
-      // 7. L'éditeur de Bob se recharge avec les DEUX modifications.
+      // 7. L'éditeur de Bob se met à jour avec les DEUX modifications.
       await expect(paragraph(instanceB.page, `${LINE_A} (modif Alice)`)).toBeVisible({ timeout: 25_000 })
       await expect(paragraph(instanceB.page, `${LINE_B} (modif Bob)`)).toBeVisible({ timeout: 25_000 })
 

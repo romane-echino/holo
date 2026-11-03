@@ -323,7 +323,7 @@ test.describe('BlockEditor — navigation et structure', () => {
     // Cliquer dans Bloc deux → sélectionner tout → supprimer → backspace
     const blocDeux = paragraphWithText(page, 'Bloc deux')
     await blocDeux.click()
-    await page.keyboard.press('Control+A')
+    await page.keyboard.press('ControlOrMeta+A')
     await page.keyboard.press('Delete')
     // Le bloc est maintenant vide → Backspace le supprime
     await page.keyboard.press('Backspace')

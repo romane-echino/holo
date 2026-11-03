@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
+import { reloadOpenDocument, saveOpenDocument } from '../lib/editorFlush'
+import { notifyError } from '../lib/notify'
 import { useParams } from 'react-router-dom'
 import { getBaseName, getEntryNameError, getParentPath, isSameOrChildPath, normalizeMarkdownFilename } from '../lib/appUtils'
 import { pathReferencesMovedTarget, remapTrackedPath, rewriteMarkdownLinksForMovedPath, rewriteMarkdownLinksForRelocatedSource } from '../lib/markdownLinks'
@@ -1471,9 +1473,14 @@ export function SpaceRoute({
 
   const handleGitSync = useCallback(async () => {
     try {
+      // Le document ouvert est enregistré avant la synchro, puis rechargé :
+      // sinon l'éditeur réécrirait l'ancienne version par-dessus le pull.
+      await saveOpenDocument()
       await window.holo?.gitSync()
+      await reloadOpenDocument()
     } catch (err) {
       console.error('[SpaceRoute] Erreur sync git :', err)
+      notifyError('Synchronisation impossible', err)
     }
   }, [])
 
@@ -1498,6 +1505,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de créer :', err)
+      notifyError(type === 'file' ? 'Impossible de créer le fichier' : 'Impossible de créer le dossier', err)
     }
   }, [rootPath, setTree, onSelectFile])
 
@@ -1515,6 +1523,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de créer depuis modèle :', err)
+      notifyError('Impossible de créer le fichier depuis le modèle', err)
     }
   }, [rootPath, setTree, onSelectFile])
 
@@ -1577,6 +1586,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de déplacer :', err)
+      notifyError('Impossible de déplacer l\'élément', err)
     }
   }, [rootPath, setTree])
 
@@ -1639,6 +1649,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de renommer :', err)
+      notifyError('Impossible de renommer', err)
     }
   }, [rootPath, setTree])
 
@@ -1652,6 +1663,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible de supprimer :', err)
+      notifyError('Impossible de supprimer', err)
     }
   }, [setTree])
 
@@ -1666,6 +1678,7 @@ export function SpaceRoute({
       void window.holo?.gitAutoSave(null as unknown as string)
     } catch (err) {
       console.error('[SpaceRoute] Impossible d\'archiver :', err)
+      notifyError('Impossible d\'archiver', err)
     }
   }, [setTree, refreshArchivedEntries])
 

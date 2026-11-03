@@ -23,6 +23,7 @@ import {
 import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ArrowDownAZ, ArrowUpAZ, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
+import { registerPendingEditFlusher } from '../../../lib/editorFlush'
 import { InlineEditor } from '../InlineEditor'
 import { setClipboardEventData } from '../lib/clipboard'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
@@ -383,9 +384,17 @@ function DateCellInput({ storedNodes, onSave, onTab, onShiftTab, onEscape, cellR
       onSave([])
     } else if (ts !== null) {
       onSave(plainTextToInlineNodes(formatDateValue(ts)))
+    } else {
+      // Texte libre non reconnu comme date (« fin mars », « à définir »…) :
+      // on le conserve tel quel plutôt que de le perdre silencieusement.
+      onSave(plainTextToInlineNodes(value.trim()))
     }
-    // Si non parseable, ne pas écraser la valeur existante
   }, [onSave])
+
+  // Enregistrement forcé (Ctrl+S, pull, fermeture) pendant la saisie.
+  useEffect(() => registerPendingEditFlusher(() => {
+    if (isFocused && localValue !== displayValue) commitValue(localValue)
+  }), [commitValue, displayValue, isFocused, localValue])
 
   return (
     <input
@@ -1915,23 +1924,21 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                                   aria-label={`${col.title || `Colonne ${colIdx + 1}`} ligne ${rowIdx + 1}`}
                                   onChange={(event) => saveCell(row.id, col.id, checkboxCellNodes(event.currentTarget.checked))}
                                   onKeyDown={(e) => {
+                                    // Cellule cible existante : focus immédiat (un focus différé
+                                    // pourrait reprendre la main après une action ultérieure).
                                     if (e.key === 'Tab' && !e.shiftKey) {
                                       e.preventDefault()
-                                      requestAnimationFrame(() => {
-                                        if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
-                                        else if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, 0)
-                                        else if (onTabExit) onTabExit()
-                                        else addRowAt(table.rows.length)
-                                      })
+                                      if (colIdx < table.columns.length - 1) focusCell(rowIdx, colIdx + 1)
+                                      else if (rowIdx < table.rows.length - 1) focusCell(rowIdx + 1, 0)
+                                      else if (onTabExit) requestAnimationFrame(onTabExit)
+                                      else requestAnimationFrame(() => addRowAt(table.rows.length))
                                       return
                                     }
 
                                     if (e.key === 'Tab' && e.shiftKey) {
                                       e.preventDefault()
-                                      requestAnimationFrame(() => {
-                                        if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
-                                        else if (rowIdx > 0) focusCell(rowIdx - 1, table.columns.length - 1)
-                                      })
+                                      if (colIdx > 0) focusCell(rowIdx, colIdx - 1)
+                                      else if (rowIdx > 0) focusCell(rowIdx - 1, table.columns.length - 1)
                                       return
                                     }
 

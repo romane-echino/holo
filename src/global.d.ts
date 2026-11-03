@@ -70,7 +70,8 @@ type HoloGitSyncResult = {
 type HoloGitPullIfSafeResult = {
   ok: boolean
   pulled: boolean
-  reason: 'no-root' | 'not-a-repo' | 'no-remote' | 'fetch-failed' | 'up-to-date' | 'dirty' | 'diverged' | 'ff-failed' | 'pulled'
+  pushed?: boolean
+  reason: 'no-root' | 'not-a-repo' | 'no-remote' | 'operation-in-progress' | 'fetch-failed' | 'up-to-date' | 'pushed' | 'push-failed' | 'dirty' | 'diverged' | 'ff-failed' | 'pulled' | 'rebased'
   incoming: number
   outgoing: number
   changedFiles: string[]
@@ -163,6 +164,12 @@ interface HoloApi {
   readFileOptional: (filePath: string) => Promise<string | null>
   getPathStats: (targetPath: string) => Promise<{ modifiedAt: string; createdAt: string }>
   writeFile: (filePath: string, content: string) => Promise<{ ok: true }>
+  /** Écrit le document ouvert ; fusionne avec le disque s'il a changé depuis `baseContent`. */
+  writeDocument: (filePath: string, content: string, baseContent: string | null, expectedDiskContent: string | null) => Promise<{ ok: true; content: string; merged: boolean; conflict: boolean; externalChange: boolean }>
+  watchDocument: (filePath: string | null) => Promise<{ ok: true }>
+  onDocumentChanged: (callback: (payload: { path: string }) => void) => () => void
+  onBeforeClose: (callback: () => void) => () => void
+  confirmClose: () => Promise<{ ok: true }>
   createFile: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
   createDirectory: (parentDirectoryPath: string, name: string) => Promise<{ ok: true }>
   archivePath: (targetPath: string) => Promise<{ ok: true; archivedPath: string; originalPath: string }>
