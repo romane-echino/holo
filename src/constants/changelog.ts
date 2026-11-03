@@ -2,6 +2,20 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.8.0',
+    releasedAt: '2026-11-03',
+    items: [
+      'Espaces : la liste des espaces montre qui est connecté à chaque espace, et l\'arborescence affiche qui a quel fichier ouvert.',
+      'Espaces : un fichier ou un dossier ajouté, supprimé ou renommé par un collègue apparaît aussitôt chez les autres (et ce qui est ajouté depuis le Finder ou OneDrive aussi).',
+      'Temps réel : saisies simultanées fiabilisées. Plus de texte dupliqué ou mélangé, plus de curseur qui saute dans les tableaux et les listes, les lignes vides et les cases à cocher vides ne disparaissent plus.',
+      'Temps réel : les listes sont transmises pendant la frappe, et une session est reprise sans rien perdre après une coupure réseau, une fermeture ou un plantage.',
+      'Temps réel : plus de bandeau « vos modifications se chevauchent » pendant une édition en direct ; « Récupérer » fonctionne même pendant une synchronisation.',
+      'Images : le lien est relatif au document (lisible dans Gitea), et une image ajoutée par un collègue s\'affiche dès qu\'elle est récupérée.',
+      'Windows : une modification n\'enregistre plus que les lignes modifiées (les fins de ligne Windows faisaient réécrire tout le fichier).',
+      'Barre de mise en forme : affichée sous la sélection quand le texte est en haut de l\'écran.',
+    ],
+  },
+  {
     version: '0.7.1',
     releasedAt: '2026-11-03',
     items: [
