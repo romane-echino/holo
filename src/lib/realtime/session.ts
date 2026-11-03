@@ -31,7 +31,7 @@ export type RealtimeSessionCallbacks = {
   flushLocalEdits: () => Promise<void>
   /** Dernière version poussée du fichier (base de fusion pour des modifications hors session) */
   getUpstreamMarkdown: () => Promise<string | null>
-  /** Fusion 3 voies texte ; en cas de conflit, `ours` l'emporte */
+  /** Fusion 3 voies texte ; en cas de conflit, les deux côtés sont conservés */
   mergeText: (base: string, ours: string, theirs: string) => Promise<string>
   onPeers: (peers: RealtimePeer[]) => void
   onStatus: (status: RealtimeStatus, detail?: string) => void
@@ -232,7 +232,9 @@ export class RealtimeSession {
         this.joined = true
         if (target !== serverText) this.onLocalMarkdown(target)
         if (this.lastText !== localText) this.callbacks.applyRemoteMarkdown(this.lastText)
-        if (server.updates.length > COMPACTION_THRESHOLD && this.isLeader()) void this.compact(server)
+        // N'importe quel arrivant compacte un gros journal : la version du
+        // document refuse une compaction concurrente (aucun risque de perte).
+        if (server.updates.length > COMPACTION_THRESHOLD) void this.compact(server)
       }
 
       this.setLocalAwareness(true)
@@ -263,6 +265,7 @@ export class RealtimeSession {
       if (server.state) this.remoteQueue.push(base64ToBytes(server.state))
       for (const entry of server.updates) this.remoteQueue.push(base64ToBytes(entry.update))
       await this.processRemote()
+      if (server.updates.length > COMPACTION_THRESHOLD) void this.compact(server)
       if (missingForServer.length > 2) {
         this.pendingLocal.push(missingForServer)
         await this.flushPendingPush()

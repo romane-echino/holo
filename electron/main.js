@@ -967,9 +967,10 @@ function findOwningRoot(targetPath) {
 /**
  * Fusion 3 voies texte via `git merge-file` : applique sur `theirs` (disque)
  * les changements faits entre `base` et `ours` (éditeur). Les zones en conflit
- * sont résolues en faveur de `ours` ; aucun marqueur n'est jamais produit.
+ * sont résolues en faveur de `ours`, ou en gardant les deux côtés avec
+ * `conflictResolution: 'union'` ; aucun marqueur n'est jamais produit.
  */
-async function mergeTextThreeWay(base, ours, theirs) {
+async function mergeTextThreeWay(base, ours, theirs, { conflictResolution = 'ours' } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-merge-'))
   try {
     const oursPath = path.join(tempDir, 'ours')
@@ -984,7 +985,8 @@ async function mergeTextThreeWay(base, ours, theirs) {
     if (probe.ok) return { text: probe.stdout, conflict: false }
     // Code de sortie > 0 = nombre de conflits ; < 0 ou erreur = git indisponible.
     if (typeof probe.code !== 'number' || probe.code < 0 || probe.code > 127) return { text: ours, conflict: true, unavailable: true }
-    const resolved = await runGitOnce(['merge-file', '-p', '--ours', oursPath, basePath, theirsPath], tempDir, { raw: true })
+    const flag = conflictResolution === 'union' ? '--union' : '--ours'
+    const resolved = await runGitOnce(['merge-file', '-p', flag, oursPath, basePath, theirsPath], tempDir, { raw: true })
     return { text: resolved.ok ? resolved.stdout : ours, conflict: true }
   } catch {
     return { text: ours, conflict: true, unavailable: true }
