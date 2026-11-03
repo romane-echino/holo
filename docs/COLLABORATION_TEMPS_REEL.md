@@ -1,6 +1,14 @@
 # Édition en temps réel (CRDT) avec Codenotch comme relais
 
-État : étude de faisabilité, rien n'est implémenté.
+État : **version 1 implémentée**.
+
+- Relais : [holo-realtime/](../holo-realtime/README.md).
+- Client : `electron/realtime.js` (transport), `src/lib/realtime/session.ts` (Yjs) et
+  `src/hooks/useRealtimeDocument.ts`.
+- Test : `tests/e2e/realtimeCollab.spec.ts`.
+
+La section « Implémentation » plus bas décrit les choix faits. Le reste de ce document est
+l'étude initiale.
 
 ## Verdict
 
@@ -89,3 +97,52 @@ décroché parce qu'il avait 256 évènements de retard.
 3. Liaison avec l'éditeur de blocs et présence.
 4. Coordination de l'écrivain disque et git, tests à plusieurs instances, comme
    `tests/e2e/gitConcurrentEdit.spec.ts`.
+
+## Implémentation (v1)
+
+**Document partagé.** Un `Y.Text` contient le Markdown tel que l'éditeur l'émet. On a renoncé
+au `Y.Array` de blocs : une saisie ne touche qu'un bloc à la fois, donc un diff préfixe/suffixe
+la traduit en une seule opération Yjs, et la réconciliation par bloc (`reconcileBlocks`)
+préserve déjà le focus lors des mises à jour reçues. Deux saisies concurrentes dans le même
+paragraphe sont fusionnées au caractère près.
+
+**Identité.** `UUID v5(URL du dépôt + chemin du fichier)`, calculé par chaque poste. Seuls les
+espaces liés à un dépôt distant sont partagés.
+
+**Jonction.**
+- Personne n'est établi sur le document : le poste redémarre la session à partir de son fichier
+  (`PUT /state` avec `reset`, nouvelle époque). C'est git qui fait foi.
+- Des participants sont établis : le poste adopte leur état et y fusionne ses éventuelles
+  modifications locales, par une fusion 3 voies dont la base est la dernière version poussée
+  du fichier.
+- Deux arrivées simultanées sont départagées par la version du document : le second reçoit
+  `409` et rejoint la session du premier.
+
+**Reconnexion.** À chaque évènement `ready`, le poste recharge l'état. Il rejoue ce qui lui
+manque, puis renvoie ce qui manque au serveur (vecteur d'état). Si l'époque a changé, il
+rejoint à neuf.
+
+**Disque et git.** Chaque participant continue d'écrire (fusion 3 voies) et de committer comme
+d'habitude. Les commits des participants contiennent les mêmes modifications et se
+réconcilient sans conflit.
+
+**Modifications venues du disque** (pull git d'un collègue hors session, OneDrive). Chaque
+participant les reçoit. Seul le meneur, le plus petit identifiant de présence, les réinjecte
+dans la session, sinon elles seraient insérées en double. Chez les autres, la fusion à
+l'écriture les préserve sur disque jusqu'à ce qu'elles arrivent par la session.
+
+**Présence.** Le protocole *awareness* de Yjs porte sur un document dédié, stable pendant
+toute la session. L'en-tête du document affiche les avatars et l'état (« En direct »,
+« Reconnexion… »).
+
+**Configuration.** Elle se fait dans **Paramètres → Collaboration** et est propre à chaque
+poste : adresse du relais, jeton chiffré avec `safeStorage`.
+
+### Limites connues
+
+- Pas de curseurs distants dans le texte : seuls les avatars indiquent qui est présent.
+- La compaction n'a lieu qu'à la jonction, au-delà de 200 modifications en attente.
+- Pas de contrôle d'accès par espace. Toute personne de l'organisation disposant d'un jeton
+  peut suivre un document dont elle connaît l'identifiant, c'est-à-dire l'URL du dépôt et le
+  chemin.
+
