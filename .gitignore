@@ -4,3 +4,8 @@
 /test-results
 /playwright-report
 /.holo/search-index.json
+# Fichiers système / journaux de build
+.DS_Store
+*.log
+build_output.txt
+/dist-pwa

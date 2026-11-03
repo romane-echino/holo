@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import WindowControls from "./WindowControls";
 import { ALargeSmall, Settings, Bug, Monitor, RefreshCw, Lock, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useWorkspace } from '../contexts/WorkspaceContext'
-import { useAppUpdates } from '../hooks'
+import { useAppUpdates } from '../hooks/useAppUpdates'
 import { cn } from '../utils/global'
 import { FontSizePopover } from './FontSizePopover';
 
