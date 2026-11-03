@@ -63,6 +63,37 @@ function splitLines(text: string): string[] {
  * dupliquerait ou effacerait sa saisie.
  */
 export function multiSpliceDiff(before: string, after: string): TextSplice[] {
+  let previousEnd = 0
+  return rawMultiSpliceDiff(before, after).map((splice) => {
+    const anchored = anchorBlockSplice(before, splice)
+    const result = anchored.index >= previousEnd ? anchored : splice
+    previousEnd = result.index + result.remove
+    return result
+  })
+}
+
+/**
+ * Un bloc entier supprimé ou inséré est rattaché à la fin du bloc précédent :
+ * « \n\nBloc » plutôt que « Bloc\n\n » (les deux sont équivalents). Si un
+ * collègue tape au même moment dans le bloc supprimé, ses caractères restent
+ * alors collés à la fin du bloc précédent, au lieu d'être collés au début du
+ * bloc suivant, ce qui peut casser sa structure (ligne d'en-tête d'un tableau
+ * qui devient du texte).
+ */
+function anchorBlockSplice(before: string, splice: TextSplice): TextSplice {
+  const removed = before.slice(splice.index, splice.index + splice.remove)
+  const pureInsert = splice.remove === 0 && splice.insert.endsWith('\n\n')
+  const pureRemove = splice.insert === '' && removed.endsWith('\n\n')
+  if (!pureInsert && !pureRemove) return splice
+  if (splice.index < 2 || before.slice(splice.index - 2, splice.index) !== '\n\n') return splice
+  // Le bloc précédent doit se terminer juste avant le séparateur (pas une ligne vide de plus).
+  if (splice.index >= 3 && before[splice.index - 3] === '\n') return splice
+  return pureInsert
+    ? { index: splice.index - 2, remove: 0, insert: `\n\n${splice.insert.slice(0, -2)}` }
+    : { index: splice.index - 2, remove: splice.remove, insert: '' }
+}
+
+function rawMultiSpliceDiff(before: string, after: string): TextSplice[] {
   const outer = singleSpliceDiff(before, after)
   if (!outer) return []
   const linesBefore = splitLines(before.slice(outer.index, outer.index + outer.remove))
@@ -136,4 +167,39 @@ export class PayloadCipher {
       return null
     }
   }
+}
+
+/**
+ * Applique à `theirs` les modifications faites entre `base` et `ours`, au
+ * caractère près. Sert à rattraper une saisie faite pendant qu'on rejoignait
+ * une session : `base` est le texte au début de la jonction, `ours` le texte
+ * de l'éditeur à la fin, `theirs` le texte de la session rejointe.
+ */
+export function rebaseText(base: string, ours: string, theirs: string): string {
+  const local = multiSpliceDiff(base, ours)
+  if (local.length === 0) return theirs
+  const remote = multiSpliceDiff(base, theirs)
+  // Position dans `theirs` d'un indice de `base`.
+  const map = (index: number) => {
+    let shift = 0
+    for (const splice of remote) {
+      if (splice.index + splice.remove <= index) shift += splice.insert.length - splice.remove
+      else if (splice.index < index) return splice.index + shift + splice.insert.length
+      else break
+    }
+    return index + shift
+  }
+  let result = theirs
+  for (const splice of [...local].reverse()) {
+    // Même modification déjà présente au même endroit de l'autre côté (ou
+    // contenue dans une saisie plus longue) : elle ne compte qu'une fois.
+    const alreadyThere = remote.some((other) => other.index === splice.index
+      && other.remove === splice.remove
+      && (splice.insert === '' ? other.insert === '' : other.insert.includes(splice.insert)))
+    if (alreadyThere) continue
+    const start = map(splice.index)
+    const end = Math.max(start, map(splice.index + splice.remove))
+    result = result.slice(0, start) + splice.insert + result.slice(end)
+  }
+  return result
 }

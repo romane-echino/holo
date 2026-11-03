@@ -16,7 +16,7 @@
  */
 import * as Y from 'yjs'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
-import { PayloadCipher, multiSpliceDiff } from './encoding'
+import { PayloadCipher, multiSpliceDiff, rebaseText } from './encoding'
 
 export type RealtimeUser = { name: string; email: string; color: string }
 /** Position du curseur : bloc (rang dans le document), champ éditable du bloc (ex. cellule), position dans son texte */
@@ -33,6 +33,8 @@ export type RealtimeSessionCallbacks = {
   flushLocalEdits: () => Promise<void>
   /** Dernière version poussée du fichier (base de fusion pour des modifications hors session) */
   getUpstreamMarkdown: () => Promise<string | null>
+  /** Date de dernière modification du fichier sur ce poste (ms), ou null */
+  getLocalModifiedAt?: () => Promise<number | null>
   /** Fusion 3 voies texte ; en cas de conflit, les deux côtés sont conservés */
   mergeText: (base: string, ours: string, theirs: string) => Promise<string>
   onPeers: (peers: RealtimePeer[]) => void
@@ -48,6 +50,13 @@ const REMOTE_ORIGIN = 'holo-remote'
 const PUSH_INTERVAL_MS = 120
 const AWARENESS_THROTTLE_MS = 250
 const PEER_DISCOVERY_MS = 1500
+const LOCAL_STATE_SAVE_MS = 300
+/**
+ * Journal non vide : la session a servi depuis la dernière compaction, des
+ * participants sont peut-être là. On les attend plus longtemps avant de
+ * conclure qu'on est seul (ce qui redémarre la session pour tout le monde).
+ */
+const PEER_DISCOVERY_ACTIVE_MS = 5000
 const COMPACTION_THRESHOLD = 200
 const MAX_JOIN_ATTEMPTS = 3
 
@@ -88,6 +97,7 @@ export class RealtimeSession {
   private stopped = false
   private pendingLocal: Uint8Array[] = []
   private pushTimer: ReturnType<typeof setTimeout> | null = null
+  private saveTimer: ReturnType<typeof setTimeout> | null = null
   private pushing = false
   private remoteQueue: Uint8Array[] = []
   private processingRemote = false
@@ -118,12 +128,22 @@ export class RealtimeSession {
 
   /** Saisie locale (markdown complet émis par l'éditeur). */
   onLocalMarkdown(markdown: string): void {
+    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__ && (!this.joined || !this.doc)) {
+      console.info('[holo-realtime] envoi ignoré (hors session)', JSON.stringify({ joined: this.joined, splices: multiSpliceDiff(this.lastText, markdown).map((splice) => splice.insert) }))
+    }
     if (!this.joined || !this.doc || markdown === this.lastText) return
     const text = this.doc.getText('markdown')
     // Zones modifiées séparément, de la dernière à la première (les indices
     // des précédentes restent valables).
     const splices = multiSpliceDiff(this.lastText, markdown)
     if (splices.length === 0) return
+    // Diagnostic (activé par les tests) : chaque modification envoyée à la session.
+    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
+      console.info('[holo-realtime] envoi', JSON.stringify(splices.map((splice) => ({ at: splice.index, del: this.lastText.slice(splice.index, splice.index + splice.remove), ins: splice.insert }))))
+      for (const splice of splices) {
+        if (splice.remove > 0) console.info('[holo-realtime] suppression locale', JSON.stringify({ removed: this.lastText.slice(splice.index, splice.index + splice.remove), inserted: splice.insert }))
+      }
+    }
     this.doc.transact(() => {
       for (const splice of [...splices].reverse()) {
         if (splice.remove > 0) text.delete(splice.index, splice.remove)
@@ -192,6 +212,8 @@ export class RealtimeSession {
       const update = encodeAwarenessUpdate(this.awareness, [presenceId])
       await this.api.pushAwareness(this.ref.documentId, { awareness: await this.cipher.seal(update), clientId: String(presenceId) }).catch(() => undefined)
     }
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    await this.saveLocalState().catch(() => undefined)
     this.unsubscribeEvents?.()
     await this.api.unsubscribe(this.ref.documentId).catch(() => undefined)
     this.awareness?.destroy()
@@ -238,12 +260,19 @@ export class RealtimeSession {
       const serverDoc = await buildDoc(this.cipher, server)
       const serverText = serverDoc.getText('markdown').toString()
 
-      // Annonce de notre arrivée, puis écoute des participants déjà présents.
+      // Annonce de notre arrivée, puis écoute des participants déjà présents
+      // (on arrête d'attendre dès qu'un participant établi répond).
       this.epoch = server.epoch
       this.setLocalAwareness(false)
-      await sleep(PEER_DISCOVERY_MS)
+      const discoveryMs = server.updates.length > 0 ? PEER_DISCOVERY_ACTIVE_MS : PEER_DISCOVERY_MS
+      const discoveryEnd = Date.now() + discoveryMs
+      const findEstablished = () => this.getPeerStates().filter((state) => state.established && state.epoch === server.epoch)
+      while (Date.now() < discoveryEnd && findEstablished().length === 0 && server.epoch && serverText !== '') {
+        await sleep(100)
+        if (this.stopped) return
+      }
       if (this.stopped) return
-      const establishedPeers = this.getPeerStates().filter((state) => state.established && state.epoch === server.epoch)
+      const establishedPeers = findEstablished()
 
       // Les frappes en attente doivent faire partie de l'état de départ.
       await this.callbacks.flushLocalEdits()
@@ -251,6 +280,7 @@ export class RealtimeSession {
 
       if (!server.epoch || serverText === '' || establishedPeers.length === 0) {
         // Seul sur le document : la session repart du fichier local.
+        console.info('[holo-realtime] seul sur le document : nouvelle session', { attempt, journal: server.updates.length })
         const freshDoc = new Y.Doc()
         freshDoc.getText('markdown').insert(0, localText)
         const result = await this.api.compact(this.ref.documentId, {
@@ -273,18 +303,46 @@ export class RealtimeSession {
       } else {
         // Participants présents : leur état fait foi, nos modifications hors
         // session y sont fusionnées (base : dernière version poussée du fichier).
-        let target = serverText
-        if (localText !== serverText) {
+        // État Yjs gardé par ce poste lors de sa dernière participation (même
+        // époque) : Yjs le fusionne sans rien dupliquer, et ce qui n'avait pas
+        // été envoyé (fermeture, plantage) est récupéré.
+        const serverVector = Y.encodeStateVector(serverDoc)
+        const cached = await this.mergeLocalState(serverDoc, server.epoch)
+        const sessionText = serverDoc.getText('markdown').toString()
+        let target = sessionText
+        if (cached !== null) {
+          // Le fichier n'est fusionné que s'il est plus récent que l'état gardé
+          // (saisie après le dernier enregistrement, ou modifications faites
+          // hors session). Plus ancien, il est simplement en retard : ses
+          // différences ne sont pas des suppressions voulues.
+          const modifiedAt = await this.callbacks.getLocalModifiedAt?.().catch(() => null) ?? null
+          const fileIsNewer = modifiedAt !== null && modifiedAt > cached.savedAt + 1000
+          if (fileIsNewer && localText !== cached.text) target = rebaseText(cached.text, localText, sessionText)
+        } else if (localText !== sessionText) {
           const upstream = await this.callbacks.getUpstreamMarkdown().catch(() => null)
           if (upstream !== null && upstream !== localText) {
-            target = await this.callbacks.mergeText(upstream, serverText, localText).catch(() => serverText)
+            target = await this.callbacks.mergeText(upstream, sessionText, localText).catch(() => sessionText)
           }
         }
+        // Ce qui a été tapé pendant la jonction (lecture de l'état, fusion) est
+        // rattrapé au caractère près, sinon l'affichage de la session l'écraserait.
+        await this.callbacks.flushLocalEdits()
+        if (this.stopped) return
+        const latestLocal = this.callbacks.getEditorMarkdown()
+        if (latestLocal !== localText) target = rebaseText(localText, latestLocal, target)
         this.attachDoc(serverDoc, server.epoch)
-        this.lastText = serverText
+        this.lastText = sessionText
         this.joined = true
-        if (target !== serverText) this.onLocalMarkdown(target)
-        if (this.lastText !== localText) this.callbacks.applyRemoteMarkdown(this.lastText)
+        if (cached !== null) {
+          // Nos anciennes modifications que le relais n'avait pas reçues.
+          const missing = Y.encodeStateAsUpdate(serverDoc, serverVector)
+          if (missing.length > 2) {
+            this.pendingLocal.push(missing)
+            this.schedulePush()
+          }
+        }
+        if (target !== sessionText) this.onLocalMarkdown(target)
+        if (this.lastText !== latestLocal) this.callbacks.applyRemoteMarkdown(this.lastText)
         // N'importe quel arrivant compacte un gros journal : la version du
         // document refuse une compaction concurrente (aucun risque de perte).
         if (server.updates.length > COMPACTION_THRESHOLD) void this.compact(server)
@@ -307,6 +365,7 @@ export class RealtimeSession {
       const server = await this.api.getState(this.ref.documentId)
       if (server.epoch !== this.epoch) {
         // La session a été redémarrée entre-temps : on la rejoint à neuf.
+        console.info('[holo-realtime] session redémarrée par un autre poste : nouvelle jonction')
         await this.callbacks.flushLocalEdits()
         this.detachDoc()
         await this.join()
@@ -342,10 +401,49 @@ export class RealtimeSession {
     this.undoManager = new Y.UndoManager(doc.getText('markdown'), { trackedOrigins: new Set([LOCAL_ORIGIN]), captureTimeout: 600 })
     // Saisies locales et annulations / rétablissements partent vers le relais.
     doc.on('update', (update: Uint8Array, origin: unknown) => {
+      this.scheduleLocalStateSave()
       if (origin === REMOTE_ORIGIN) return
       this.pendingLocal.push(update)
       this.schedulePush()
     })
+    this.scheduleLocalStateSave()
+  }
+
+  /** Enregistre (chiffré, sur ce poste) l'état Yjs du document, au plus toutes les 300 ms. */
+  private scheduleLocalStateSave() {
+    if (this.saveTimer || this.stopped || !this.api.saveLocalState) return
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null
+      void this.saveLocalState().catch(() => undefined)
+    }, LOCAL_STATE_SAVE_MS)
+  }
+
+  private async saveLocalState() {
+    if (!this.doc || !this.api.saveLocalState) return
+    const state = await this.cipher.seal(Y.encodeStateAsUpdate(this.doc))
+    await this.api.saveLocalState(this.ref.documentId, { epoch: this.epoch, state })
+  }
+
+  /**
+   * Fusionne dans `doc` l'état Yjs gardé par ce poste pour cette époque.
+   * Renvoie le texte de cet état gardé et sa date, ou null s'il n'y en a pas.
+   */
+  private async mergeLocalState(doc: Y.Doc, epoch: string | null): Promise<{ text: string; savedAt: number } | null> {
+    if (!epoch || !this.api.loadLocalState) return null
+    const cached = await this.api.loadLocalState(this.ref.documentId).catch(() => null)
+    if (!cached || cached.epoch !== epoch) return null
+    const bytes = await this.cipher.open(cached.state)
+    if (!bytes) return null
+    const cachedDoc = new Y.Doc()
+    try {
+      Y.applyUpdate(cachedDoc, bytes)
+      Y.applyUpdate(doc, bytes, REMOTE_ORIGIN)
+      return { text: cachedDoc.getText('markdown').toString(), savedAt: cached.savedAt ?? 0 }
+    } catch {
+      return null
+    } finally {
+      cachedDoc.destroy()
+    }
   }
 
   private detachDoc() {

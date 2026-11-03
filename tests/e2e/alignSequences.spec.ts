@@ -4,7 +4,7 @@
  */
 import { test, expect } from '@playwright/test'
 import { alignSequences } from '../../src/lib/alignSequences'
-import { multiSpliceDiff } from '../../src/lib/realtime/encoding'
+import { multiSpliceDiff, rebaseText } from '../../src/lib/realtime/encoding'
 
 test.describe('alignSequences', () => {
   test('séquences identiques : tout est apparié à l identique', () => {
@@ -109,5 +109,53 @@ test.describe('multiSpliceDiff', () => {
         expect(splices[index].index).toBeGreaterThanOrEqual(splices[index - 1].index + splices[index - 1].remove)
       }
     }
+  })
+})
+
+test.describe('rebaseText', () => {
+  test('saisie locale et modifications distantes ailleurs : les deux sont gardées', () => {
+    const base = 'Para un.\n\nPara deux.\n\nPara trois.\n'
+    const ours = base.replace('Para deux.', 'Para deux. bo12q')
+    const theirs = base.replace('Para un.', 'Para un. al3q').replace('Para trois.', 'Para trois. ch9q')
+    expect(rebaseText(base, ours, theirs)).toBe('Para un. al3q\n\nPara deux. bo12q\n\nPara trois. ch9q\n')
+  })
+
+  test('saisie à la suite d un texte modifié à distance dans le même paragraphe', () => {
+    const base = 'Item un al1q\n'
+    const ours = 'Item un al1q bo2q\n'
+    const theirs = 'Item un al1q ch3q\n'
+    const result = rebaseText(base, ours, theirs)
+    expect(result).toContain('bo2q')
+    expect(result).toContain('ch3q')
+    expect(result.split('al1q').length - 1).toBe(1)
+  })
+
+  test('rien de local : le texte distant est rendu tel quel', () => {
+    expect(rebaseText('a\n', 'a\n', 'a b\n')).toBe('a b\n')
+  })
+})
+
+test.describe('multiSpliceDiff : blocs entiers rattachés au bloc précédent', () => {
+  test('un paragraphe supprimé emporte la ligne vide qui le précède', () => {
+    const before = 'Para un.\n\nbo2q al1\n\n| A | B |\n| --- | --- |\n'
+    const after = 'Para un.\n\n| A | B |\n| --- | --- |\n'
+    const splices = multiSpliceDiff(before, after)
+    expect(splices).toEqual([{ index: 'Para un.'.length, remove: '\n\nbo2q al1'.length, insert: '' }])
+  })
+
+  test('un paragraphe inséré est rattaché à la fin du précédent', () => {
+    const before = 'Para un.\n\n| A | B |\n'
+    const after = 'Para un.\n\nal1q\n\n| A | B |\n'
+    const splices = multiSpliceDiff(before, after)
+    expect(splices).toEqual([{ index: 'Para un.'.length, remove: 0, insert: '\n\nal1q' }])
+  })
+})
+
+test.describe('rebaseText : modification déjà présente', () => {
+  test('une saisie déjà reçue par la session n est pas réappliquée (pas de doublon)', () => {
+    const base = 'Para un.\n\nPara fin.\n'
+    const ours = 'Para un.\n\nal47q\n\nPara fin.\n'
+    const theirs = 'Para un.\n\nal47q\n\nch50q\n\nPara fin.\n'
+    expect(rebaseText(base, ours, theirs)).toBe(theirs)
   })
 })

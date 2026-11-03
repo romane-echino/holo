@@ -1940,6 +1940,8 @@ async function getRootCommits(root) {
 registerRealtimeIpc({
   ipcMain,
   net,
+  getDataDir: () => getHoloDataDir(),
+  writeFileAtomic,
   getRootCommits,
   getUpstreamFileContent,
   mergeText: mergeTextThreeWay,
@@ -2565,24 +2567,29 @@ ipcMain.handle('fs:write-document', async (_event, filePath, content, baseConten
   const owningRoot = findOwningRoot(filePath) ?? path.dirname(filePath)
   return withRepoLock(repoLockKey(owningRoot), async () => {
     const diskContent = await readFileIfExists(filePath)
-    let finalContent = nextContent
+    // Fins de ligne : git pour Windows extrait les fichiers en CRLF, l'éditeur
+    // produit du LF. La fusion se fait en LF (sinon chaque ligne paraît
+    // modifiée et tout le fichier serait réécrit), puis le fichier garde ses
+    // fins de ligne d'origine.
+    const toLf = (text) => text.replace(/\r\n/g, '\n')
+    const usesCrlf = diskContent !== null && diskContent.includes('\r\n')
+    const diskLf = diskContent === null ? null : toLf(diskContent)
+    const baseLf = typeof baseContent === 'string' ? toLf(baseContent) : null
+    const nextLf = toLf(nextContent)
+    let finalLf = nextLf
     let merged = false
     let conflict = false
-    if (
-      typeof baseContent === 'string'
-      && diskContent !== null
-      && diskContent !== baseContent
-      && diskContent !== nextContent
-    ) {
-      const result = await mergeTextThreeWay(baseContent, nextContent, diskContent)
-      finalContent = result.text
-      merged = finalContent !== nextContent
+    if (baseLf !== null && diskLf !== null && diskLf !== baseLf && diskLf !== nextLf) {
+      const result = await mergeTextThreeWay(baseLf, nextLf, diskLf)
+      finalLf = result.text
+      merged = finalLf !== nextLf
       conflict = result.conflict
     }
+    const finalContent = usesCrlf ? finalLf.replace(/\n/g, '\r\n') : finalLf
     if (diskContent !== finalContent) await writeFileAtomic(filePath, finalContent)
     // externalChange : le disque avait changé depuis la dernière version connue
     // du renderer → l'éditeur doit afficher le résultat de la fusion.
-    const externalChange = typeof expectedDiskContent === 'string' && diskContent !== null && diskContent !== expectedDiskContent
+    const externalChange = typeof expectedDiskContent === 'string' && diskLf !== null && diskLf !== toLf(expectedDiskContent)
     return { ok: true, content: finalContent, merged, conflict, externalChange }
   })
 })
@@ -3604,6 +3611,7 @@ ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async (_event, options) =
       incoming: 0,
       outgoing: pushResult.ok ? 0 : pendingOutgoing,
       changedFiles,
+      keptLiveFiles: keptLiveFiles.map(({ file }) => path.join(cwd, file)),
     }
   }
 
@@ -3614,7 +3622,7 @@ ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async (_event, options) =
   }
   await restoreSessionLiveFiles(cwd, keptLiveFiles)
 
-  return { ok: true, pulled: true, reason: 'pulled', incoming: 0, outgoing, changedFiles }
+  return { ok: true, pulled: true, reason: 'pulled', incoming: 0, outgoing, changedFiles, keptLiveFiles: keptLiveFiles.map(({ file }) => path.join(cwd, file)) }
 }))
 
 ipcMain.handle('git:merge', withCurrentRepoLock(async (_event, branch) => {

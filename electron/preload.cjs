@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('holo', {
     testConnection: (candidate) => ipcRenderer.invoke('realtime:test-connection', candidate),
     resolveDocument: (filePath) => ipcRenderer.invoke('realtime:resolve-document', filePath),
     resolveSpace: (rootPath) => ipcRenderer.invoke('realtime:resolve-space', rootPath),
+    saveLocalState: (documentId, payload) => ipcRenderer.invoke('realtime:save-local-state', documentId, payload),
+    loadLocalState: (documentId) => ipcRenderer.invoke('realtime:load-local-state', documentId),
     subscribe: (documentId) => ipcRenderer.invoke('realtime:subscribe', documentId),
     unsubscribe: (documentId) => ipcRenderer.invoke('realtime:unsubscribe', documentId),
     getState: (documentId) => ipcRenderer.invoke('realtime:get-state', documentId),

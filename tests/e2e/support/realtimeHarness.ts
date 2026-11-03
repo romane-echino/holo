@@ -90,17 +90,26 @@ export async function startGitHttpServer(projectRoot: string) {
 
 export type Launched = { app: ElectronApplication; page: Page; configHome: string }
 
-export async function launchHolo(rootPath: string, filePath: string, author: string, email: string): Promise<Launched> {
-  const configHome = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-rt-spaces-config-'))
-  await fs.mkdir(path.join(configHome, 'holo'), { recursive: true })
-  await fs.writeFile(path.join(configHome, 'holo', 'holo-config.json'), JSON.stringify({
-    'app-onboarding-done': true,
-    'realtime-prompt-dismissed': true,
-    'app-author': author,
-    'git-email': email,
-    'realtime-enabled': true,
-    'realtime-server-url': RELAY_URL,
-  }), 'utf8')
+export async function launchHolo(
+  rootPath: string,
+  filePath: string,
+  author: string,
+  email: string,
+  options: { configHome?: string } = {},
+): Promise<Launched> {
+  // configHome : relance de la même personne (après un plantage) avec sa configuration.
+  const configHome = options.configHome ?? await fs.mkdtemp(path.join(os.tmpdir(), 'holo-rt-spaces-config-'))
+  if (!options.configHome) {
+    await fs.mkdir(path.join(configHome, 'holo'), { recursive: true })
+    await fs.writeFile(path.join(configHome, 'holo', 'holo-config.json'), JSON.stringify({
+      'app-onboarding-done': true,
+      'realtime-prompt-dismissed': true,
+      'app-author': author,
+      'git-email': email,
+      'realtime-enabled': true,
+      'realtime-server-url': RELAY_URL,
+    }), 'utf8')
+  }
   const app = await electron.launch({
     executablePath: electronExecutable,
     args: [MAIN_PATH, `--holo-root=${rootPath}`, `--holo-file=${filePath}`],
@@ -116,7 +125,14 @@ export async function launchHolo(rootPath: string, filePath: string, author: str
  * Dépôt partagé : un dépôt nu servi en HTTP et un clone par personne.
  * `files` : contenu initial (chemins relatifs).
  */
-export async function setupSharedRepository(people: string[], files: Record<string, string>) {
+export async function setupSharedRepository(
+  people: string[],
+  files: Record<string, string>,
+  options: {
+    /** Options git de clonage par personne, ex. `['-c', 'core.autocrlf=true']` pour simuler Windows */
+    cloneArgs?: Record<string, string[]>
+  } = {},
+) {
   const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'holo-team-')))
   const projectRoot = path.join(base, 'server')
   await fs.mkdir(projectRoot)
@@ -136,7 +152,7 @@ export async function setupSharedRepository(people: string[], files: Record<stri
   const clones: Record<string, string> = {}
   for (const person of people) {
     const dir = path.join(base, person)
-    await git(base, 'clone', `${server.baseUrl}/docs.git`, dir)
+    await git(base, 'clone', ...(options.cloneArgs?.[person] ?? []), `${server.baseUrl}/docs.git`, dir)
     await git(dir, 'config', 'user.name', person)
     await git(dir, 'config', 'user.email', `${person}@example.com`)
     clones[person] = dir
@@ -149,4 +165,20 @@ export async function setupSharedRepository(people: string[], files: Record<stri
       await fs.rm(base, { recursive: true, force: true }).catch(() => {})
     },
   }
+}
+
+/**
+ * Coupe (ou rétablit) l'accès réseau d'une instance au relais : les requêtes
+ * passent par un proxy mort et les connexions ouvertes (flux SSE) sont fermées.
+ * git (processus séparé) n'est pas concerné.
+ */
+export async function setRelayReachable(launched: Launched, reachable: boolean) {
+  await launched.app.evaluate(async ({ session }, isReachable) => {
+    if (isReachable) {
+      await session.defaultSession.setProxy({ mode: 'direct' })
+    } else {
+      await session.defaultSession.setProxy({ proxyRules: 'http=127.0.0.1:9;https=127.0.0.1:9', proxyBypassRules: '<-loopback>' })
+    }
+    await session.defaultSession.closeAllConnections()
+  }, reachable)
 }

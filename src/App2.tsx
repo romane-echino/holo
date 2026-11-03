@@ -16,6 +16,7 @@ import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
+import { multiSpliceDiff } from './lib/realtime/encoding'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { RealtimeSetup, connectRealtimeServer } from './popup/RealtimeSetup'
@@ -619,12 +620,14 @@ export default function App2() {
   //                de la fusion 3 voies faite par fs:write-document.
   // expectedDisk : dernier contenu disque connu (lu ou écrit) ; toute
   //                différence signale une modification externe (pull, OneDrive…).
-  const docSyncRef = useRef<{ path: string; editorState: string; expectedDisk: string } | null>(null)
+  // lastWritten : dernier contenu écrit sur disque (base de fusion d'une réécriture).
+  const docSyncRef = useRef<{ path: string; editorState: string; expectedDisk: string; lastWritten?: string } | null>(null)
   const [externalRevision, setExternalRevision] = useState(0)
   // Session temps réel du document ouvert (voir useRealtimeDocument plus bas).
-  const realtimeRef = useRef<{ onLocalMarkdown: (markdown: string) => void; shouldApplyExternalChanges: () => boolean }>({
+  const realtimeRef = useRef<{ onLocalMarkdown: (markdown: string) => void; shouldApplyExternalChanges: () => boolean; hasSession: () => boolean }>({
     onLocalMarkdown: () => {},
     shouldApplyExternalChanges: () => true,
+    hasSession: () => false,
   })
   const initDocumentSync = useCallback((path: string, diskContent: string) => {
     docSyncRef.current = { path, editorState: normalizeDocumentMarkdown(diskContent), expectedDisk: diskContent }
@@ -953,6 +956,7 @@ export default function App2() {
     setExternalRevision((revision) => revision + 1)
     setLiveMarkdown(diskContent)
     updateIndexEntry(path, diskContent)
+    if (origin === 'disk' && realtimeLiveRef.current) console.info('[holo-realtime] modification venue du disque réinjectée dans la session', { length: normalized.length })
     realtimeRef.current.onLocalMarkdown(normalized)
   }, [updateIndexEntry])
 
@@ -982,6 +986,7 @@ export default function App2() {
         const current = docSyncRef.current
         if (current && isSamePath(current.path, job.path)) {
           current.expectedDisk = result.content
+          current.lastWritten = job.content
           if (result.externalChange && result.content !== job.content) externalChangePendingRef.current = true
         }
         updateIndexEntry(job.path, result.content)
@@ -1032,6 +1037,30 @@ export default function App2() {
     return writeLoopRef.current
   }, [drainWriteQueue])
 
+  // Document en direct gardé tel quel par la synchronisation git : le disque
+  // reçoit l'état de l'éditeur (l'état partagé). La base de fusion est le
+  // dernier contenu écrit, auquel correspond le fichier laissé par la
+  // synchronisation : seule sa mise en forme d'origine est reprise (lignes non
+  // modifiées), jamais un texte plus ancien qui effacerait les dernières saisies.
+  const overwriteLiveDocument = useCallback(async (path: string) => {
+    const fresh = await window.holo?.readFile(path).catch(() => null)
+    const sync = docSyncRef.current
+    if (fresh == null || !sync || !isSamePath(sync.path, path)) return
+    sync.expectedDisk = fresh
+    const base = sync.lastWritten ?? sync.editorState
+    const queue = writeQueueRef.current
+    const last = queue[queue.length - 1]
+    if (last && isSamePath(last.path, path)) {
+      last.content = sync.editorState
+    } else {
+      queue.push({ path, content: sync.editorState, base })
+    }
+    if (!writeLoopRef.current) {
+      writeLoopRef.current = drainWriteQueue().finally(() => { writeLoopRef.current = null })
+    }
+    await writeLoopRef.current
+  }, [drainWriteQueue])
+
   const waitForWritesIdle = useCallback(async () => {
     while (writeLoopRef.current) {
       await writeLoopRef.current.catch(() => undefined)
@@ -1054,6 +1083,12 @@ export default function App2() {
     const file = openedFileRef.current
     const sync = docSyncRef.current
     if (!file || !sync || !isSamePath(sync.path, file.path) || sync.editorState === markdown) return
+    // Diagnostic (activé par les tests) : texte de l'éditeur que la version reçue fait disparaître.
+    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
+      for (const splice of multiSpliceDiff(sync.editorState, markdown)) {
+        if (splice.remove > 0) console.info('[holo-realtime] version reçue retire', JSON.stringify({ removed: sync.editorState.slice(splice.index, splice.index + splice.remove), inserted: splice.insert }))
+      }
+    }
     void enqueueDocumentWrite(file.path, markdown)
     // Rendu synchrone : l'éditeur affiche la version reçue avant toute autre
     // saisie, qui partira donc de cette version (et non d'une version périmée
@@ -1080,8 +1115,10 @@ export default function App2() {
     getEditorMarkdown: () => docSyncRef.current?.editorState ?? '',
     applyRemoteMarkdown: applyRealtimeContent,
     flushLocalEdits: async () => {
+      // Tout est synchrone : aucune frappe ne peut s'intercaler entre
+      // l'enregistrement de la saisie et l'application des modifications reçues
+      // (elle ne serait que dans l'écran et disparaîtrait au rafraîchissement).
       flushPendingEdits()
-      await nextTick()
       // Exécute les effets React en attente, dont l'envoi du markdown par
       // l'éditeur : une saisie déjà enregistrée part avant les modifications
       // reçues (sinon elle serait calculée sur une version périmée, puis écrasée).
@@ -1092,15 +1129,26 @@ export default function App2() {
   const realtimeLiveRef = useRef(false)
   const realtimeAuthorsRef = useRef<string[]>([])
   useEffect(() => {
-    realtimeLiveRef.current = realtime.status === 'live'
-    realtimeAuthorsRef.current = realtime.peers.map((peer) => peer.email).filter(Boolean)
+    // Session en cours, y compris pendant une reconnexion (l'état partagé fait toujours foi).
+    realtimeLiveRef.current = realtime.status === 'live' || realtime.status === 'reconnecting'
+    // Toute personne vue dans la session depuis l'ouverture du document (un
+    // participant momentanément hors ligne reste un participant).
+    realtimeAuthorsRef.current = Array.from(new Set([
+      ...realtimeAuthorsRef.current,
+      ...realtime.peers.map((peer) => peer.email).filter(Boolean),
+    ]))
   }, [realtime.status, realtime.peers])
   useEffect(() => {
+    realtimeAuthorsRef.current = []
+  }, [openedFile?.path])
+  useEffect(() => {
+    const hasSession = realtime.status !== null && realtime.status !== 'stopped'
     realtimeRef.current = {
       onLocalMarkdown: realtime.onLocalMarkdown,
       shouldApplyExternalChanges: realtime.shouldApplyExternalChanges,
+      hasSession: () => hasSession,
     }
-  }, [realtime.onLocalMarkdown, realtime.shouldApplyExternalChanges])
+  }, [realtime.onLocalMarkdown, realtime.shouldApplyExternalChanges, realtime.status])
 
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
@@ -1108,7 +1156,14 @@ export default function App2() {
     const sync = docSyncRef.current
     // Rien de nouveau par rapport à ce que l'éditeur représente déjà (écho).
     if (sync && isSamePath(sync.path, file.path) && sync.editorState === markdown) return
-    realtimeRef.current.onLocalMarkdown(markdown)
+    if (sync && (globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
+      console.info('[holo-realtime] éditeur émet', JSON.stringify(multiSpliceDiff(sync.editorState, markdown).map((splice) => ({ del: sync.editorState.slice(splice.index, splice.index + splice.remove), ins: splice.insert }))))
+    }
+    // La session reçoit la forme que tous les postes relisent (ex. un espace en
+    // début de paragraphe n'existe pas en markdown). Sinon chaque éditeur
+    // garderait un écart avec le texte partagé et le « corrigerait » à chaque
+    // envoi, en réécrivant au passage les saisies des autres.
+    realtimeRef.current.onLocalMarkdown(realtimeRef.current.hasSession() ? normalizeDocumentMarkdown(markdown) : markdown)
 
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
@@ -1305,6 +1360,7 @@ export default function App2() {
         author: { name: appAuthorRef.current || '', email: gitEmailRef.current || '' },
       })
       if (!result) return
+      if (livePath && result.reason !== 'up-to-date') console.info('[holo-realtime] synchronisation git pendant la session', { reason: result.reason, changed: result.changedFiles?.length ?? 0 })
       // Rafraîchir badges (incoming / conflits) sans refetch supplémentaire
       const nextState = await holo.gitGetState(false).catch(() => null)
       if (nextState) setGitState(normalizeGitState(nextState))
@@ -1314,10 +1370,13 @@ export default function App2() {
         openPath && result.changedFiles?.some((f) => samePath(f, openPath)),
       )
 
+      const liveDocumentKept = Boolean(openPath && result.keptLiveFiles?.some((file) => samePath(file, openPath)))
       if (result.pulled) {
         // Avance rapide ou rebase sans conflit réussi. On recharge le document
-        // ouvert s'il a été mis à jour côté distant.
-        if (openFileChangedRemotely) await reloadOpenFileFromDisk()
+        // ouvert s'il a été mis à jour côté distant (sauf document en direct
+        // gardé tel quel : l'état partagé fait foi, le disque est réécrit).
+        if (liveDocumentKept && openPath) await overwriteLiveDocument(openPath)
+        else if (openFileChangedRemotely) await reloadOpenFileFromDisk()
         // Fichiers ou dossiers ajoutés / supprimés par les autres.
         window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
         if (result.pushed || result.outgoing === 0) markSynced()
@@ -1357,7 +1416,7 @@ export default function App2() {
         if (!manualSyncPendingRef.current) setTimeout(() => { void runBackgroundGitSyncRef.current() }, 0)
       }
     }
-  }, [markSynced, reloadOpenFileFromDisk, samePath, setGitState])
+  }, [markSynced, overwriteLiveDocument, recheckDiskAfterSync, reloadOpenFileFromDisk, samePath, setGitState])
 
   const runBackgroundGitSyncRef = useRef(runBackgroundGitSync)
   runBackgroundGitSyncRef.current = runBackgroundGitSync

@@ -55,6 +55,11 @@ export function useRealtimeDocument(options: Options) {
           getEditorMarkdown: () => optionsRef.current.getEditorMarkdown(),
           applyRemoteMarkdown: (markdown) => optionsRef.current.applyRemoteMarkdown(markdown),
           flushLocalEdits: () => optionsRef.current.flushLocalEdits(),
+          getLocalModifiedAt: async () => {
+            const stats = await window.holo?.getPathStats(filePath).catch(() => null)
+            const time = stats ? Date.parse(stats.modifiedAt) : Number.NaN
+            return Number.isFinite(time) ? time : null
+          },
           getUpstreamMarkdown: async () => {
             const content = await api.getUpstreamContent(filePath)
             return content === null ? null : optionsRef.current.normalizeMarkdown(content)
@@ -82,13 +87,17 @@ export function useRealtimeDocument(options: Options) {
     // configRevision : la session repart quand l'adresse ou le jeton du relais change.
   }, [filePath, user.name, user.email, configRevision])
 
-  // En session, Ctrl/Cmd+Z annule nos propres modifications via Yjs.
+  // En session, Ctrl/Cmd+Z annule nos propres modifications via Yjs. Aussi
+  // pendant une reconnexion : la session reste valable (les modifications
+  // partiront au retour du réseau), l'historique local de l'éditeur, lui,
+  // ignore la session et réenverrait une version périmée.
+  const sessionActive = state.status === 'live' || state.status === 'reconnecting'
   useEffect(() => {
     const session = sessionRef.current
-    if (state.status !== 'live' || !session) return
+    if (!sessionActive || !session) return
     setHistoryOverride({ undo: () => session.undo(), redo: () => session.redo() })
     return () => setHistoryOverride(null)
-  }, [state.status])
+  }, [sessionActive])
 
   // Position de notre curseur, publiée dans la présence (les autres l'affichent).
   useEffect(() => {

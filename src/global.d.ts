@@ -75,6 +75,8 @@ type HoloGitPullIfSafeResult = {
   incoming: number
   outgoing: number
   changedFiles: string[]
+  /** Documents en direct dont le contenu partagé a été gardé (non remplacés par git) */
+  keptLiveFiles?: string[]
   error?: string
 }
 
@@ -251,6 +253,9 @@ declare global {
     testConnection: (candidate?: { url: string; token?: string }) => Promise<{ ok: boolean; status?: number | null; error?: string }>
     resolveDocument: (filePath: string) => Promise<HoloRealtimeDocument>
     resolveSpace: (rootPath: string) => Promise<HoloRealtimeDocument>
+    /** État Yjs local d'un document (chiffré), pour rejoindre sans dupliquer après une fermeture ou un plantage */
+    saveLocalState: (documentId: string, payload: { epoch: string | null; state: string }) => Promise<{ ok: true }>
+    loadLocalState: (documentId: string) => Promise<{ epoch: string | null; state: string; savedAt: number } | null>
     subscribe: (documentId: string) => Promise<{ ok: true }>
     unsubscribe: (documentId: string) => Promise<{ ok: true }>
     getState: (documentId: string) => Promise<HoloRealtimeState>

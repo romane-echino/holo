@@ -3,6 +3,7 @@
 // Le renderer garde le document Yjs ; ici on ne manipule que des updates
 // encodés en base64, sans les interpréter.
 import crypto from 'node:crypto'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 const CONFIG_URL_KEY = 'realtime-server-url'
@@ -73,7 +74,31 @@ export function registerRealtimeIpc({
   getUpstreamFileContent,
   mergeText,
   getRootCommits,
+  getDataDir,
+  writeFileAtomic,
 }) {
+  // État Yjs de chaque document sur ce poste (époque + état encodé), pour
+  // rejoindre une session sans rien dupliquer ni perdre après une fermeture
+  // ou un plantage. Les identifiants de documents sont des UUID (noms sûrs).
+  const cacheFile = (documentId) => {
+    if (!/^[0-9a-f-]{36}$/i.test(String(documentId))) throw new Error('Identifiant de document invalide.')
+    return path.join(getDataDir(), 'realtime-cache', `${String(documentId).toLowerCase()}.json`)
+  }
+  ipcMain.handle('realtime:save-local-state', async (_event, documentId, payload) => {
+    const file = cacheFile(documentId)
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await writeFileAtomic(file, JSON.stringify({ epoch: payload?.epoch ?? null, state: String(payload?.state ?? ''), savedAt: Date.now() }))
+    return { ok: true }
+  })
+  ipcMain.handle('realtime:load-local-state', async (_event, documentId) => {
+    try {
+      const parsed = JSON.parse(await fs.readFile(cacheFile(documentId), 'utf8'))
+      return typeof parsed?.state === 'string' ? { epoch: parsed.epoch ?? null, state: parsed.state, savedAt: Number(parsed.savedAt ?? 0) } : null
+    } catch {
+      return null
+    }
+  })
+
   // documentId → { subscribers: Set<WebContents>, abort: AbortController | null, attempt, timer, stopped }
   const streams = new Map()
 
