@@ -1,0 +1,16 @@
+- ✅ On ne peut pas mettre comme nom de fichier "Echino.Bundle 09.2026.01" 
+  -> le dernier point était pris pour une extension et remplacé par `.md`. Les points sont conservés ; les noms invalides sous Windows sont refusés avec un message.
+- ✅ La synchronisation des fichiers attends qu'on soit dans le projet même et du coup si on a pas ouvert un projet précis et qu'on clique sur un lien qui vient d'être crée sur le projet, on a un mess d'erreur. Est-ce qu'on pourrait au moins essayer de clone le repo concerné avant de dire "Page introuvable"
+  -> le lien porte l'URL du dépôt ; fetch + avance rapide avant de conclure « introuvable » ; dépôt absent → fenêtre de clone préremplie ; liens enfin fonctionnels sur macOS ; plus de rechargement de la fenêtre.
+- ✅ On ne peut pas mettre d'image dans un tableau
+  -> collage / dépôt d'image dans une cellule, affichage des images locales, hauteur fixe.
+- ✅ pouvoir copier une image depuis le holo
+  -> bouton « Copier l'image », clic droit et Cmd/Ctrl+C sur une image sélectionnée.
+- ✅ Y'a visiblement des bugs quand le repository est un sous-dossier onedrive (double synchro bizarre)
+  -> écritures atomiques + réessais, fusion avec la version disque au lieu d'écraser, surveillance du fichier ouvert, avertissement « dépôt git dans un dossier OneDrive ».
+- ✅ Lorsque j'écris dans des tableaux, le lendemain il manque des caractères et des éléments sont supprimés. (peut-etre a cause de one-drive)
+  -> 1er caractère perdu après un clic dans une cellule (reproduit et corrigé), `<br>`/HTML/formules/en-têtes formatés supprimés, saisie perdue au rechargement / à la fermeture, écrasement par une version périmée.
+- ✅ Lorsqu'on est plusieurs à écrire sur la même page, les enregistrements plantes et personne ne voit la même chose.
+  -> verrou git (fin des « index.lock »), réconciliation automatique des modifications qui ne se chevauchent pas, résolution de conflit par zone, éditeur verrouillé pendant un conflit. Temps réel (CRDT) : voir étude Codenotch.
+- ✅ Il est impossible de géré rétrécir une colonne dans un tableau.
+  -> mise en page fixe dès qu'une largeur est choisie, largeur enregistrée, la poignée n'est plus masquée par le bouton « + ».
