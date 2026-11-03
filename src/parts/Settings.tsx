@@ -410,11 +410,11 @@ export function HoloSettingsDialog({
     setSpaceConfigLoading(true)
     Promise.all([
       window.holo?.readSpaceConfig(selectedSpace).catch(() => null),
-      window.holo?.getHoloConfig().catch(() => ({})),
+      window.holo?.getHoloConfig().catch((): Record<string, unknown> => ({})),
     ]).then(([spaceCfg, appCfg]) => {
-      const mode = (spaceCfg as any)?.imageStorageMode ?? 'local'
+      const mode = String(spaceCfg?.imageStorageMode ?? 'local')
       setSpaceImageMode(['local', 'azure', 's3', 'dropbox', 'gdrive'].includes(mode) ? mode : 'local')
-      const allCreds = (appCfg as any)?.['space-credentials'] ?? {}
+      const allCreds = (appCfg?.['space-credentials'] ?? {}) as Record<string, Record<string, string>>
       const creds: SpaceCredentials = allCreds[selectedSpace] ?? {}
       setSpaceCredentials(creds)
     })

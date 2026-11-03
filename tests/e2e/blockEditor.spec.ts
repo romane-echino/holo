@@ -44,6 +44,7 @@ async function waitForEditor(page: Page) {
 /** Navigue vers la fixture avec un markdown initial personnalisé. */
 async function gotoEditor(page: Page, markdown?: string) {
   if (markdown) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await page.addInitScript((md) => { (window as any).__PW_MD__ = md }, markdown)
   }
   await page.goto(FIXTURE_URL)

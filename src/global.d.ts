@@ -205,7 +205,7 @@ interface HoloApi {
   gitGetFileActivity: (filePath: string, maxCount?: number) => Promise<HoloGitFileActivity[]>
   gitGetFileLog: (filePath: string, maxCount?: number) => Promise<HoloGitFileCommit[]>
   gitGetContributors: () => Promise<HoloGitContributor[]>
-  gitAutoSave: (filePath: string, authorName?: string, authorEmail?: string) => Promise<{ ok: boolean; committed: boolean; reason?: string; error?: string }>
+  gitAutoSave: (filePath: string, authorName?: string, authorEmail?: string) => Promise<{ ok: boolean; committed: boolean; pushed?: boolean; reason?: string; error?: string; pushError?: string }>
   gitPickCloneDirectory: () => Promise<string | null>
   gitCloneRepository: (payload: HoloGitClonePayload) => Promise<OpenFolderResult>
   gitGetSavedCredentials: (repoUrl: string) => Promise<{ username: string; hasPassword: boolean } | null>

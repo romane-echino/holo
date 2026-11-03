@@ -40,6 +40,7 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseDetailsHtml(value: string): ParsedDetailsBlock | null {
   const match = value.trim().match(DETAILS_BLOCK_REGEX)
   if (!match?.groups) return null
@@ -51,6 +52,7 @@ export function parseDetailsHtml(value: string): ParsedDetailsBlock | null {
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function isDetailsHtmlNode(node: unknown): node is HtmlNode {
   return Boolean(
     node
@@ -63,6 +65,7 @@ export function isDetailsHtmlNode(node: unknown): node is HtmlNode {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function buildDetailsHtml(summary: string, content: string, open = false): string {
   const normalizedSummary = summary.trim() || DEFAULT_DETAILS_SUMMARY
   const normalizedContent = content.replace(/^\n+|\n+$/g, '').trim() || DEFAULT_DETAILS_CONTENT

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- page de test autonome, sans rechargement à chaud */
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MarkdownRenderer } from '../../src/parts/MarkdownRenderer'

@@ -82,12 +82,14 @@ function buildEmbedUrl(videoId: string, startSeconds?: number | null): string {
   return url.toString()
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function buildYouTubeHtml(value: string): string {
   const parsed = extractYouTubeData(value) ?? extractYouTubeData(DEFAULT_YOUTUBE_URL)
   const embedUrl = buildEmbedUrl(parsed!.videoId, parsed!.startSeconds)
   return `<iframe src="${embedUrl}" title="Vidéo YouTube" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseYouTubeHtml(value: string): ParsedYouTubeBlock | null {
   const parsed = extractYouTubeData(value)
   if (!parsed) return null
@@ -99,6 +101,7 @@ export function parseYouTubeHtml(value: string): ParsedYouTubeBlock | null {
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function isYouTubeHtmlNode(node: unknown): node is HtmlNode {
   return Boolean(
     node

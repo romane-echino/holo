@@ -17,6 +17,7 @@ const FIXTURE_URL = '/tests/fixtures/editor.html'
 
 async function gotoEditor(page: Page, markdown?: string) {
   if (markdown !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await page.addInitScript((md) => { (window as any).__PW_MD__ = md }, markdown)
   }
   await page.goto(FIXTURE_URL)
@@ -582,9 +583,9 @@ test.describe('Tous les types de blocs — création et intégrité', () => {
 
     const currencyMd = await waitForMd(page, (s) =>
       s.includes('<!-- holo:table {"columnTypes":["text","currency"]} -->')
-      && /\|\s*A\s*\|\s*0\.\-\s*\|/.test(s)
+      && /\|\s*A\s*\|\s*0\.-\s*\|/.test(s)
       && /\|\s*B\s*\|\s*5\.50\s*\|/.test(s)
-      && /\|\s*C\s*\|\s*1'250\.\-\s*\|/.test(s),
+      && /\|\s*C\s*\|\s*1'250\.-\s*\|/.test(s),
     )
     expect(currencyMd).toContain('Arrière-plan')
 

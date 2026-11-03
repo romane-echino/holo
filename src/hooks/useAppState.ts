@@ -20,12 +20,12 @@ export function useAppState() {
   const [activeTab, setActiveTab] = useState<OpenTab | null>(null)
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   const [editorMode, setEditorMode] = useState<'raw' | 'wysiwyg'>('wysiwyg')
-  const [selectionPopup, setSelectionPopup] = useState(null)
-  const [tablePopup, setTablePopup] = useState(null)
-  const [codeBlockPopup, setCodeBlockPopup] = useState(null)
-  const [columnTypePopup, setColumnTypePopup] = useState(null)
-  const [hoveredCodeBlock, setHoveredCodeBlock] = useState(null)
-  const [slashMenu, setSlashMenu] = useState(null)
+  const [selectionPopup, setSelectionPopup] = useState<unknown>(null)
+  const [tablePopup, setTablePopup] = useState<unknown>(null)
+  const [codeBlockPopup, setCodeBlockPopup] = useState<unknown>(null)
+  const [columnTypePopup, setColumnTypePopup] = useState<unknown>(null)
+  const [hoveredCodeBlock, setHoveredCodeBlock] = useState<unknown>(null)
+  const [slashMenu, setSlashMenu] = useState<unknown>(null)
   const [slashMenuIndex, setSlashMenuIndex] = useState(0)
   const [showCompactToc, setShowCompactToc] = useState(false)
   const [isImageDragOverEditor, setIsImageDragOverEditor] = useState(false)
@@ -47,10 +47,10 @@ export function useAppState() {
   const [folderIconByPath, setFolderIconByPath] = useState<Record<string, string>>({})
   const [fileMetaByPath, setFileMetaByPath] = useState<Record<string, FileMeta>>({})
   const [pathStatsByPath, setPathStatsByPath] = useState<Record<string, FilePathStats>>({})
-  const [archivedFiles, setArchivedFiles] = useState<any[]>([])
+  const [archivedFiles, setArchivedFiles] = useState<unknown[]>([])
   const [activeSidebar, setActiveSidebar] = useState<'files' | 'git' | 'search'>('files')
   const [filesSection, setFilesSection] = useState<'explorer' | 'mine' | 'recent'>('explorer')
-  const [contextMenu, setContextMenu] = useState(null)
+  const [contextMenu, setContextMenu] = useState<unknown>(null)
 
   // ========== UI STATE ==========
   const [showSettings, setShowSettings] = useState(false)
@@ -82,7 +82,7 @@ export function useAppState() {
     isBlocked: false,
     message: '',
   })
-  const [syncFeedback, setSyncFeedback] = useState(DEFAULT_SYNC_FEEDBACK)
+  const [syncFeedback, setSyncFeedback] = useState<unknown>(DEFAULT_SYNC_FEEDBACK)
   
   // Image Storage Configuration
   const [repoImageModeReady, setRepoImageModeReady] = useState(false)

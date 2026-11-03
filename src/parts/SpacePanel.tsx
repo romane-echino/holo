@@ -1825,7 +1825,7 @@ export function SpaceRoute({
               <p className="text-sm font-semibold text-holo-text">Archiver ce fichier ?</p>
             </div>
             <p className="mb-5 ml-12 text-xs text-holo-text-faint">
-              « {getBaseName(pendingArchivePath)} » sera déplacé dans l'archive et pourra être restauré.
+              «&nbsp;{getBaseName(pendingArchivePath)}&nbsp;» sera déplacé dans l'archive et pourra être restauré.
             </p>
             <div className="flex justify-end gap-2">
               <button

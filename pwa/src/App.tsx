@@ -413,7 +413,7 @@ function FilesScreen({
 // ─── Viewer screen ────────────────────────────────────────────────────────────
 
 function ViewerScreen({
-  repo, path, content, loading, onBack,
+  repo: _repo, path, content, loading, onBack,
 }: {
   repo: SavedRepo
   path: string

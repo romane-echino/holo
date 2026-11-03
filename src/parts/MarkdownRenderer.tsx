@@ -30,7 +30,9 @@ import type { RenderMode } from '../lib/markdownBlocks'
 // ─── Remark plugin: data-block-index ───────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function remarkAddBlockIndex() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (tree: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tree.children.forEach((node: any, index: number) => {
       node.data ??= {}
       node.data.hProperties = { ...node.data.hProperties, 'data-block-index': String(index) }

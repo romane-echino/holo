@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- page de test autonome, sans rechargement à chaud */
 import { useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EditorFrame } from '../../src/parts/EditorFrame'

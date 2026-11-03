@@ -20,8 +20,8 @@ export interface ConfigContextType {
   setIsGitBusy: Dispatch<SetStateAction<boolean>>
   remoteEditBlock: RemoteEditBlock
   setRemoteEditBlock: Dispatch<SetStateAction<RemoteEditBlock>>
-  syncFeedback: any
-  setSyncFeedback: Dispatch<SetStateAction<any>>
+  syncFeedback: unknown
+  setSyncFeedback: Dispatch<SetStateAction<unknown>>
 
   // Image Storage Configuration
   repoImageModeReady: boolean

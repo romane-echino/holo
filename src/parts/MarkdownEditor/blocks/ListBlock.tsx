@@ -75,6 +75,7 @@ function nodeToItems(node: ListNode, depth = 0): ListBlockItem[] {
   })
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function listBlockItemsToNode(items: ListBlockItem[], base: ListNode): ListNode {
   function buildLevel(start: number, depth: number): { listItems: ListItemNode[]; nextIdx: number } {
     const listItems: ListItemNode[] = []

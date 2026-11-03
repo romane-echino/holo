@@ -47,6 +47,7 @@ export function FootnotesProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useFootnotes() {
   const context = useContext(FootnotesContext)
   if (!context) {

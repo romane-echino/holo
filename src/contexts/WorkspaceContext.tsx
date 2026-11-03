@@ -1,5 +1,6 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from 'react'
 import type { TreeNode, NodeType, FileMeta } from '../types/app'
+import type { FilePathStats } from '../types/editor'
 
 export interface WorkspaceContextType {
   // Root & Tree
@@ -35,12 +36,12 @@ export interface WorkspaceContextType {
   // File Metadata
   fileMetaByPath: Record<string, FileMeta>
   setFileMetaByPath: Dispatch<SetStateAction<Record<string, FileMeta>>>
-  pathStatsByPath: Record<string, any>
-  setPathStatsByPath: Dispatch<SetStateAction<Record<string, any>>>
+  pathStatsByPath: Record<string, FilePathStats>
+  setPathStatsByPath: Dispatch<SetStateAction<Record<string, FilePathStats>>>
 
   // Archived Files
-  archivedFiles: any[]
-  setArchivedFiles: Dispatch<SetStateAction<any[]>>
+  archivedFiles: unknown[]
+  setArchivedFiles: Dispatch<SetStateAction<unknown[]>>
 
   // Sidebar
   activeSidebar: 'files' | 'git' | 'search'
@@ -49,8 +50,8 @@ export interface WorkspaceContextType {
   setFilesSection: Dispatch<SetStateAction<'explorer' | 'mine' | 'recent'>>
 
   // Context Menu
-  contextMenu: any
-  setContextMenu: Dispatch<SetStateAction<any>>
+  contextMenu: unknown
+  setContextMenu: Dispatch<SetStateAction<unknown>>
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined)

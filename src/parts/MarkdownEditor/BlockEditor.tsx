@@ -52,7 +52,9 @@ import type { InlineEditorHandle } from './InlineEditor'
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath)
 
 // Plugin de sérialisation pour les nœuds <underline> → <u>...</u> dans le markdown
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function remarkUnderlinePlugin(this: any) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = this.data() as Record<string, any>
   if (!data.toMarkdownExtensions) data.toMarkdownExtensions = []
   data.toMarkdownExtensions.push({
@@ -357,7 +359,9 @@ function wrapInlineHtmlTag(tagName: 'u' | 'sup' | 'sub', children: InlineNode[])
 // Convertit les nœuds HTML inline `<u>`, `<sup>`, `<sub>` en nœuds sémantiques lors du chargement
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function convertHtmlUnderline(node: any): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const convertChildren = (children: any[]) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const convertedChildren: any[] = []
 
     for (let index = 0; index < children.length; index++) {
@@ -366,6 +370,7 @@ function convertHtmlUnderline(node: any): any {
         const openMatch = (child.value as string).trim().match(/^<(u|sup|sub)>$/i)
         if (openMatch) {
           const tagName = openMatch[1].toLowerCase() as 'u' | 'sup' | 'sub'
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const nestedChildren: any[] = []
           let depth = 1
           let cursor = index + 1

@@ -246,7 +246,7 @@ function parseNumericLikeValue(value: string): number | null {
     .replace(/\$/g, '')
     .replace(/'/g, '')
     .replace(/,/g, '.')
-    .replace(/\.\-$/g, '')
+    .replace(/\.-$/g, '')
     .replace(/[^0-9.+-]/g, '')
 
   if (!normalized) return null

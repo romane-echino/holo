@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- page de test autonome, sans rechargement à chaud */
 /**
  * EditorTestPage.tsx — Harnais de test minimal pour BlockEditor
  *

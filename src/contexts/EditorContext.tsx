@@ -19,20 +19,20 @@ export interface EditorContextType {
   setEditorMode: Dispatch<SetStateAction<'raw' | 'wysiwyg'>>
 
   // Popups & Overlays
-  selectionPopup: any
-  setSelectionPopup: Dispatch<SetStateAction<any>>
-  tablePopup: any
-  setTablePopup: Dispatch<SetStateAction<any>>
-  codeBlockPopup: any
-  setCodeBlockPopup: Dispatch<SetStateAction<any>>
-  columnTypePopup: any
-  setColumnTypePopup: Dispatch<SetStateAction<any>>
-  hoveredCodeBlock: any
-  setHoveredCodeBlock: Dispatch<SetStateAction<any>>
+  selectionPopup: unknown
+  setSelectionPopup: Dispatch<SetStateAction<unknown>>
+  tablePopup: unknown
+  setTablePopup: Dispatch<SetStateAction<unknown>>
+  codeBlockPopup: unknown
+  setCodeBlockPopup: Dispatch<SetStateAction<unknown>>
+  columnTypePopup: unknown
+  setColumnTypePopup: Dispatch<SetStateAction<unknown>>
+  hoveredCodeBlock: unknown
+  setHoveredCodeBlock: Dispatch<SetStateAction<unknown>>
 
   // Slash Menu
-  slashMenu: any
-  setSlashMenu: Dispatch<SetStateAction<any>>
+  slashMenu: unknown
+  setSlashMenu: Dispatch<SetStateAction<unknown>>
   slashMenuIndex: number
   setSlashMenuIndex: Dispatch<SetStateAction<number>>
 

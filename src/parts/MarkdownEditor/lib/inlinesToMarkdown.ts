@@ -1,7 +1,7 @@
 import type { InlineNode } from './types'
 
 function escapeMarkdownText(value: string): string {
-  return value.replace(/([\\`*_\[\]<>])/g, '\\$1')
+  return value.replace(/([\\`*_[\]<>])/g, '\\$1')
 }
 
 function escapeMarkdownCode(value: string): string {

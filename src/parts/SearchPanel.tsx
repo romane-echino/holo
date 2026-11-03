@@ -63,6 +63,7 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
     for (const p of Object.keys(fileMetaByPath)) paths.add(p)
     for (const p of recentFilePaths) paths.add(p)
     // Walk the tree
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function walk(node: any) {
       if (!node) return
       if (node.type === 'file') paths.add(node.path)
@@ -87,6 +88,7 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
       const filenameNoExt = basename.replace(/\.md$/i, '')
       const title = meta?.title || filenameNoExt
       const description = meta?.description || ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tags: string[] = (meta as any)?.tags ?? []
 
       const spaceRelative = rootPath && path.startsWith(rootPath + '/')
@@ -102,6 +104,7 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
             subtitle: spaceRelative,
             matchKind: 'tag',
             matchText: tagHit,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             icon: (meta as any)?.icon,
           })
         }
@@ -110,12 +113,14 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
 
       // Filename match (highest priority)
       if (filenameNoExt.toLowerCase().includes(q)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         matches.push({ path, title, subtitle: spaceRelative, matchKind: 'filename', icon: (meta as any)?.icon })
         continue
       }
 
       // Title match
       if (title.toLowerCase().includes(q) && title !== filenameNoExt) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         matches.push({ path, title, subtitle: spaceRelative, matchKind: 'title', icon: (meta as any)?.icon })
         continue
       }
@@ -123,6 +128,7 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
       // Tag match
       const tagHit = tags.find((t) => t.toLowerCase().includes(q))
       if (tagHit) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         matches.push({ path, title, subtitle: spaceRelative, matchKind: 'tag', matchText: tagHit, icon: (meta as any)?.icon })
         continue
       }
@@ -131,6 +137,7 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
       if (description.toLowerCase().includes(q)) {
         const idx = description.toLowerCase().indexOf(q)
         const excerpt = description.slice(Math.max(0, idx - 20), idx + 60)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         matches.push({ path, title, subtitle: spaceRelative, matchKind: 'description', matchText: excerpt, icon: (meta as any)?.icon })
       }
     }

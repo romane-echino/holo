@@ -10,7 +10,7 @@ import { test, expect, type Page } from '@playwright/test'
  * 5. Vérifier que le contenu est toujours là
  */
 
-const FULL_DOC_MD = `# Document de test
+const _FULL_DOC_MD = `# Document de test
 
 Avant les listes.
 `

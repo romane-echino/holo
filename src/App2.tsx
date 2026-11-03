@@ -27,6 +27,7 @@ import { ToastHost } from './parts/ToastHost'
 import { errorMessage, notify, notifyError } from './lib/notify'
 import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
+import type { ImageStorageMode } from './hooks/useRepoImageSettings'
 import { normalizeDocumentMarkdown } from './parts/EditorFrame'
 import { flushPendingEdits, registerDocumentSession, saveOpenDocument } from './lib/editorFlush'
 
@@ -148,7 +149,7 @@ export default function App2() {
       return
     }
 
-    const existing = await window.holo.getHoloConfig().catch(() => ({}))
+    const existing = await window.holo.getHoloConfig().catch((): Record<string, unknown> => ({}))
     await window.holo.setHoloConfig({
       ...(existing && typeof existing === 'object' ? existing : {}),
       ...entries,
@@ -335,8 +336,8 @@ export default function App2() {
       // Identifiants → app config local (non commité), indexés par spacePath.
       // Écriture via la clé atomique `space-credentials` pour ne pas clobberer
       // les autres clés (recent-file-paths, favoris…) lors d'écritures concurrentes.
-      const appCfg = await window.holo?.getHoloConfig().catch(() => ({})) ?? {}
-      const allCreds = (appCfg as any)['space-credentials'] ?? {}
+      const appCfg = await window.holo?.getHoloConfig().catch((): Record<string, unknown> => ({})) ?? {}
+      const allCreds = (appCfg['space-credentials'] ?? {}) as Record<string, SpaceCredentials>
       await window.holo?.setHoloConfigValue('space-credentials', { ...allCreds, [spacePath]: credentials })
       // Si c'est l'espace actif, mettre à jour le ConfigContext
       if (spacePath === rootPath) {
@@ -352,7 +353,7 @@ export default function App2() {
         setDropboxFolderPath(credentials.dropboxFolderPath ?? '')
         setGdriveAccessToken(credentials.gdriveAccessToken ?? '')
         setGdriveFolderId(credentials.gdriveFolderId ?? '')
-        setRepoImageStorageMode(mode as any)
+        setRepoImageStorageMode(mode as ImageStorageMode)
       }
     } catch (err) {
       console.error('[App2] handleSaveSpaceConfig', err)
@@ -381,18 +382,18 @@ export default function App2() {
       try {
         const [spaceCfg, appCfg] = await Promise.all([
           window.holo!.readSpaceConfig(rootPath).catch(() => null),
-          window.holo!.getHoloConfig().catch(() => ({})),
+          window.holo!.getHoloConfig().catch((): Record<string, unknown> => ({})),
         ])
         if (cancelled) return
-        const mode = (spaceCfg as any)?.imageStorageMode ?? 'local'
-        const allCreds = ((appCfg as any)?.['space-credentials'] ?? {}) as Record<string, Record<string, string>>
+        const mode = String(spaceCfg?.imageStorageMode ?? 'local')
+        const allCreds = (appCfg?.['space-credentials'] ?? {}) as Record<string, Record<string, string>>
         const creds = allCreds[rootPath] ?? {}
 
         // Hydrate le ConfigContext avec le mode + identifiants de l'espace ouvert.
         // Sans ça, repoImageStorageMode resterait à 'local' et les images
         // seraient sauvegardées localement même quand un stockage déporté est
         // configuré pour ce dépôt.
-        setRepoImageStorageMode(mode as any)
+        setRepoImageStorageMode(mode as ImageStorageMode)
         setAzureBlobContainerUrl(creds.azureContainerUrl ?? '')
         setAzureBlobSasToken(creds.azureSasToken ?? '')
         setS3Region(creds.s3Region ?? '')
@@ -833,10 +834,8 @@ export default function App2() {
       if (result.committed) {
         emitActivityRefresh()
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((result as any).pushError) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setSaveErrorMsg((result as any).pushError)
+      if (result.pushError) {
+        setSaveErrorMsg(result.pushError)
         setSaveStatus('push-error')
         setTimeout(() => setSaveStatus(prev => prev === 'push-error' ? 'idle' : prev), 8000)
         // Push refusé (souvent : on est en retard sur le distant). On déclenche

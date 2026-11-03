@@ -159,7 +159,7 @@ export function getEntryNameError(name: string): string | null {
   const forbidden = trimmed.match(FORBIDDEN_NAME_CHARS)
   if (forbidden) {
     const char = forbidden[0]
-    const label = /[\u0000-\u001f]/.test(char) ? 'caractère de contrôle' : `« ${char} »`
+    const label = char.charCodeAt(0) < 0x20 ? 'caractère de contrôle' : `« ${char} »`
     return `Le nom ne doit pas contenir ${label} (caractères interdits : < > : " / \\ | ? *).`
   }
   if (WINDOWS_RESERVED_NAMES.test(trimmed)) return `« ${trimmed} » est un nom réservé par Windows.`
