@@ -159,3 +159,29 @@ test.describe('rebaseText : modification déjà présente', () => {
     expect(rebaseText(base, ours, theirs)).toBe(theirs)
   })
 })
+
+test.describe('multiSpliceDiff : au caractère près dans une ligne', () => {
+  test('une modification au début et une à la fin donnent deux zones', () => {
+    const before = ' bo47q al60q ch56q bo69q'
+    const after = 'bo47q al60q ch56q bo69q bo89q'
+    const splices = multiSpliceDiff(before, after)
+    expect(splices).toEqual([{ index: 0, remove: 1, insert: '' }, { index: before.length, remove: 0, insert: ' bo89q' }])
+  })
+})
+
+test.describe('multiSpliceDiff : limites de mots', () => {
+  test('supprimer un mot entre deux autres retire le mot entier, pas un morceau de chacun', () => {
+    const before = 'ch10q al34q al47q al60q'
+    const after = 'ch10q al34q al60q'
+    const [splice] = multiSpliceDiff(before, after)
+    const removed = before.slice(splice.index, splice.index + splice.remove)
+    expect([' al47q', 'al47q ']).toContain(removed)
+  })
+
+  test('insérer un mot se place entre deux mots', () => {
+    const before = 'al1q al2q'
+    const after = 'al1q al9q al2q'
+    const [splice] = multiSpliceDiff(before, after)
+    expect([' al9q', 'al9q ']).toContain(splice.insert)
+  })
+})

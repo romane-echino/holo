@@ -62,9 +62,63 @@ function splitLines(text: string): string[] {
  * a pu être modifié entre-temps par un collègue, et le remplacer en bloc
  * dupliquerait ou effacerait sa saisie.
  */
+/** Qualité d'une coupure entre deux caractères : fin de texte, ligne, espace, ponctuation, lettre. */
+function boundaryScore(left: string | undefined, right: string | undefined): number {
+  if (left === undefined || right === undefined) return 6
+  if (left === '\n' || right === '\n') return 4
+  if (/\s/.test(left) || /\s/.test(right)) return 2
+  if (/[^\p{L}\p{N}]/u.test(left) || /[^\p{L}\p{N}]/u.test(right)) return 1
+  return 0
+}
+
+/**
+ * Une insertion ou une suppression peut souvent se placer à plusieurs endroits
+ * équivalents (supprimer « 47q al » ou « ␣al47q » dans « al47q al60q » donne le
+ * même texte). Le choix compte en édition partagée : une saisie simultanée
+ * d'un collègue s'accroche aux caractères voisins. On la place donc en limite
+ * de mots, comme l'utilisateur l'a faite, plutôt qu'à cheval sur deux mots.
+ */
+function alignToWordBoundaries(text: string, splice: TextSplice, minIndex: number, maxEnd: number): TextSplice {
+  const isInsert = splice.remove === 0 && splice.insert.length > 0
+  const isDelete = splice.insert === '' && splice.remove > 0
+  if (!isInsert && !isDelete) return splice
+  let segment = isInsert ? splice.insert : text.slice(splice.index, splice.index + splice.remove)
+  const length = segment.length
+  // Caractères autour d'une position candidate (pour une suppression, le segment est dans le texte).
+  const before = (index: number) => text[index - 1]
+  const after = (index: number) => text[isInsert ? index : index + length]
+  const score = (index: number, value: string) => boundaryScore(before(index), value[0]) + boundaryScore(value[length - 1], after(index))
+  let bestIndex = splice.index
+  let bestSegment = segment
+  let bestScore = score(splice.index, segment)
+  // Vers la gauche : le dernier caractère du segment égale celui qui le précède.
+  let index = splice.index
+  while (index - 1 >= minIndex && text[index - 1] === segment[length - 1]) {
+    segment = segment[length - 1] + segment.slice(0, -1)
+    index -= 1
+    const candidate = score(index, segment)
+    if (candidate > bestScore) { bestScore = candidate; bestIndex = index; bestSegment = segment }
+  }
+  // Vers la droite : le premier caractère du segment égale celui qui le suit.
+  segment = isInsert ? splice.insert : text.slice(splice.index, splice.index + splice.remove)
+  index = splice.index
+  while ((isInsert ? index : index + length) < maxEnd && after(index) === segment[0]) {
+    segment = segment.slice(1) + segment[0]
+    index += 1
+    const candidate = score(index, segment)
+    if (candidate > bestScore) { bestScore = candidate; bestIndex = index; bestSegment = segment }
+  }
+  // Ne pas couper une paire de substitution UTF-16 (emoji…).
+  if (isHighSurrogate(text.charCodeAt(bestIndex - 1)) || isLowSurrogate(bestSegment.charCodeAt(0))) return splice
+  return isInsert ? { index: bestIndex, remove: 0, insert: bestSegment } : { index: bestIndex, remove: length, insert: '' }
+}
+
 export function multiSpliceDiff(before: string, after: string): TextSplice[] {
   let previousEnd = 0
-  return rawMultiSpliceDiff(before, after).map((splice) => {
+  const raw = rawMultiSpliceDiff(before, after)
+  return raw.map((rawSplice, position) => {
+    const nextStart = raw[position + 1]?.index ?? before.length
+    const splice = alignToWordBoundaries(before, rawSplice, previousEnd, nextStart)
     const anchored = anchorBlockSplice(before, splice)
     const result = anchored.index >= previousEnd ? anchored : splice
     previousEnd = result.index + result.remove
@@ -93,12 +147,64 @@ function anchorBlockSplice(before: string, splice: TextSplice): TextSplice {
     : { index: splice.index - 2, remove: splice.remove, insert: '' }
 }
 
+/** Plus longue sous-chaîne commune (programmation dynamique), sans couper une paire UTF-16. */
+function longestCommonSubstring(left: string, right: string): { leftStart: number; rightStart: number; length: number } {
+  let best = { leftStart: 0, rightStart: 0, length: 0 }
+  let previous = new Uint16Array(right.length + 1)
+  let current = new Uint16Array(right.length + 1)
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      current[j] = left.charCodeAt(i - 1) === right.charCodeAt(j - 1) ? previous[j - 1] + 1 : 0
+      if (current[j] > best.length) best = { leftStart: i - current[j], rightStart: j - current[j], length: current[j] }
+    }
+    ;[previous, current] = [current, previous]
+    current.fill(0)
+  }
+  // Ne pas commencer ni finir au milieu d'une paire de substitution (emoji…).
+  if (best.length > 0 && isLowSurrogate(left.charCodeAt(best.leftStart))) best = { leftStart: best.leftStart + 1, rightStart: best.rightStart + 1, length: best.length - 1 }
+  if (best.length > 0 && isHighSurrogate(left.charCodeAt(best.leftStart + best.length - 1))) best = { ...best, length: best.length - 1 }
+  return best
+}
+
+const MIN_COMMON_RUN = 4
+const MAX_FINE_DIFF_CELLS = 250_000
+
+/**
+ * Différence au caractère près à l'intérieur d'une zone : une modification au
+ * début et une à la fin d'un même texte donnent deux zones, et non le
+ * remplacement de tout le texte (qui écraserait la saisie simultanée d'un
+ * collègue au milieu, puis la dupliquerait).
+ */
+function fineSplices(before: string, after: string, offset: number): TextSplice[] {
+  if (before === after) return []
+  if (before.length * after.length > MAX_FINE_DIFF_CELLS) {
+    // Texte long : on réduit d'abord à la zone qui diffère (début et fin communs).
+    const splice = singleSpliceDiff(before, after)!
+    const removed = before.slice(splice.index, splice.index + splice.remove)
+    if (removed.length * splice.insert.length > MAX_FINE_DIFF_CELLS || (removed === before && splice.insert === after)) {
+      return [{ ...splice, index: offset + splice.index }]
+    }
+    return fineSplices(removed, splice.insert, offset + splice.index)
+  }
+  // Plus longue partie commune sur tout le texte (et non après avoir retiré
+  // début et fin communs, qui peuvent « voler » des caractères et couper un mot).
+  const common = longestCommonSubstring(before, after)
+  if (common.length < MIN_COMMON_RUN) {
+    const splice = singleSpliceDiff(before, after)!
+    return [{ ...splice, index: offset + splice.index }]
+  }
+  return [
+    ...fineSplices(before.slice(0, common.leftStart), after.slice(0, common.rightStart), offset),
+    ...fineSplices(before.slice(common.leftStart + common.length), after.slice(common.rightStart + common.length), offset + common.leftStart + common.length),
+  ]
+}
+
 function rawMultiSpliceDiff(before: string, after: string): TextSplice[] {
   const outer = singleSpliceDiff(before, after)
   if (!outer) return []
   const linesBefore = splitLines(before.slice(outer.index, outer.index + outer.remove))
   const linesAfter = splitLines(outer.insert)
-  if (linesBefore.length < 2 || linesAfter.length < 2) return [outer]
+  if (linesBefore.length < 2 || linesAfter.length < 2) return fineSplices(before, after, 0)
   // Lignes identiques des deux côtés : points d'ancrage ; seules les zones
   // entre deux ancres sont modifiées.
   const { matches, exact } = alignSequences(linesBefore, linesAfter, () => false)
@@ -115,8 +221,7 @@ function rawMultiSpliceDiff(before: string, after: string): TextSplice[] {
   for (const [anchorBefore, anchorAfter] of anchors) {
     const gapBefore = before.slice(outer.index + offsetsBefore[lineBefore], outer.index + offsetsBefore[anchorBefore])
     const gapAfter = outer.insert.slice(offsetsAfter[lineAfter], offsetsAfter[anchorAfter])
-    const splice = singleSpliceDiff(gapBefore, gapAfter)
-    if (splice) splices.push({ ...splice, index: outer.index + offsetsBefore[lineBefore] + splice.index })
+    splices.push(...fineSplices(gapBefore, gapAfter, outer.index + offsetsBefore[lineBefore]))
     lineBefore = anchorBefore + 1
     lineAfter = anchorAfter + 1
   }
