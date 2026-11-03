@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { useParams } from 'react-router-dom'
-import { getBaseName, getParentPath, isSameOrChildPath, normalizeMarkdownFilename } from '../lib/appUtils'
+import { getBaseName, getEntryNameError, getParentPath, isSameOrChildPath, normalizeMarkdownFilename } from '../lib/appUtils'
 import { pathReferencesMovedTarget, remapTrackedPath, rewriteMarkdownLinksForMovedPath, rewriteMarkdownLinksForRelocatedSource } from '../lib/markdownLinks'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -649,6 +649,7 @@ export function SpacePanel({
   const [addOpen, setAddOpen] = useState(false)
   const [addType, setAddType] = useState<'file' | 'folder'>('file')
   const [addName, setAddName] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
   const [addParentOverride, setAddParentOverride] = useState<string | undefined>(undefined)
   const [folderPickerOpen, setFolderPickerOpen] = useState(false)
   const addInputRef = useRef<HTMLInputElement>(null)
@@ -750,6 +751,8 @@ export function SpacePanel({
   const [renameOpen, setRenameOpen] = useState(false)
   const [renamePath, setRenamePath] = useState('')
   const [renameName, setRenameName] = useState('')
+  const [renameType, setRenameType] = useState<SpaceFileNode['type']>('file')
+  const [renameError, setRenameError] = useState<string | null>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   const handleContextMenu = useCallback((node: SpaceFileNode, e: React.MouseEvent) => {
@@ -760,7 +763,9 @@ export function SpacePanel({
 
   const openRenameDialog = useCallback((node: SpaceFileNode) => {
     setRenamePath(node.path)
-    setRenameName(node.name.replace(/\.md$/, ''))
+    setRenameType(node.type)
+    setRenameError(null)
+    setRenameName(node.type === 'file' ? node.name.replace(/\.md$/i, '') : node.name)
     setCtxMenu(null)
     setRenameOpen(true)
     setTimeout(() => renameInputRef.current?.focus(), 50)
@@ -770,17 +775,26 @@ export function SpacePanel({
     const name = renameName.trim()
     if (!name || !renamePath) return
     const original = renamePath.split('/').pop() ?? ''
-    const ext = original.includes('.') && !original.startsWith('.') ? original.slice(original.lastIndexOf('.')) : ''
-    const finalName = name.includes('.') ? name : name + ext
+    // Les points font partie du nom : on ne devine pas d'extension à partir du dernier point.
+    const finalName = renameType === 'file' && /\.md$/i.test(original)
+      ? normalizeMarkdownFilename(name)
+      : name
+    const error = getEntryNameError(finalName)
+    if (error) {
+      setRenameError(error)
+      return
+    }
     onRenameItem?.(renamePath, finalName)
     setRenameOpen(false)
+    setRenameError(null)
     setRenameName('')
     setRenamePath('')
-  }, [renameName, renamePath, onRenameItem])
+  }, [renameName, renamePath, renameType, onRenameItem])
 
   const openAddDialog = useCallback((type: 'file' | 'folder', parentPath?: string) => {
     setAddType(type)
     setAddName('')
+    setAddError(null)
     setAddParentOverride((parentPath ?? selectedFolderPath) || undefined)
     setFolderPickerOpen(false)
     setAddOpen(true)
@@ -790,7 +804,12 @@ export function SpacePanel({
   const handleAddConfirm = useCallback(() => {
     let name = addName.trim()
     if (!name) return
-    if (addType === 'file' && !name.includes('.')) name += '.md'
+    if (addType === 'file') name = normalizeMarkdownFilename(name)
+    const error = getEntryNameError(name)
+    if (error) {
+      setAddError(error)
+      return
+    }
     onAddItem?.(addType, name, addParentOverride || undefined)
     setAddOpen(false)
     setAddName('')
@@ -1071,14 +1090,19 @@ export function SpacePanel({
           <input
             ref={addInputRef}
             value={addName}
-            onChange={(e) => setAddName(e.target.value)}
+            onChange={(e) => { setAddName(e.target.value); setAddError(null) }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAddConfirm()
               if (e.key === 'Escape') { setAddOpen(false); setFolderPickerOpen(false) }
             }}
             placeholder={addType === 'file' ? 'nom-du-fichier.md' : 'nom-du-dossier'}
-            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+            aria-invalid={addError ? true : undefined}
+            className={cn(
+              'w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none',
+              addError ? 'mb-2 border-red-500/50' : 'mb-4',
+            )}
           />
+          {addError && <p role="alert" className="mb-4 text-xs text-red-400">{addError}</p>}
 
           <div className="flex justify-end gap-2">
             <button
@@ -1351,14 +1375,19 @@ export function SpacePanel({
           <input
             ref={renameInputRef}
             value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
+            onChange={(e) => { setRenameName(e.target.value); setRenameError(null) }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleRenameConfirm()
               if (e.key === 'Escape') setRenameOpen(false)
             }}
             placeholder="Nouveau nom…"
-            className="mb-4 w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none"
+            aria-invalid={renameError ? true : undefined}
+            className={cn(
+              'w-full rounded-holo-md border border-holo-border-soft bg-holo-glass px-3 py-2 text-sm text-holo-text placeholder:text-holo-text-faint focus:border-holo-primary/40 focus:outline-none',
+              renameError ? 'mb-2 border-red-500/50' : 'mb-4',
+            )}
           />
+          {renameError && <p role="alert" className="mb-4 text-xs text-red-400">{renameError}</p>}
           <div className="flex justify-end gap-2">
             <button
               onClick={() => setRenameOpen(false)}

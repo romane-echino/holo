@@ -126,23 +126,45 @@ export function getBaseName(targetPath: string): string {
   return normalized.slice(index + 1)
 }
 
+/**
+ * Transforme un nom saisi par l'utilisateur en nom de fichier Markdown.
+ * Les points font partie du nom ("Echino.Bundle 09.2026.01" reste intact) :
+ * on ajoute simplement `.md` si l'extension n'est pas déjà présente.
+ */
 export function normalizeMarkdownFilename(name: string): string {
-  const trimmed = name.trim()
+  // Windows refuse les noms terminés par un point ou un espace
+  const trimmed = name.trim().replace(/[.\s]+$/, '')
   if (!trimmed) return 'untitled.md'
 
   if (/\.md$/i.test(trimmed)) {
     return trimmed.replace(/\.md$/i, '.md')
   }
 
-  const lastSlashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  const lastDotIndex = trimmed.lastIndexOf('.')
-  const hasExtension = lastDotIndex > lastSlashIndex
+  return `${trimmed}.md`
+}
 
-  if (!hasExtension) {
-    return `${trimmed}.md`
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_NAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/
+
+/**
+ * Valide un nom de fichier / dossier pour qu'il soit utilisable sur
+ * Windows, macOS et Linux (les dépôts sont partagés entre OS via git).
+ * Retourne un message d'erreur lisible, ou null si le nom est valide.
+ */
+export function getEntryNameError(name: string): string | null {
+  const trimmed = name.trim()
+  if (!trimmed) return 'Le nom ne peut pas être vide.'
+  if (trimmed === '.' || trimmed === '..') return 'Ce nom est réservé.'
+  const forbidden = trimmed.match(FORBIDDEN_NAME_CHARS)
+  if (forbidden) {
+    const char = forbidden[0]
+    const label = /[\u0000-\u001f]/.test(char) ? 'caractère de contrôle' : `« ${char} »`
+    return `Le nom ne doit pas contenir ${label} (caractères interdits : < > : " / \\ | ? *).`
   }
-
-  return `${trimmed.slice(0, lastDotIndex)}.md`
+  if (WINDOWS_RESERVED_NAMES.test(trimmed)) return `« ${trimmed} » est un nom réservé par Windows.`
+  if (trimmed.length > 200) return 'Le nom est trop long (200 caractères maximum).'
+  return null
 }
 
 export function getDirectoryTarget(rootPath: string | null, selectedPath: string | null, selectedType: NodeType | null) {

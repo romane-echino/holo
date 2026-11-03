@@ -221,21 +221,15 @@ async function setHoloConfig(cfg) {
 }
 
 function normalizeMarkdownFilename(name) {
-  const trimmed = String(name ?? '').trim()
+  // Les points font partie du nom ("Echino.Bundle 09.2026.01" reste intact) :
+  // on ajoute simplement `.md` si l'extension n'est pas déjà présente.
+  // Windows refuse les noms terminés par un point ou un espace.
+  const trimmed = String(name ?? '').trim().replace(/[.\s]+$/, '')
   if (!trimmed) return 'untitled.md'
   if (/\.md$/i.test(trimmed)) {
     return trimmed.replace(/\.md$/i, '.md')
   }
-
-  const lastSlashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  const lastDotIndex = trimmed.lastIndexOf('.')
-  const hasExtension = lastDotIndex > lastSlashIndex
-
-  if (!hasExtension) {
-    return `${trimmed}.md`
-  }
-
-  return `${trimmed.slice(0, lastDotIndex)}.md`
+  return `${trimmed}.md`
 }
 
 function createDefaultGitState() {
@@ -279,8 +273,12 @@ function assertPathInsideRoot(targetPath) {
   }
 }
 
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_NAME_CHARS = /[<>:"|?*\u0000-\u001f]/
+
 function sanitizeName(name) {
-  const trimmed = name.trim()
+  const trimmed = String(name ?? '').trim()
 
   if (!trimmed) {
     throw new Error('Le nom ne peut pas être vide.')
@@ -290,7 +288,21 @@ function sanitizeName(name) {
     throw new Error('Le nom ne doit pas contenir de séparateur de chemin.')
   }
 
-  return trimmed
+  if (trimmed === '.' || trimmed === '..') {
+    throw new Error('Ce nom est réservé.')
+  }
+
+  // Les dépôts sont partagés entre Windows / macOS / Linux : on refuse les
+  // noms qui casseraient un checkout sous Windows.
+  if (FORBIDDEN_NAME_CHARS.test(trimmed)) {
+    throw new Error('Le nom contient un caractère interdit (< > : " | ? *).')
+  }
+
+  if (WINDOWS_RESERVED_NAMES.test(trimmed)) {
+    throw new Error(`« ${trimmed} » est un nom réservé par Windows.`)
+  }
+
+  return trimmed.replace(/[.\s]+$/, '') || trimmed
 }
 
 function getArchiveRootPath() {
@@ -348,7 +360,8 @@ function getRepoNameFromUrl(rawUrl) {
     throw new Error('Le lien du dépôt est requis.')
   }
 
-  const lastSegment = cleaned.split('/').pop() ?? ''
+  // Gère aussi les URL SSH courtes (git@host:repo.git)
+  const lastSegment = cleaned.split(/[/:]/).pop() ?? ''
   const withoutGit = lastSegment.replace(/\.git$/i, '')
   const safeName = sanitizeName(withoutGit)
 
