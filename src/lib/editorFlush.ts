@@ -84,3 +84,26 @@ export async function saveOpenDocument(): Promise<void> {
   if (session) await session.save()
   else flushPendingEdits()
 }
+
+/**
+ * Tâches à terminer avant la fermeture de la fenêtre, comme annoncer son
+ * départ aux collègues (sinon on reste affiché « présent » une trentaine de
+ * secondes).
+ */
+type CloseTask = () => Promise<void>
+const closeTasks = new Set<CloseTask>()
+
+export function registerCloseTask(task: CloseTask): () => void {
+  closeTasks.add(task)
+  return () => {
+    closeTasks.delete(task)
+  }
+}
+
+export async function runCloseTasks(timeoutMs = 1500): Promise<void> {
+  if (closeTasks.size === 0) return
+  await Promise.race([
+    Promise.allSettled([...closeTasks].map((task) => task())),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ])
+}

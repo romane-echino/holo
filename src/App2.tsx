@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from './utils/global'
 import { FavoritePanel, AIPanel, Header, RecentPanel, Inspector, SearchModal, Sidebar, Onboarding, HoloSettingsDialog } from "./parts/"
@@ -14,6 +15,7 @@ import { useSearchIndex } from './hooks/useSearchIndex'
 import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
+import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { RealtimeSetup, connectRealtimeServer } from './popup/RealtimeSetup'
@@ -30,7 +32,7 @@ import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
 import type { ImageStorageMode } from './hooks/useRepoImageSettings'
 import { normalizeDocumentMarkdown } from './parts/EditorFrame'
-import { flushPendingEdits, registerDocumentSession, saveOpenDocument } from './lib/editorFlush'
+import { flushPendingEdits, registerDocumentSession, runCloseTasks, saveOpenDocument } from './lib/editorFlush'
 
 function isSamePath(a?: string | null, b?: string | null) {
   if (!a || !b) return false
@@ -1053,12 +1055,18 @@ export default function App2() {
     const sync = docSyncRef.current
     if (!file || !sync || !isSamePath(sync.path, file.path) || sync.editorState === markdown) return
     void enqueueDocumentWrite(file.path, markdown)
-    setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
-    setExternalRevision((revision) => revision + 1)
-    setLiveMarkdown(markdown)
+    // Rendu synchrone : l'éditeur affiche la version reçue avant toute autre
+    // saisie, qui partira donc de cette version (et non d'une version périmée
+    // qui annulerait les modifications des collègues).
+    flushSync(() => {
+      setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
+      setExternalRevision((revision) => revision + 1)
+      setLiveMarkdown(markdown)
+    })
   }, [enqueueDocumentWrite])
 
   const [realtimeConfigRevision, setRealtimeConfigRevision] = useState(0)
+  const [, setEffectsDrain] = useState(0)
   useEffect(() => {
     const onConfigChanged = () => setRealtimeConfigRevision((revision) => revision + 1)
     window.addEventListener('holo:realtime-config-changed', onConfigChanged)
@@ -1074,9 +1082,19 @@ export default function App2() {
     flushLocalEdits: async () => {
       flushPendingEdits()
       await nextTick()
+      // Exécute les effets React en attente, dont l'envoi du markdown par
+      // l'éditeur : une saisie déjà enregistrée part avant les modifications
+      // reçues (sinon elle serait calculée sur une version périmée, puis écrasée).
+      flushSync(() => setEffectsDrain((value) => value + 1))
     },
     normalizeMarkdown: normalizeDocumentMarkdown,
   })
+  const realtimeLiveRef = useRef(false)
+  const realtimeAuthorsRef = useRef<string[]>([])
+  useEffect(() => {
+    realtimeLiveRef.current = realtime.status === 'live'
+    realtimeAuthorsRef.current = realtime.peers.map((peer) => peer.email).filter(Boolean)
+  }, [realtime.status, realtime.peers])
   useEffect(() => {
     realtimeRef.current = {
       onLocalMarkdown: realtime.onLocalMarkdown,
@@ -1154,6 +1172,7 @@ export default function App2() {
             new Promise((resolve) => setTimeout(resolve, 4000)),
           ])
         } finally {
+          await runCloseTasks().catch(() => undefined)
           await holo.confirmClose()
         }
       })()
@@ -1193,7 +1212,13 @@ export default function App2() {
     let disposed = false
     const checkDisk = async () => {
       // Une écriture en cours détectera et fusionnera elle-même le changement.
+      // Pendant une synchronisation git, le fichier peut être réécrit
+      // transitoirement : la synchronisation relit elle-même le document après.
       if (disposed || writeLoopRef.current) return
+      if (gitSyncInFlightRef.current) {
+        diskRecheckPendingRef.current = true
+        return
+      }
       const fresh = await holo.readFile(openPath).catch(() => null)
       const sync = docSyncRef.current
       if (disposed || fresh == null || !sync || !samePath(sync.path, openPath) || fresh === sync.expectedDisk) return
@@ -1203,6 +1228,7 @@ export default function App2() {
       if (writeLoopRef.current) return
       applyExternalContent(openPath, fresh)
     }
+    diskCheckRef.current = checkDisk
     const unsubscribe = holo.onDocumentChanged(({ path }) => {
       if (samePath(path, openPath)) void checkDisk()
     })
@@ -1210,6 +1236,7 @@ export default function App2() {
     void holo.watchDocument(openPath).then(() => checkDisk()).catch(() => undefined)
     return () => {
       disposed = true
+      if (diskCheckRef.current === checkDisk) diskCheckRef.current = null
       unsubscribe()
       void holo.watchDocument(null).catch(() => undefined)
     }
@@ -1229,6 +1256,17 @@ export default function App2() {
   // de fond qui tomberait au milieu d'un rebase effacerait l'état de conflit.
   const gitSyncInFlightRef = useRef(false)
   const gitSyncRerunRef = useRef(false)
+  // Modification du document vue pendant une synchronisation : vérifiée après.
+  const diskRecheckPendingRef = useRef(false)
+  const diskCheckRef = useRef<(() => Promise<void>) | null>(null)
+  const recheckDiskAfterSync = useCallback(() => {
+    if (!diskRecheckPendingRef.current) return
+    diskRecheckPendingRef.current = false
+    void diskCheckRef.current?.()
+  }, [])
+  // « Récupérer » demandé : prioritaire. Les synchronisations de fond s'effacent
+  // (sinon elles peuvent s'enchaîner et faire attendre l'utilisateur indéfiniment).
+  const manualSyncPendingRef = useRef(false)
   const markSynced = useCallback(() => {
     setSaveStatus((prev) => {
       if (prev !== 'syncing' && prev !== 'pending-sync') return prev
@@ -1243,6 +1281,7 @@ export default function App2() {
     if (!holo?.gitPullIfSafe) return
     if (!rootPathRef.current) return
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (manualSyncPendingRef.current) return
     if (gitSyncInFlightRef.current) {
       // Une synchro tourne déjà : on la relance juste après (le commit qui
       // vient d'être créé doit partir).
@@ -1259,7 +1298,12 @@ export default function App2() {
         saveTimerRef.current = null
         await performGitSaveRef.current()
       }
-      const result = await holo.gitPullIfSafe()
+      const livePath = realtimeLiveRef.current ? openedFileRef.current?.path : undefined
+      const result = await holo.gitPullIfSafe({
+        liveFiles: livePath ? [livePath] : [],
+        liveAuthors: livePath ? [gitEmailRef.current || '', ...realtimeAuthorsRef.current].filter(Boolean) : [],
+        author: { name: appAuthorRef.current || '', email: gitEmailRef.current || '' },
+      })
       if (!result) return
       // Rafraîchir badges (incoming / conflits) sans refetch supplémentaire
       const nextState = await holo.gitGetState(false).catch(() => null)
@@ -1274,6 +1318,8 @@ export default function App2() {
         // Avance rapide ou rebase sans conflit réussi. On recharge le document
         // ouvert s'il a été mis à jour côté distant.
         if (openFileChangedRemotely) await reloadOpenFileFromDisk()
+        // Fichiers ou dossiers ajoutés / supprimés par les autres.
+        window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
         if (result.pushed || result.outgoing === 0) markSynced()
         setRemoteBanner(null)
       } else if (result.reason === 'pushed' || (result.reason === 'up-to-date' && result.outgoing === 0)) {
@@ -1305,9 +1351,10 @@ export default function App2() {
       setSaveStatus((prev) => (prev === 'syncing' ? 'pending-sync' : prev))
     } finally {
       gitSyncInFlightRef.current = false
+      recheckDiskAfterSync()
       if (gitSyncRerunRef.current) {
         gitSyncRerunRef.current = false
-        setTimeout(() => { void runBackgroundGitSyncRef.current() }, 0)
+        if (!manualSyncPendingRef.current) setTimeout(() => { void runBackgroundGitSyncRef.current() }, 0)
       }
     }
   }, [markSynced, reloadOpenFileFromDisk, samePath, setGitState])
@@ -1322,21 +1369,23 @@ export default function App2() {
     const holo = window.holo
     if (!holo) return
 
-    // Garde-fou critique : si un rebase/merge est déjà en cours ou que des conflits
-    // ne sont pas résolus, NE PAS relancer un commit + sync — cela committerait les
-    // marqueurs de conflit et casserait le dépôt. On ouvre plutôt la résolution.
-    const pre = await holo.gitGetState(false).catch(() => null)
-    if (pre && (pre.operationInProgress !== 'none' || (pre.conflictedFiles?.length ?? 0) > 0)) {
-      setGitState(normalizeGitState(pre))
-      setRemoteBanner({ message: 'Conflit à résoudre : choisissez la version à conserver.', kind: 'conflict' })
-      return
-    }
-
     setRemoteBanner(null)
     // Attendre une éventuelle synchro de fond en cours, puis bloquer les suivantes.
+    manualSyncPendingRef.current = true
     while (gitSyncInFlightRef.current) await new Promise((resolve) => setTimeout(resolve, 100))
     gitSyncInFlightRef.current = true
     try {
+      // Garde-fou critique : si un rebase/merge est déjà en cours ou que des conflits
+      // ne sont pas résolus, NE PAS relancer un commit + sync — cela committerait les
+      // marqueurs de conflit et casserait le dépôt. On ouvre plutôt la résolution.
+      // Vérifié après la synchro de fond : sa tentative de rebase (aussitôt
+      // annulée si elle échoue) ne doit pas être prise pour un conflit.
+      const pre = await holo.gitGetState(false).catch(() => null)
+      if (pre && (pre.operationInProgress !== 'none' || (pre.conflictedFiles?.length ?? 0) > 0)) {
+        setGitState(normalizeGitState(pre))
+        setRemoteBanner({ message: 'Conflit à résoudre : choisissez la version à conserver.', kind: 'conflict' })
+        return
+      }
       await flushDocumentRef.current()
       await performGitSaveRef.current()
       const result = await holo.gitSync()
@@ -1346,11 +1395,14 @@ export default function App2() {
         setRemoteBanner({ message: 'Conflit détecté : choisissez la version à conserver.', kind: 'conflict' })
         return
       }
+      window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
       await reloadOpenFileFromDisk()
     } catch (err) {
       setRemoteBanner({ message: errorMessage(err) || 'Échec de la récupération.' })
     } finally {
       gitSyncInFlightRef.current = false
+      manualSyncPendingRef.current = false
+      recheckDiskAfterSync()
     }
   }, [reloadOpenFileFromDisk, setGitState])
 
@@ -1369,6 +1421,60 @@ export default function App2() {
 
   // La bannière concerne le document affiché : on la masque au changement de fichier.
   useEffect(() => { setRemoteBanner(null) }, [openedFile?.path])
+
+  // Arborescence de l'espace rechargée dès qu'un fichier ou dossier apparaît,
+  // disparaît ou est renommé sur le disque (pull, Finder, OneDrive…).
+  useEffect(() => {
+    const holo = window.holo
+    if (!holo?.watchSpace || !rootPath) return
+    const unsubscribe = holo.onSpaceChanged((payload) => {
+      if (normalizeSpacePath(payload.rootPath) === normalizeSpacePath(rootPath)) {
+        window.dispatchEvent(new CustomEvent('holo:refresh-tree'))
+      }
+    })
+    void holo.watchSpace(rootPath).catch(() => undefined)
+    return () => {
+      unsubscribe()
+      void holo.watchSpace(null).catch(() => undefined)
+    }
+  }, [rootPath])
+
+  // Un collègue vient d'envoyer des modifications : on récupère sans attendre
+  // la synchronisation périodique. Aussitôt pour un fichier ou dossier ajouté,
+  // supprimé ou renommé ; au plus toutes les 15 s pour une simple modification
+  // (les documents ouverts à plusieurs se synchronisent déjà en temps réel).
+  const remoteSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastRemoteSyncAtRef = useRef(0)
+  const handleRemotePush = useCallback((pushedRoot: string, structural: boolean) => {
+    const currentRoot = rootPathRef.current
+    if (!currentRoot || normalizeSpacePath(pushedRoot) !== normalizeSpacePath(currentRoot)) return
+    const delay = structural ? 600 : Math.max(600, lastRemoteSyncAtRef.current + 15_000 - Date.now())
+    if (remoteSyncTimerRef.current) {
+      if (!structural) return
+      clearTimeout(remoteSyncTimerRef.current)
+    }
+    remoteSyncTimerRef.current = setTimeout(() => {
+      remoteSyncTimerRef.current = null
+      lastRemoteSyncAtRef.current = Date.now()
+      void runBackgroundGitSyncRef.current()
+    }, delay)
+  }, [])
+  useEffect(() => () => {
+    if (remoteSyncTimerRef.current) clearTimeout(remoteSyncTimerRef.current)
+  }, [])
+
+  const sharedSpaces = useMemo(
+    () => recentFolders.filter((folder) => spaceStatuses[folder] === 'git-sync'),
+    [recentFolders, spaceStatuses],
+  )
+  const peersBySpace = useSpacePresences({
+    spaces: sharedSpaces,
+    activeRoot: rootPath,
+    editingFilePath: openedFile?.path ?? null,
+    user: { name: appAuthor, email: gitEmail },
+    configRevision: realtimeConfigRevision,
+    onRemotePush: handleRemotePush,
+  })
 
   // Après résolution d'un conflit : rafraîchir l'état git + recharger le document
   // résolu, et signaler un éventuel échec de push.
@@ -1517,6 +1623,7 @@ export default function App2() {
             userMail={gitEmail || undefined}
             favoritePaths={favoriteFolders}
             spaceStatuses={spaceStatuses}
+            peersBySpace={peersBySpace}
             onSpaceFavorite={handleSpaceFavorite}
             onSpaceRemove={handleSpaceRemove}
             onSpaceOpenInExplorer={handleSpaceOpenInExplorer}
@@ -1552,6 +1659,7 @@ export default function App2() {
                   onDetach={() => rootPath && handleSpaceRemove(rootPath)}
                   favoriteFilePaths={favoriteFilePaths}
                   onToggleFileFavorite={handleFileFavorite}
+                  peers={rootPath ? peersBySpace[rootPath] : undefined}
                 />
               } />
 

@@ -43,6 +43,7 @@ import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
 import { flushPendingEdits, getHistoryOverride } from '../../lib/editorFlush'
 import { singleSpliceDiff } from '../../lib/realtime/encoding'
+import { alignSequences } from '../../lib/alignSequences'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, ImageMetadata, ImageDisplayMode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
 import type { InlineEditorHandle } from './InlineEditor'
@@ -442,7 +443,10 @@ function blocksToMarkdown(blocks: BlockState[], footnoteMap?: Map<string, string
   // Développe les listes alpha en [commentaire HTML + liste standard]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const expanded: any[] = []
-  for (const b of blocks) {
+  // Une ligne vide n'a pas d'équivalent markdown : elle n'écrit rien (sinon
+  // des lignes blanches en trop, et en édition partagée un texte qui diffère
+  // de celui des autres).
+  for (const b of blocks.filter((block) => !isEmptyParagraphBlock(block))) {
     if (b.node.type === 'list' && (b.node as ListNode).data?.listStyle === 'alpha') {
       expanded.push({ type: 'html', value: '<!-- list-style:alpha -->' })
       // Sérialiser sans le champ data pour éviter les avertissements remark
@@ -499,36 +503,76 @@ export function normalizeBodyMarkdown(markdown: string): string {
   return blocksToMarkdown(markdownToBlocks(markdown), extractFootnoteMapFromMarkdown(markdown))
 }
 
-/**
- * Remplace les blocs par ceux d'un nouveau markdown en réutilisant les blocs
- * inchangés (même identité) : leurs éditeurs restent montés, le focus et le
- * curseur de l'utilisateur sont préservés lors d'une mise à jour externe.
- */
-function reconcileBlocks(previous: BlockState[], nextBlocks: BlockState[]): BlockState[] {
-  const available = new Map<string, BlockState[]>()
-  for (const block of previous) {
-    const key = JSON.stringify(stripPositions(block.node))
-    const bucket = available.get(key)
-    if (bucket) bucket.push(block)
-    else available.set(key, [block])
-  }
-  return nextBlocks.map((block) => {
-    const bucket = available.get(JSON.stringify(stripPositions(block.node)))
-    return bucket?.shift() ?? block
-  })
+/** Paragraphe vide : une ligne vide n'existe pas en markdown, seulement dans l'éditeur. */
+function isEmptyParagraphBlock(block: BlockState): boolean {
+  return block.node.type === 'paragraph'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    && (block.node.children ?? []).every((child: any) => child.type === 'text' && child.value === '')
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stripPositions(node: any): any {
-  if (Array.isArray(node)) return node.map(stripPositions)
-  if (!node || typeof node !== 'object') return node
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const out: Record<string, any> = {}
-  for (const [key, value] of Object.entries(node)) {
-    if (key === 'position') continue
-    out[key] = stripPositions(value)
+/** Blocs qui se mettent à jour sur place quand leur contenu change (sans être remontés). */
+const BLOCK_TYPES_UPDATED_IN_PLACE = new Set(['table', 'list'])
+
+type ReconciledBlocks = {
+  blocks: BlockState[]
+  /** Bloc remplacé par sa version modifiée : ancien id → nouvel id */
+  replaced: Map<string, string>
+}
+
+/**
+ * Remplace les blocs par ceux d'un nouveau markdown (modification reçue d'un
+ * collègue) en touchant le moins possible à l'éditeur :
+ * - un bloc inchangé garde son identité : son éditeur reste monté, le focus et
+ *   le curseur sont préservés, même si des blocs sont insérés au-dessus ;
+ * - un tableau ou une liste modifié garde aussi son identité et ne met à jour
+ *   que ce qui a changé (la cellule ou l'élément en cours de saisie reste en place) ;
+ * - les lignes vides locales (absentes du markdown) sont conservées à leur place.
+ */
+function reconcileBlocks(previous: BlockState[], nextBlocks: BlockState[]): ReconciledBlocks {
+  const replaced = new Map<string, string>()
+  // Comparaison sur le markdown écrit (et non la structure interne, qui peut
+  // différer pour un même contenu, ex. alertes) : un bloc inchangé n'est
+  // jamais remonté pendant qu'on y tape.
+  const keyOf = (block: BlockState) => `${block.node.type}\n${blocksToMarkdown([block])}`
+  const emptyDocument = nextBlocks.length === 1 && isEmptyParagraphBlock(nextBlocks[0])
+  const content = emptyDocument ? previous : previous.filter((block) => !isEmptyParagraphBlock(block))
+  const { matches, exact } = alignSequences(
+    content.map(keyOf),
+    nextBlocks.map(keyOf),
+    (previousIndex, nextIndex) => content[previousIndex].node.type === nextBlocks[nextIndex].node.type,
+  )
+
+  const result = nextBlocks.map((block, index) => {
+    const match = matches[index]
+    if (match === -1) return block
+    const previousBlock = content[match]
+    if (exact[index]) return previousBlock
+    if (BLOCK_TYPES_UPDATED_IN_PLACE.has(block.node.type)) return { id: previousBlock.id, node: block.node }
+    replaced.set(previousBlock.id, block.id)
+    return block
+  })
+  if (emptyDocument) return { blocks: result, replaced }
+
+  // Lignes vides : réinsérées après le bloc qui les précédait.
+  const nextIndexOfPrevious = new Map<string, number>()
+  matches.forEach((previousIndex, nextIndex) => {
+    if (previousIndex !== -1) nextIndexOfPrevious.set(content[previousIndex].id, nextIndex)
+  })
+  const emptiesAfter = new Map<number, BlockState[]>()
+  let anchor = -1
+  for (const block of previous) {
+    if (isEmptyParagraphBlock(block)) {
+      emptiesAfter.set(anchor, [...(emptiesAfter.get(anchor) ?? []), block])
+    } else {
+      anchor = nextIndexOfPrevious.get(block.id) ?? anchor
+    }
   }
-  return out
+  if (emptiesAfter.size === 0) return { blocks: result, replaced }
+  const withEmpties: BlockState[] = [...(emptiesAfter.get(-1) ?? [])]
+  result.forEach((block, index) => {
+    withEmpties.push(block, ...(emptiesAfter.get(index) ?? []))
+  })
+  return { blocks: withEmpties, replaced }
 }
 
 /** Position du curseur dans le texte d'un élément éditable (0 si hors de l'élément). */
@@ -781,12 +825,17 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // remplacé (un collègue l'a modifié), le focus et le curseur sont restaurés
   // à la même position.
   const focusRestoreRef = useRef<{ index: number; previousId: string; offset: number; text: string } | null>(null)
+  const replacedBlocksRef = useRef<Map<string, string>>(new Map())
   useLayoutEffect(() => {
     const restore = focusRestoreRef.current
     if (!restore) return
     focusRestoreRef.current = null
-    const block = blocks[Math.min(restore.index, blocks.length - 1)]
-    if (!block || block.id === restore.previousId) return
+    // Bloc toujours là (même identité) : son éditeur a gardé le focus.
+    if (blocks.some((candidate) => candidate.id === restore.previousId)) return
+    const replacementId = replacedBlocksRef.current.get(restore.previousId)
+    const block = (replacementId && blocks.find((candidate) => candidate.id === replacementId))
+      || blocks[Math.min(restore.index, blocks.length - 1)]
+    if (!block) return
     // Texte inséré ou supprimé avant le curseur : la position suit.
     const element = document.querySelector<HTMLElement>(`[data-block-id="${block.id}"] [contenteditable="true"]`)
     let offset = restore.offset
@@ -797,8 +846,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     blockRefs.current.get(block.id)?.focus({ type: 'offset', offset })
   }, [blocks])
 
-  // Changement externe du prop markdown → réinitialise sans émettre en retour
-  useEffect(() => {
+  // Changement externe du prop markdown → réinitialise sans émettre en retour.
+  // useLayoutEffect : appliqué dans le même rendu que la réception (édition
+  // temps réel). Une saisie enregistrée entre-temps partirait sinon d'une
+  // version périmée du document et annulerait les modifications reçues.
+  useLayoutEffect(() => {
     if (markdown !== lastEmittedRef.current) {
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
@@ -808,7 +860,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (active && activeBlockId && activeIndex !== -1) {
         focusRestoreRef.current = { index: activeIndex, previousId: activeBlockId, offset: getCaretTextOffset(active), text: active.textContent ?? '' }
       }
-      setBlocks((previous) => reconcileBlocks(previous, markdownToBlocks(markdown)))
+      setBlocks((previous) => {
+        const reconciled = reconcileBlocks(previous, markdownToBlocks(markdown))
+        replacedBlocksRef.current = reconciled.replaced
+        return reconciled.blocks
+      })
       initFootnotes(extractFootnoteMapFromMarkdown(markdown))
       // Réinitialise l'historique quand le document change de l'extérieur
       historyRef.current = { stack: [markdown], pos: 0 }
@@ -1461,10 +1517,10 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       : null
     if (onlyImage?.url && window.holo?.writeClipboardImage) {
       const url = onlyImage.url
-      setTimeout(() => { void window.holo?.writeClipboardImage(url).catch(() => undefined) }, 0)
+      setTimeout(() => { void window.holo?.writeClipboardImage(url, currentFilePath).catch(() => undefined) }, 0)
     }
     return true
-  }, [selectedBlockIds])
+  }, [selectedBlockIds, currentFilePath])
 
   const handleSelectedBlocksCut = useCallback((clipboardData?: DataTransfer | null) => {
     if (!handleSelectedBlocksCopy(clipboardData)) return false

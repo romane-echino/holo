@@ -10,6 +10,7 @@
  */
 
 import { useRef, useEffect, useLayoutEffect, useCallback, useState, forwardRef, useImperativeHandle } from 'react'
+import { flushSync } from 'react-dom'
 import { domToInlines } from './lib/domToInlines'
 import { inlinesToHtml } from './lib/inlinesToHtml'
 import { inlinesToMarkdown } from './lib/inlinesToMarkdown'
@@ -19,17 +20,24 @@ import type { InlineNode } from './lib/types'
 import { cn } from '../../utils/global'
 import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { registerPendingEditFlusher } from '../../lib/editorFlush'
-import { resolveImageSrc } from '../../lib/documentImages'
+import { onSpaceFilesChanged, resolveImageSrc } from '../../lib/documentImages'
+import { useEditorFilePath } from './EditorFileContext'
 
 /** Charge les images locales d'un éditeur inline (cellules de tableau, paragraphes). */
-function hydrateInlineImages(root: HTMLElement) {
+function hydrateInlineImages(root: HTMLElement, documentPath: string | null) {
   for (const img of Array.from(root.querySelectorAll<HTMLImageElement>('img[data-md-src]'))) {
     const source = img.getAttribute('data-md-src') ?? ''
     if (!source || img.dataset.hydrated === source) continue
     img.dataset.hydrated = source
-    void resolveImageSrc(source).then((resolved) => {
-      if (resolved && img.getAttribute('data-md-src') === source) img.src = resolved
-      else if (!resolved) img.classList.add('holo-inline-image-missing')
+    void resolveImageSrc(source, documentPath).then((resolved) => {
+      if (resolved && img.getAttribute('data-md-src') === source) {
+        img.src = resolved
+        img.classList.remove('holo-inline-image-missing')
+      } else if (!resolved) {
+        img.classList.add('holo-inline-image-missing')
+        // Recherchée à nouveau quand des fichiers arrivent (pull).
+        delete img.dataset.hydrated
+      }
     })
   }
 }
@@ -338,15 +346,24 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
   // effets du parent (restauration du curseur après une mise à jour reçue).
   // Une seule fois : rejouer l'effet (StrictMode) remplacerait les nœuds texte
   // et ferait perdre la position du curseur.
+  const documentPath = useEditorFilePath()
+  const documentPathRef = useRef(documentPath)
+  documentPathRef.current = documentPath
   const contentInitializedRef = useRef(false)
   useLayoutEffect(() => {
     const el = divRef.current
     if (!el || contentInitializedRef.current) return
     contentInitializedRef.current = true
     el.innerHTML = inlinesToHtml(initialContent)
-    hydrateInlineImages(el)
+    hydrateInlineImages(el, documentPathRef.current)
     syncEmpty(el)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Images introuvables (pas encore récupérées) : nouvel essai à chaque arrivée de fichiers.
+  useEffect(() => onSpaceFilesChanged(() => {
+    const el = divRef.current
+    if (el?.querySelector('img.holo-inline-image-missing')) hydrateInlineImages(el, documentPathRef.current)
+  }), [])
 
   // Positionne le curseur selon le type de navigation
   const positionCursor = (el: HTMLElement, cursor?: InitialCursor) => {
@@ -410,7 +427,10 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null
-      save()
+      // Rendu synchrone : en édition temps réel, une modification reçue ne doit
+      // pas s'intercaler entre l'enregistrement et son envoi (la saisie
+      // partirait d'une version périmée ou serait écrasée).
+      flushSync(save)
     }, 400)
   }, [save])
 
@@ -445,7 +465,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       range.collapse(true)
       selection?.removeAllRanges()
       selection?.addRange(range)
-      hydrateInlineImages(el)
+      hydrateInlineImages(el, documentPathRef.current)
       syncEmpty(el)
       savedRef.current = false
       save()

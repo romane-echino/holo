@@ -11,7 +11,8 @@ import { Copy, Expand, FolderOpen, ImageOff, Link2, LayoutGrid, RectangleHorizon
 import type { ImageDisplayMode, ImageMetadata, ImageNode } from '../lib/types'
 import { cn } from '../../../utils/global'
 import { ContextMenu, type ContextMenuAction } from '../../../components/ContextMenu'
-import { copyImageToClipboard, isLocalImagePath, resolveImageSrc } from '../../../lib/documentImages'
+import { copyImageToClipboard, isLocalImagePath, onSpaceFilesChanged, resolveImageSrc } from '../../../lib/documentImages'
+import { useEditorFilePath } from '../EditorFileContext'
 import { notify } from '../../../lib/notify'
 
 interface ImageBlockProps {
@@ -44,19 +45,26 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
   const modeMenuRef = useRef<HTMLDivElement>(null)
 
   const displayMode: ImageDisplayMode = node.data?.holoImage?.displayMode ?? 'full'
+  const documentPath = useEditorFilePath()
+  // Incrémenté quand des fichiers arrivent : une image ajoutée par un collègue
+  // n'existe chez nous qu'après la récupération git.
+  const [retryRevision, setRetryRevision] = useState(0)
 
   useEffect(() => {
     if (!node.url || !isLocalRelativePath(node.url)) return
     let cancelled = false
-    setError(false)
-    setResolvedSrc(null)
-    void resolveImageSrc(node.url).then((src) => {
+    void resolveImageSrc(node.url, documentPath).then((src) => {
       if (cancelled) return
-      if (src) setResolvedSrc(src)
-      else setError(true)
+      setResolvedSrc(src)
+      setError(!src)
     })
     return () => { cancelled = true }
-  }, [node.url])
+  }, [node.url, documentPath, retryRevision])
+
+  useEffect(() => {
+    if (!error) return
+    return onSpaceFilesChanged(() => setRetryRevision((revision) => revision + 1))
+  }, [error])
 
   useEffect(() => {
     if (!isModeMenuOpen) return
@@ -128,7 +136,7 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
   }
 
   const contextMenuItems: ContextMenuAction[] = [
-    { type: 'item', label: 'Copier l\'image', icon: Copy, onClick: () => void copyImageToClipboard(node.url) },
+    { type: 'item', label: 'Copier l\'image', icon: Copy, onClick: () => void copyImageToClipboard(node.url, documentPath) },
     {
       type: 'item',
       label: isLocalRelativePath(node.url) ? 'Copier le chemin' : 'Copier l\'adresse',
@@ -139,7 +147,7 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
       },
     },
     ...(isLocalRelativePath(node.url) && window.holo?.showImageInFolder
-      ? [{ type: 'item' as const, label: 'Afficher dans le dossier', icon: FolderOpen, onClick: () => void window.holo?.showImageInFolder(node.url) }]
+      ? [{ type: 'item' as const, label: 'Afficher dans le dossier', icon: FolderOpen, onClick: () => void window.holo?.showImageInFolder(node.url, documentPath) }]
       : []),
   ]
 
@@ -212,7 +220,7 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
-              void copyImageToClipboard(node.url)
+              void copyImageToClipboard(node.url, documentPath)
             }}
             className="inline-flex items-center gap-1 rounded-full bg-black/72 px-2.5 py-1.5 text-[11px] text-white shadow-[0_10px_20px_rgba(0,0,0,.2)] ring-1 ring-white/10 transition hover:bg-black/82"
             title="Copier l'image"

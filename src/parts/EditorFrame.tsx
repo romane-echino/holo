@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, Archive, ArchiveRestore, Check, Code2, Ellipsis, ExternalLink, FileText, Layers, PanelRight, RefreshCw, Save, Star } from 'lucide-react'
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react'
@@ -9,6 +9,7 @@ import { notifyError } from '../lib/notify'
 import { getHistoryOverride } from '../lib/editorFlush'
 import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/session'
 import { RemoteCursors } from './RemoteCursors'
+import { PeerAvatars } from './PeerAvatars'
 import { describeRealtimeConnectionFailure } from '../popup/RealtimeSetup'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { FootnotesProvider } from '../contexts/FootnotesContext'
@@ -338,7 +339,6 @@ function RealtimePresence({ status, peers, detail }: { status: RealtimeStatus | 
   if (!status || status === 'stopped') return null
   const isLive = status === 'live'
   const isProblem = status === 'unauthorized' || status === 'error'
-  const visiblePeers = peers.slice(0, 4)
   const label = REALTIME_STATUS_LABEL[status]
   const title = isLive && peers.length > 0
     ? `En direct avec ${peers.map((peer) => peer.name).join(', ')}`
@@ -347,25 +347,7 @@ function RealtimePresence({ status, peers, detail }: { status: RealtimeStatus | 
       : label
   return (
     <span className="flex items-center gap-1.5" title={title} data-testid="realtime-presence" data-status={status}>
-      {visiblePeers.length > 0 && (
-        <span className="flex -space-x-1.5">
-          {visiblePeers.map((peer) => (
-            <span
-              key={peer.clientId}
-              className="flex size-6 items-center justify-center rounded-full text-[10px] font-semibold text-black/80 ring-2 ring-holo-bg"
-              style={{ backgroundColor: peer.color }}
-              aria-label={peer.name}
-            >
-              {peer.name.trim().split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase() || '?'}
-            </span>
-          ))}
-          {peers.length > visiblePeers.length && (
-            <span className="flex size-6 items-center justify-center rounded-full bg-holo-glass-strong text-[10px] text-holo-text-muted ring-2 ring-holo-bg">
-              +{peers.length - visiblePeers.length}
-            </span>
-          )}
-        </span>
-      )}
+      <PeerAvatars peers={peers} max={4} size="md" />
       <span className={cn(
         'flex items-center gap-1.5 text-xs',
         isLive ? 'text-holo-success' : isProblem ? 'text-holo-warning' : 'text-holo-text-faint',
@@ -750,8 +732,9 @@ export function EditorFrame({
 
   // Mise à jour externe du document : on remplace frontmatter et corps sans
   // réémettre (ce n'est pas une modification de l'utilisateur).
+  // useLayoutEffect : appliquée dans le même rendu que la réception (voir BlockEditor).
   const appliedExternalRevisionRef = useRef(externalRevision)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (appliedExternalRevisionRef.current === externalRevision) return
     appliedExternalRevisionRef.current = externalRevision
     const parsed = parseFrontmatter(markdown)
@@ -1091,7 +1074,7 @@ export function EditorFrame({
           reader.readAsDataURL(file)
         })
         const base64 = dataUrl.split(',')[1]
-        const result = await window.holo!.saveImage(file.name, base64, opts)
+        const result = await window.holo!.saveImage(file.name, base64, opts, filepath)
         const alt = file.name.replace(/\.[^.]+$/, '')
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
@@ -1099,7 +1082,7 @@ export function EditorFrame({
         notifyError('Impossible d\'ajouter l\'image', err)
       }
     }
-  }, [buildImageStorageOptions, insertSavedImage])
+  }, [buildImageStorageOptions, insertSavedImage, filepath])
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const remoteGifUrl = extractGifUrlFromClipboardData(e.clipboardData)
@@ -1113,7 +1096,7 @@ export function EditorFrame({
 
     // Image copiée depuis Holo : on réutilise le fichier existant (pas de doublon).
     if (!remoteGifUrl) {
-      const copiedSource = await window.holo?.getCopiedHoloImage?.().catch(() => null)
+      const copiedSource = await window.holo?.getCopiedHoloImage?.(filepath).catch(() => null)
       if (copiedSource) {
         insertSavedImage(copiedSource, copiedSource.split('/').pop()?.replace(/(-[0-9a-f]{8})?\.[^.]+$/i, '') ?? '', cell)
         return
@@ -1128,7 +1111,7 @@ export function EditorFrame({
           if (blob.type === 'image/gif') {
             const base64 = await blobToBase64(blob)
             const name = filenameFromRemoteUrl(remoteGifUrl, blob.type)
-            const result = await window.holo!.saveImage(name, base64, opts)
+            const result = await window.holo!.saveImage(name, base64, opts, filepath)
             const alt = name.replace(/\.[^.]+$/, '')
             insertSavedImage(result.relativePath, alt, cell)
             return
@@ -1151,7 +1134,7 @@ export function EditorFrame({
         })
         const base64 = dataUrl.split(',')[1]
         const name = file.name || `image-${Date.now()}${extensionFromMimeType(file.type)}`
-        const result = await window.holo!.saveImage(name, base64, opts)
+        const result = await window.holo!.saveImage(name, base64, opts, filepath)
         const alt = name.replace(/\.[^.]+$/, '')
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
@@ -1159,7 +1142,7 @@ export function EditorFrame({
         notifyError('Impossible de coller l\'image', err)
       }
     }
-  }, [buildImageStorageOptions, insertSavedImage])
+  }, [buildImageStorageOptions, insertSavedImage, filepath])
 
   return (
     <section

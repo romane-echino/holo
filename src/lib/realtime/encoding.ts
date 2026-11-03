@@ -1,3 +1,5 @@
+import { alignSequences } from '../alignSequences'
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   const chunk = 0x8000
@@ -38,6 +40,56 @@ export function singleSpliceDiff(before: string, after: string): { index: number
     remove: before.length - prefix - suffix,
     insert: after.slice(prefix, after.length - suffix),
   }
+}
+
+export type TextSplice = { index: number; remove: number; insert: string }
+
+function lineOffsets(lines: string[]): number[] {
+  const offsets = [0]
+  for (const line of lines) offsets.push(offsets[offsets.length - 1] + line.length)
+  return offsets
+}
+
+/** Lignes, chacune avec son retour à la ligne final. */
+function splitLines(text: string): string[] {
+  return text.match(/[^\n]*\n|[^\n]+$/g) ?? []
+}
+
+/**
+ * Différences entre deux textes, en zones séparées (indices dans `before`,
+ * croissants). Deux modifications éloignées donnent deux zones : le texte qui
+ * les sépare n'est pas réécrit. C'est essentiel en édition partagée : ce texte
+ * a pu être modifié entre-temps par un collègue, et le remplacer en bloc
+ * dupliquerait ou effacerait sa saisie.
+ */
+export function multiSpliceDiff(before: string, after: string): TextSplice[] {
+  const outer = singleSpliceDiff(before, after)
+  if (!outer) return []
+  const linesBefore = splitLines(before.slice(outer.index, outer.index + outer.remove))
+  const linesAfter = splitLines(outer.insert)
+  if (linesBefore.length < 2 || linesAfter.length < 2) return [outer]
+  // Lignes identiques des deux côtés : points d'ancrage ; seules les zones
+  // entre deux ancres sont modifiées.
+  const { matches, exact } = alignSequences(linesBefore, linesAfter, () => false)
+  const offsetsBefore = lineOffsets(linesBefore)
+  const offsetsAfter = lineOffsets(linesAfter)
+  const anchors: Array<[number, number]> = []
+  matches.forEach((match, index) => {
+    if (match !== -1 && exact[index]) anchors.push([match, index])
+  })
+  anchors.push([linesBefore.length, linesAfter.length])
+  const splices: TextSplice[] = []
+  let lineBefore = 0
+  let lineAfter = 0
+  for (const [anchorBefore, anchorAfter] of anchors) {
+    const gapBefore = before.slice(outer.index + offsetsBefore[lineBefore], outer.index + offsetsBefore[anchorBefore])
+    const gapAfter = outer.insert.slice(offsetsAfter[lineAfter], offsetsAfter[anchorAfter])
+    const splice = singleSpliceDiff(gapBefore, gapAfter)
+    if (splice) splices.push({ ...splice, index: outer.index + offsetsBefore[lineBefore] + splice.index })
+    lineBefore = anchorBefore + 1
+    lineAfter = anchorAfter + 1
+  }
+  return splices
 }
 
 function isHighSurrogate(code: number) {

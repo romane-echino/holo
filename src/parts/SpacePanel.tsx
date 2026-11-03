@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../utils/global'
 import { reloadOpenDocument, saveOpenDocument } from '../lib/editorFlush'
 import { notifyError } from '../lib/notify'
@@ -16,6 +16,10 @@ import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import type { LucideIcon } from 'lucide-react'
 import { AbstractPanel } from './AbstractPanel'
+import { PeerAvatars } from './PeerAvatars'
+import { uniquePeers } from '../lib/realtime/peers'
+import type { SpacePeer } from '../lib/realtime/spacePresence'
+import { relativeSpacePath } from '../hooks/useSpacePresences'
 
 type SpacePanelTab = 'browse' | 'recent' | 'favorites'
 
@@ -65,8 +69,16 @@ type SpacePanelProps = {
   favoriteFilePaths?: string[]
   onToggleFileFavorite?: (path: string) => void
   onAddFromTemplate?: (name: string, content: string, parentPath?: string) => void
+  /** Personnes connectées à cet espace (présence temps réel) */
+  peers?: SpacePeer[]
 }
 
+/** Qui a quel document ouvert : chemin relatif à l'espace → personnes */
+const TreeEditorsContext = createContext<{ rootPath?: string; editors: Map<string, SpacePeer[]> }>({ editors: new Map() })
+
+function describeEditors(peers: SpacePeer[]): string {
+  return `Ouvert par ${peers.map((peer) => peer.name).join(', ')}`
+}
 
 
 const tabClassName =
@@ -237,6 +249,22 @@ function TreeNode({
   const isTemplate = !isFolder && Boolean(workspaceFileMeta[node.path]?.isTemplate)
   // Utiliser l'override si disponible (mise à jour immédiate sans attendre le cache)
   const metaRaw = metaOverride?.path === node.path ? metaOverride : (!isFolder ? fileMeta?.[node.path] : undefined)
+  // Personnes qui ont ce fichier ouvert ; pour un dossier replié, celles qui
+  // ont un document qu'il contient (ou son .index.md) ouvert.
+  const treeEditors = useContext(TreeEditorsContext)
+  const editors = useMemo(() => {
+    if (treeEditors.editors.size === 0 || !treeEditors.rootPath) return []
+    const relativePath = relativeSpacePath(treeEditors.rootPath, node.path)
+    if (!relativePath) return []
+    if (!isFolder) return treeEditors.editors.get(relativePath) ?? []
+    const found: SpacePeer[] = [...(treeEditors.editors.get(`${relativePath}/.index.md`) ?? [])]
+    if (!isExpanded) {
+      for (const [editedPath, peers] of treeEditors.editors) {
+        if (editedPath.startsWith(`${relativePath}/`) && editedPath !== `${relativePath}/.index.md`) found.push(...peers)
+      }
+    }
+    return uniquePeers(found)
+  }, [treeEditors, node.path, isFolder, isExpanded])
   const displayTitle = metaRaw?.title || node.name
   const displayIcon = metaRaw?.icon
   const displayDesc = metaRaw?.description
@@ -309,6 +337,11 @@ function TreeNode({
           )}
         </div>
 
+        {editors.length > 0 && (
+          <span title={describeEditors(editors)} data-testid="tree-editors" data-count={editors.length}>
+            <PeerAvatars peers={editors} max={2} size="xs" />
+          </span>
+        )}
         {isFav && (
           <Star size={10} className="shrink-0 fill-amber-400 text-amber-400 opacity-70" />
         )}
@@ -428,8 +461,18 @@ export function SpacePanel({
   favoriteFilePaths = [],
   onToggleFileFavorite,
   onAddFromTemplate,
+  peers,
 }: SpacePanelProps) {
   const { setFileMetaByPath, fileMetaByPath } = useWorkspace()
+  const presentPeers = useMemo(() => uniquePeers((peers ?? []).filter((peer) => peer.active)), [peers])
+  const treeEditors = useMemo(() => {
+    const editors = new Map<string, SpacePeer[]>()
+    for (const peer of presentPeers) {
+      if (!peer.editing) continue
+      editors.set(peer.editing, [...(editors.get(peer.editing) ?? []), peer])
+    }
+    return { rootPath, editors }
+  }, [presentPeers, rootPath])
   const [tab, setTab] = useState<SpacePanelTab>('browse')
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['/docs', '/docs/architecture']))
@@ -858,11 +901,20 @@ export function SpacePanel({
   }
 
   return (
-    <>
+    <TreeEditorsContext.Provider value={treeEditors}>
     <AbstractPanel
       title={spaceName}
       actions={
         <div className="flex items-center gap-1">
+          {presentPeers.length > 0 && (
+            <span
+              className="mr-1 flex items-center"
+              title={`Dans l'espace : ${presentPeers.map((peer) => peer.name).join(', ')}`}
+              data-testid="space-panel-peers"
+            >
+              <PeerAvatars peers={presentPeers} max={3} size="md" />
+            </span>
+          )}
           <button
             onClick={(e) => setMoreMenuAnchorEl(e.currentTarget)}
             className="flex size-8 shrink-0 items-center justify-center rounded-holo-md border border-holo-border-soft bg-holo-glass text-holo-text-muted transition hover:border-holo-primary/40 hover:bg-holo-primary-surface hover:text-holo-primary-soft active:scale-[0.98]"
@@ -1408,7 +1460,7 @@ export function SpacePanel({
         </div>
       </div>
     )}
-    </>
+    </TreeEditorsContext.Provider>
   )
 }
 
@@ -1437,6 +1489,7 @@ export function SpaceRoute({
   onDetach,
   favoriteFilePaths,
   onToggleFileFavorite,
+  peers,
 }: {
   onSelectFile?: (node: SpaceFileNode) => void
   selectedFilePath?: string
@@ -1446,6 +1499,7 @@ export function SpaceRoute({
   onDetach?: () => void
   favoriteFilePaths?: string[]
   onToggleFileFavorite?: (path: string) => void
+  peers?: SpacePeer[]
 }) {
   const { encodedPath } = useParams()
   const folderPath = encodedPath ? decodeURIComponent(encodedPath) : null
@@ -1812,6 +1866,7 @@ export function SpaceRoute({
         favoriteFilePaths={favoriteFilePaths}
         onToggleFileFavorite={onToggleFileFavorite}
         onAddFromTemplate={handleAddFromTemplate}
+        peers={peers}
       />
 
       {/* Confirmation d'archivage */}

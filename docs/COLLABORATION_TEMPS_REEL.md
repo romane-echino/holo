@@ -123,8 +123,12 @@ manque, puis renvoie ce qui manque au serveur (vecteur d'état). Si l'époque a 
 rejoint à neuf.
 
 **Disque et git.** Chaque participant continue d'écrire (fusion 3 voies) et de committer comme
-d'habitude. Les commits des participants contiennent les mêmes modifications et se
-réconcilient sans conflit.
+d'habitude. Les commits des participants contiennent les mêmes modifications, mais à des
+instants différents : rejouer ceux de l'un sur ceux de l'autre (rebase) peut buter sur des
+états intermédiaires. Dans ce cas la synchronisation fusionne les états finaux. Un conflit sur
+un document en direct se résout avec la version locale, l'état partagé, qui contient déjà les
+modifications des autres. Le résultat est un seul commit au-dessus du distant. Tout autre
+conflit annule l'opération, comme avant.
 
 **Modifications venues du disque** (pull git d'un collègue hors session, OneDrive). Chaque
 participant les reçoit. Seul le meneur, le plus petit identifiant de présence, les réinjecte
@@ -135,14 +139,37 @@ l'écriture les préserve sur disque jusqu'à ce qu'elles arrivent par la sessio
 toute la session. L'en-tête du document affiche les avatars et l'état (« En direct »,
 « Reconnexion… »).
 
+**Mises à jour reçues dans l'éditeur.** Les blocs des deux versions sont alignés par plus
+longue sous-séquence commune (`alignSequences`). Un bloc inchangé garde son identité, même si
+des blocs sont insérés au-dessus. Un tableau ou une liste modifié garde aussi son identité et
+ne remonte que la cellule ou l'élément changé ; si c'est celui où l'on tape, le curseur est
+replacé au même endroit du texte. Les lignes vides locales, absentes du Markdown, sont
+conservées à leur place.
+
+**Présence dans les espaces.** Chaque espace partagé a son propre canal sur le relais :
+identifiant `HMAC(clé du dépôt, "space")`, présence chiffrée comme celle des documents, aucun
+contenu. Chaque poste y publie son identité, s'il a l'espace affiché et le document qu'il a
+ouvert. La liste des espaces montre qui est dans chaque espace et l'arborescence montre qui a
+quel fichier ouvert. Les canaux sont limités à quatre espaces, l'espace affiché en premier.
+Après chaque envoi git, le poste le signale sur ce canal. Les autres récupèrent aussitôt s'il
+s'agit de fichiers ajoutés, supprimés ou renommés, et au plus toutes les 15 secondes pour une
+simple modification. L'arborescence se recharge quand le dossier change sur le disque (pull,
+Finder, OneDrive). Un dossier créé dans Holo contient un `.gitkeep` pour exister dans git.
+
+**Images.** Elles sont rangées dans `images/` à la racine de l'espace et le lien est relatif au
+document (`../images/photo.png`), lisible par Gitea ou GitHub. Les anciens liens relatifs à la
+racine restent lus. Une image ajoutée par un collègue s'affiche dès que la synchronisation
+l'a récupérée.
+
 **Configuration.** Elle se fait dans **Paramètres → Collaboration** et est propre à chaque
 poste : adresse du relais, jeton chiffré avec `safeStorage`.
 
 ### Limites connues
 
-- Pas de curseurs distants dans le texte : seuls les avatars indiquent qui est présent.
 - La compaction n'a lieu qu'à la jonction, au-delà de 200 modifications en attente.
-- Pas de contrôle d'accès par espace. Toute personne de l'organisation disposant d'un jeton
-  peut suivre un document dont elle connaît l'identifiant, c'est-à-dire l'URL du dépôt et le
-  chemin.
-
+- Pas de contrôle d'accès par espace sur le relais. Les routes sont publiques. Le contenu est
+  chiffré et les identifiants sont dérivés d'une clé que seuls les clones du dépôt connaissent.
+- Une ligne vide n'existe pas en Markdown : elle reste locale tant qu'on n'y a rien écrit, et
+  disparaît à la réouverture du document.
+- Les liens d'images écrits avant la 0.8 sont relatifs à la racine de l'espace. Holo les
+  affiche, mais Gitea ne les trouve pas pour un document rangé dans un sous-dossier.

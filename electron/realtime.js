@@ -228,31 +228,52 @@ export function registerRealtimeIpc({
   // qui ont un clone connaissent. Elle chiffre le contenu (le relais ne voit
   // que du chiffré) et rend les identifiants de documents indevinables : avoir
   // accès au dépôt suffit, aucun jeton n'est nécessaire.
-  ipcMain.handle('realtime:resolve-document', async (_event, filePath) => {
+  async function deriveRepositoryKey(root) {
     const config = await readConfig()
-    if (!config.enabled || !config.url) return { available: false, reason: 'disabled' }
-    const root = findOwningRoot(filePath)
-    if (!root) return { available: false, reason: 'no-space' }
+    if (!config.enabled || !config.url) return { reason: 'disabled' }
     const workspace = await getPrimaryRemoteWebUrl(root).catch(() => null)
-    if (!workspace) return { available: false, reason: 'no-remote' }
+    if (!workspace) return { reason: 'no-remote' }
     const rootCommits = await getRootCommits(root).catch(() => [])
-    if (rootCommits.length === 0) return { available: false, reason: 'no-history' }
-    const relativePath = path.relative(root, filePath).split(path.sep).join('/')
+    if (rootCommits.length === 0) return { reason: 'no-history' }
     const normalizedWorkspace = workspace.toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '')
     const key = crypto.createHmac('sha256', 'holo-realtime/v1/key')
       .update(`${normalizedWorkspace}\n${[...rootCommits].sort().join(',')}`)
       .digest()
-    const idBytes = crypto.createHmac('sha256', key).update(`document\n${relativePath}`).digest().subarray(0, 16)
+    return { key, workspace }
+  }
+
+  function channelId(key, label) {
+    const idBytes = crypto.createHmac('sha256', key).update(label).digest().subarray(0, 16)
     idBytes[6] = (idBytes[6] & 0x0f) | 0x50
     idBytes[8] = (idBytes[8] & 0x3f) | 0x80
     const hex = Buffer.from(idBytes).toString('hex')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+
+  ipcMain.handle('realtime:resolve-document', async (_event, filePath) => {
+    const root = findOwningRoot(filePath)
+    if (!root) return { available: false, reason: 'no-space' }
+    const derived = await deriveRepositoryKey(root)
+    if (!derived.key) return { available: false, reason: derived.reason }
+    const relativePath = path.relative(root, filePath).split(path.sep).join('/')
     return {
       available: true,
-      documentId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
-      key: key.toString('base64'),
-      workspace,
+      documentId: channelId(derived.key, `document\n${relativePath}`),
+      key: derived.key.toString('base64'),
+      workspace: derived.workspace,
       path: relativePath,
     }
+  })
+
+  // Canal de présence d'un espace : qui a quel document ouvert, et signal
+  // « je viens d'envoyer des modifications » pour que les autres récupèrent
+  // sans attendre la synchronisation périodique.
+  ipcMain.handle('realtime:resolve-space', async (_event, rootPath) => {
+    const root = findOwningRoot(rootPath)
+    if (!root) return { available: false, reason: 'no-space' }
+    const derived = await deriveRepositoryKey(root)
+    if (!derived.key) return { available: false, reason: derived.reason }
+    return { available: true, documentId: channelId(derived.key, 'space'), key: derived.key.toString('base64'), workspace: derived.workspace, path: '' }
   })
 
   ipcMain.handle('realtime:subscribe', async (event, documentId) => {

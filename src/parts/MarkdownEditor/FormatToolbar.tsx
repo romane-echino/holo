@@ -49,6 +49,10 @@ interface FormatToolbarProps {
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
+/** Dimensions approximatives de la barre, pour la garder dans la fenêtre. */
+const TOOLBAR_HEIGHT_PX = 44
+const TOOLBAR_HALF_WIDTH_PX = 190
+
 export function FormatToolbar({
   state,
   onBold, onItalic, onStrike, onCode, onUnderline, onSuperscript, onSubscript, onFootnote, onLink, onUnlink, onUnlinkFootnote = () => {},
@@ -216,14 +220,17 @@ export function FormatToolbar({
   }
 
   // Repositionnement quand la sélection change (rect mis à jour par InlineEditor)
+  // Au-dessus de la sélection, ou en dessous s'il n'y a pas la place (texte
+  // sélectionné en haut de l'écran) ; jamais hors de la largeur de la fenêtre.
   const { rect } = state
-  const top = rect.top - 8
-  const left = rect.left + rect.width / 2
+  const placeBelow = rect.top < TOOLBAR_HEIGHT_PX + 16
+  const top = placeBelow ? rect.bottom + 8 : rect.top - 8
+  const left = `clamp(${TOOLBAR_HALF_WIDTH_PX}px, ${rect.left + rect.width / 2}px, calc(100vw - ${TOOLBAR_HALF_WIDTH_PX}px))`
 
   return (
     <div
       data-format-toolbar="true"
-      style={{ top, left, transform: 'translate(-50%, -100%)' }}
+      style={{ top, left, transform: placeBelow ? 'translate(-50%, 0)' : 'translate(-50%, -100%)' }}
       className="fixed z-50 flex items-center overflow-hidden rounded-holo-xl border border-holo-border-soft bg-holo-bg/95 shadow-[0_12px_48px_rgba(0,0,0,.38)] backdrop-blur-2xl"
     >
       {linkMode ? (

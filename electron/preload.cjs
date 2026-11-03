@@ -9,9 +9,9 @@ const updateListeners = {
 contextBridge.exposeInMainWorld('holo', {
   appName: 'Holo',
   writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
-  writeClipboardImage: (source) => ipcRenderer.invoke('clipboard:write-image', source),
-  getCopiedHoloImage: () => ipcRenderer.invoke('clipboard:get-copied-holo-image'),
-  showImageInFolder: (source) => ipcRenderer.invoke('shell:show-image-in-folder', source),
+  writeClipboardImage: (source, documentPath) => ipcRenderer.invoke('clipboard:write-image', source, documentPath ?? null),
+  getCopiedHoloImage: (documentPath) => ipcRenderer.invoke('clipboard:get-copied-holo-image', documentPath ?? null),
+  showImageInFolder: (source, documentPath) => ipcRenderer.invoke('shell:show-image-in-folder', source, documentPath ?? null),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   getWindowState: () => ipcRenderer.invoke('window:get-state'),
   dragWindowFromMaximized: (payload) => ipcRenderer.invoke('window:drag-from-maximized', payload),
@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('holo', {
     setConfig: (config) => ipcRenderer.invoke('realtime:set-config', config),
     testConnection: (candidate) => ipcRenderer.invoke('realtime:test-connection', candidate),
     resolveDocument: (filePath) => ipcRenderer.invoke('realtime:resolve-document', filePath),
+    resolveSpace: (rootPath) => ipcRenderer.invoke('realtime:resolve-space', rootPath),
     subscribe: (documentId) => ipcRenderer.invoke('realtime:subscribe', documentId),
     unsubscribe: (documentId) => ipcRenderer.invoke('realtime:unsubscribe', documentId),
     getState: (documentId) => ipcRenderer.invoke('realtime:get-state', documentId),
@@ -67,6 +68,17 @@ contextBridge.exposeInMainWorld('holo', {
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:write-file', filePath, content),
   writeDocument: (filePath, content, baseContent, expectedDiskContent) => ipcRenderer.invoke('fs:write-document', filePath, content, baseContent, expectedDiskContent),
   watchDocument: (filePath) => ipcRenderer.invoke('fs:watch-document', filePath ?? null),
+  watchSpace: (rootPath) => ipcRenderer.invoke('fs:watch-space', rootPath ?? null),
+  onGitPushed: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('git:pushed', listener)
+    return () => ipcRenderer.removeListener('git:pushed', listener)
+  },
+  onSpaceChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('fs:space-changed', listener)
+    return () => ipcRenderer.removeListener('fs:space-changed', listener)
+  },
   onDocumentChanged: (callback) => {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('fs:document-changed', listener)
@@ -114,11 +126,11 @@ contextBridge.exposeInMainWorld('holo', {
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitSync: () => ipcRenderer.invoke('git:sync'),
   gitPull: () => ipcRenderer.invoke('git:pull'),
-  gitPullIfSafe: () => ipcRenderer.invoke('git:pull-if-safe'),
+  gitPullIfSafe: (options) => ipcRenderer.invoke('git:pull-if-safe', options ?? {}),
   gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
   gitResolveConflict: (filePath, strategy) => ipcRenderer.invoke('git:resolve-conflict', filePath, strategy),
-  saveImage: (name, dataBase64, options) => ipcRenderer.invoke('fs:save-image', name, dataBase64, options),
-  loadImage: (relativePath) => ipcRenderer.invoke('fs:load-image', relativePath),
+  saveImage: (name, dataBase64, options, documentPath) => ipcRenderer.invoke('fs:save-image', name, dataBase64, options, documentPath ?? null),
+  loadImage: (relativePath, documentPath) => ipcRenderer.invoke('fs:load-image', relativePath, documentPath ?? null),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),
   getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),

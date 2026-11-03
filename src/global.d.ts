@@ -172,6 +172,10 @@ interface HoloApi {
   /** Écrit le document ouvert ; fusionne avec le disque s'il a changé depuis `baseContent`. */
   writeDocument: (filePath: string, content: string, baseContent: string | null, expectedDiskContent: string | null) => Promise<{ ok: true; content: string; merged: boolean; conflict: boolean; externalChange: boolean }>
   watchDocument: (filePath: string | null) => Promise<{ ok: true }>
+  watchSpace: (rootPath: string | null) => Promise<{ ok: true }>
+  onSpaceChanged: (callback: (payload: { rootPath: string }) => void) => () => void
+  /** Envoi git réussi ; structural : fichiers ajoutés, supprimés ou renommés */
+  onGitPushed: (callback: (payload: { rootPath: string; structural: boolean }) => void) => () => void
   onDocumentChanged: (callback: (payload: { path: string }) => void) => () => void
   onBeforeClose: (callback: () => void) => () => void
   confirmClose: () => Promise<{ ok: true }>
@@ -213,16 +217,21 @@ interface HoloApi {
   gitCommit: (message: string) => Promise<HoloGitCommitResult>
   gitSync: () => Promise<HoloGitSyncResult>
   gitPull: () => Promise<{ ok: true; output: string }>
-  gitPullIfSafe: () => Promise<HoloGitPullIfSafeResult>
+  /**
+   * liveFiles : documents en édition temps réel (leur état partagé fait foi) ;
+   * liveAuthors : e-mails des participants (et le nôtre), auteurs des commits qui n'en sont que des instantanés.
+   */
+  gitPullIfSafe: (options?: { liveFiles?: string[]; liveAuthors?: string[]; author?: { name: string; email: string } }) => Promise<HoloGitPullIfSafeResult>
   gitMerge: (branch: string) => Promise<{ ok: true; output: string }>
   gitResolveConflict: (filePath: string, strategy: 'ours' | 'theirs' | 'both' | 'manual') => Promise<{ ok: true; filePath: string; strategy: 'ours' | 'theirs' | 'both' | 'manual'; operation: 'rebase' | 'merge' | 'none'; completed: boolean; stillConflicted: boolean; conflictedFiles: string[]; content: string | null; pushed: boolean; pushError: string | null }>
-  saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
-  loadImage: (relativePath: string) => Promise<{ok: true; dataUrl: string}>
+  /** relativePath : lien relatif au document `documentPath` (ou à la racine de l'espace sans document) */
+  saveImage: (name: string, dataBase64: string, options?: HoloImageStorageOptions, documentPath?: string | null) => Promise<{ ok: true; relativePath: string; absolutePath: string }>
+  loadImage: (relativePath: string, documentPath?: string | null) => Promise<{ok: true; dataUrl: string}>
   /** Copie une image (chemin du document, URL http(s) ou data:) dans le presse-papiers système. */
-  writeClipboardImage: (source: string) => Promise<{ ok: true }>
+  writeClipboardImage: (source: string, documentPath?: string | null) => Promise<{ ok: true }>
   /** Source de l'image si le presse-papiers contient encore l'image copiée depuis Holo. */
-  getCopiedHoloImage: () => Promise<string | null>
-  showImageInFolder: (source: string) => Promise<{ ok: true }>
+  getCopiedHoloImage: (documentPath?: string | null) => Promise<string | null>
+  showImageInFolder: (source: string, documentPath?: string | null) => Promise<{ ok: true }>
 }
 
 declare global {
@@ -241,6 +250,7 @@ declare global {
     setConfig: (config: { url: string; enabled: boolean; token?: string }) => Promise<{ ok: true }>
     testConnection: (candidate?: { url: string; token?: string }) => Promise<{ ok: boolean; status?: number | null; error?: string }>
     resolveDocument: (filePath: string) => Promise<HoloRealtimeDocument>
+    resolveSpace: (rootPath: string) => Promise<HoloRealtimeDocument>
     subscribe: (documentId: string) => Promise<{ ok: true }>
     unsubscribe: (documentId: string) => Promise<{ ok: true }>
     getState: (documentId: string) => Promise<HoloRealtimeState>

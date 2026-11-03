@@ -15,6 +15,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   useMemo,
@@ -24,6 +25,9 @@ import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ArrowDownAZ, ArrowUpAZ, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import { registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { alignSequences } from '../../../lib/alignSequences'
+import { singleSpliceDiff } from '../../../lib/realtime/encoding'
+import { inlinesToMarkdown } from '../lib/inlinesToMarkdown'
 import { InlineEditor } from '../InlineEditor'
 import { setClipboardEventData } from '../lib/clipboard'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
@@ -191,6 +195,84 @@ function breaksToHtmlLineBreaks(nodes: InlineNode[]): InlineNode[] {
     }
     return node
   })
+}
+
+/** Contenu d'une cellule, tel qu'il est écrit dans le markdown. */
+function cellSignature(nodes: InlineNode[] | undefined): string {
+  return inlinesToMarkdown(breaksToHtmlLineBreaks((nodes ?? []) as InlineNode[]))
+}
+
+function columnSignature(table: InternalTable, column: InternalColumn): string {
+  return JSON.stringify([column.title, column.type, ...table.rows.map((row) => cellSignature(row.cells[column.id]))])
+}
+
+function rowSignature(columns: InternalColumn[], row: InternalRow): string {
+  return JSON.stringify(columns.map((column) => cellSignature(row.cells[column.id])))
+}
+
+function sameColumnSettings(left: InternalColumn, right: InternalColumn): boolean {
+  return left.title === right.title && left.align === right.align && left.type === right.type
+    && left.aggregation === right.aggregation && left.color === right.color
+    && left.width === right.width && Boolean(left.manualWidth) === Boolean(right.manualWidth)
+}
+
+/**
+ * Applique le tableau reçu (modification d'un collègue) au tableau affiché :
+ * les lignes et colonnes qui se correspondent gardent leur identifiant, une
+ * ligne insérée au-dessus ne décale donc pas celle où l'on tape. Renvoie
+ * null si rien n'a changé, sinon le tableau et les cellules à rafraîchir.
+ */
+function mergeIncomingTable(current: InternalTable, incoming: InternalTable): { table: InternalTable; changedCells: string[] } | null {
+  const columnAlignment = alignSequences(
+    current.columns.map((column) => columnSignature(current, column)),
+    incoming.columns.map((column) => columnSignature(incoming, column)),
+  )
+  const columns = incoming.columns.map((column, index) => {
+    const match = columnAlignment.matches[index]
+    return match === -1 ? column : { ...column, id: current.columns[match].id }
+  })
+  const rowAlignment = alignSequences(
+    current.rows.map((row) => rowSignature(current.columns, row)),
+    incoming.rows.map((row) => rowSignature(incoming.columns, row)),
+  )
+  const rows = incoming.rows.map((row, index) => {
+    const match = rowAlignment.matches[index]
+    const cells: Record<string, InlineNode[]> = {}
+    incoming.columns.forEach((column, columnIndex) => {
+      cells[columns[columnIndex].id] = row.cells[column.id] ?? []
+    })
+    return { id: match === -1 ? row.id : current.rows[match].id, cells }
+  })
+
+  const currentRows = new Map(current.rows.map((row) => [row.id, row]))
+  const changedCells: string[] = []
+  for (const row of rows) {
+    const previous = currentRows.get(row.id)
+    for (const column of columns) {
+      const before = previous?.cells[column.id]
+      if (before === undefined || cellSignature(before) !== cellSignature(row.cells[column.id])) {
+        changedCells.push(`${row.id}-${column.id}`)
+      }
+    }
+  }
+  const unchanged = changedCells.length === 0
+    && rows.length === current.rows.length
+    && rows.every((row, index) => row.id === current.rows[index].id)
+    && columns.length === current.columns.length
+    && columns.every((column, index) => column.id === current.columns[index].id && sameColumnSettings(column, current.columns[index]))
+  return unchanged ? null : { table: { columns, rows }, changedCells }
+}
+
+/** Position du curseur dans le texte d'un élément éditable. */
+function caretTextOffset(element: HTMLElement): number {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return 0
+  const caret = selection.getRangeAt(0)
+  if (!element.contains(caret.endContainer)) return 0
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  range.setEnd(caret.endContainer, caret.endOffset)
+  return range.toString().length
 }
 
 // Montant « pur » (chiffres, séparateurs, devise éventuelle) : seul ce cas est
@@ -841,6 +923,42 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
     const cellRefs = useRef<Map<string, InlineEditorHandle>>(new Map())
     const headerRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+
+    // Modification reçue d'un collègue : le bloc garde son identité et le
+    // tableau est mis à jour sur place. Seules les cellules modifiées sont
+    // remontées ; si c'est celle où l'on tape, le curseur est replacé au même
+    // endroit du texte.
+    const [cellRevisions, setCellRevisions] = useState<Record<string, number>>({})
+    const pendingCellFocusRef = useRef<{ cellKey: string; offset: number; text: string } | null>(null)
+    const lastNodeRef = useRef(node)
+    useLayoutEffect(() => {
+      if (lastNodeRef.current === node) return
+      lastNodeRef.current = node
+      const merged = mergeIncomingTable(tableRef.current, nodeToInternal(node))
+      if (!merged) return
+      const active = document.activeElement as HTMLElement | null
+      const activeCellKey = (active?.closest('[data-table-cell-key]') as HTMLElement | null)?.dataset.tableCellKey
+      if (active && activeCellKey && merged.changedCells.includes(activeCellKey)) {
+        pendingCellFocusRef.current = { cellKey: activeCellKey, offset: caretTextOffset(active), text: active.textContent ?? '' }
+      }
+      tableRef.current = merged.table
+      setTable(merged.table)
+      setCellRevisions((previous) => {
+        const next = { ...previous }
+        for (const key of merged.changedCells) next[key] = (next[key] ?? 0) + 1
+        return next
+      })
+    }, [node])
+    useLayoutEffect(() => {
+      const pending = pendingCellFocusRef.current
+      if (!pending) return
+      pendingCellFocusRef.current = null
+      const editable = document.querySelector<HTMLElement>(`[data-table-cell-key="${pending.cellKey}"] [contenteditable="true"]`)
+      let offset = pending.offset
+      const splice = editable ? singleSpliceDiff(pending.text, editable.textContent ?? '') : null
+      if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      cellRefs.current.get(pending.cellKey)?.focus({ type: 'offset', offset })
+    }, [cellRevisions])
     const menuRef = useRef<HTMLDivElement | null>(null)
     const resizingRef = useRef<{ colId: string; startX: number; startWidth: number; moved?: boolean } | null>(null)
     const tableWrapRef = useRef<HTMLDivElement | null>(null)
@@ -1899,7 +2017,8 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
 
                       return (
                         <td
-                          key={cellKey}
+                          key={`${cellKey}:${cellRevisions[cellKey] ?? 0}`}
+                          data-table-cell-key={cellKey}
                           className={cn(
                             'bg-transparent p-0',
                             !isLastRow && 'border-b border-holo-border-soft',

@@ -5,6 +5,9 @@ import { GitBranch, ArrowDown, ArrowUp, Command, Plus, Star, FolderOpen, Unlink,
 import type { LucideIcon } from 'lucide-react'
 import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
+import type { SpacePeer } from '../lib/realtime/spacePresence'
+import { PeerAvatars } from './PeerAvatars'
+import { uniquePeers } from '../lib/realtime/peers'
 
 export type HoloNavItem = {
     label: string;
@@ -57,15 +60,22 @@ function SpaceStatusIcon({ status, isActive }: { status?: SpaceStatus; isActive:
     return <Monitor size={13} className={isActive ? 'text-amber-400' : 'text-amber-400/70'} />
 }
 
-function SpaceNavItem({ item, isFavorite, spaceStatus, onContextMenu }: {
+/** « Dans l'espace : Alice (notes/réunion.md), Bob » */
+function describeSpacePeers(peers: SpacePeer[]): string {
+    return `Dans l'espace : ${peers.map((peer) => (peer.editing ? `${peer.name} (${peer.editing.replace(/\/\.index\.md$/, '/')})` : peer.name)).join(', ')}`
+}
+
+function SpaceNavItem({ item, isFavorite, spaceStatus, peers = [], onContextMenu }: {
     item: HoloNavItem
     isFavorite: boolean
     spaceStatus?: SpaceStatus
+    peers?: SpacePeer[]
     onContextMenu: (e: React.MouseEvent, item: HoloNavItem) => void
 }) {
     const navigate = useNavigate()
     const { pathname } = useLocation()
     const isActive = pathname === item.to
+    const present = uniquePeers(peers.filter((peer) => peer.active))
 
     return (
         <button
@@ -84,6 +94,12 @@ function SpaceNavItem({ item, isFavorite, spaceStatus, onContextMenu }: {
 
             </span>
             <span className={`flex-1 truncate leading-none ${isActive ? "text-holo-primary-soft" : "text-holo-text-muted group-hover:text-holo-text"}`}>{item.label}</span>
+
+            {present.length > 0 && (
+                <span title={describeSpacePeers(present)} data-testid="space-peers" data-count={present.length}>
+                    <PeerAvatars peers={present} max={3} size="sm" />
+                </span>
+            )}
 
             <span className={`flex size-4 shrink-0 items-center justify-center rounded-sm ${isActive ? '' : 'text-holo-text-muted group-hover:text-holo-text'}`}>
                 {spaceStatus
@@ -109,6 +125,8 @@ type HoloSidebarProps = {
     userMail?: string;
     favoritePaths?: string[];
     spaceStatuses?: Record<string, SpaceStatus>;
+    /** Personnes présentes dans chaque espace (présence temps réel) */
+    peersBySpace?: Record<string, SpacePeer[]>;
     onAddSpace?: () => void;
     onSpaceFavorite?: (path: string) => void;
     onSpaceRemove?: (path: string) => void;
@@ -128,6 +146,7 @@ export function Sidebar({
     userMail,
     favoritePaths = [],
     spaceStatuses = {},
+    peersBySpace = {},
     onAddSpace,
     onSpaceFavorite,
     onSpaceRemove,
@@ -177,6 +196,7 @@ export function Sidebar({
                             item={item}
                             isFavorite={favoritePaths.includes(item.path ?? '')}
                             spaceStatus={item.path ? spaceStatuses[item.path] : undefined}
+                            peers={item.path ? peersBySpace[item.path] : undefined}
                             onContextMenu={handleContextMenu}
                         />
                     ))}

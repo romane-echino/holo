@@ -19,15 +19,21 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import { Check } from 'lucide-react'
 import { cn } from '../../../utils/global'
 import { FormatToolbar } from '../FormatToolbar'
 import type { FormatToolbarState } from '../FormatToolbar'
 import { domToInlines } from '../lib/domToInlines'
 import { inlinesToHtml } from '../lib/inlinesToHtml'
+import { inlinesToMarkdown } from '../lib/inlinesToMarkdown'
+import { registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { alignSequences } from '../../../lib/alignSequences'
+import { singleSpliceDiff } from '../../../lib/realtime/encoding'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
 import type { BlockNode, InlineNode, ListItemNode, ListNode, ParagraphNode } from '../lib/types'
 
@@ -64,6 +70,56 @@ let _li = 0
 const newItemId = () => `li${++_li}`
 
 // ─── Conversion node ↔ items ─────────────────────────────────────────────────
+
+function itemSignature(item: ListBlockItem): string {
+  return JSON.stringify([inlinesToMarkdown(item.inlines), item.checked, item.depth])
+}
+
+function isEmptyTaskItem(item: ListBlockItem): boolean {
+  return item.checked !== null && inlinesToMarkdown(item.inlines).trim() === ''
+}
+
+/** Élément vide relu sans sa case (« - », ou « [ ] » pris pour du texte). */
+function isLostEmptyTask(item: ListBlockItem): boolean {
+  return item.checked === null && /^(\\?\[[ xX]?\\?\])?$/.test(inlinesToMarkdown(item.inlines).trim())
+}
+
+/** Place le curseur à `offset` caractères du début du texte de `element`. */
+function placeCaretAtTextOffset(element: HTMLElement, offset: number) {
+  const selection = window.getSelection()
+  if (!selection) return
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node = walker.nextNode()
+  const range = document.createRange()
+  while (node) {
+    const length = node.textContent?.length ?? 0
+    if (remaining <= length) {
+      range.setStart(node, remaining)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    }
+    remaining -= length
+    node = walker.nextNode()
+  }
+  range.selectNodeContents(element)
+  range.collapse(false)
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+function caretOffsetIn(element: HTMLElement): number {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return 0
+  const caret = selection.getRangeAt(0)
+  if (!element.contains(caret.endContainer)) return 0
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  range.setEnd(caret.endContainer, caret.endOffset)
+  return range.toString().length
+}
 
 function nodeToItems(node: ListNode, depth = 0): ListBlockItem[] {
   return node.children.flatMap((item) => {
@@ -152,6 +208,58 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
     const itemsRef = useRef(items)
     itemsRef.current = items
     const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+    // Modification reçue d'un collègue : le bloc garde son identité, la liste
+    // est mise à jour sur place. Seuls les éléments modifiés sont remontés ;
+    // si c'est celui où l'on tape, le curseur est replacé au même endroit.
+    const [itemRevisions, setItemRevisions] = useState<Record<string, number>>({})
+    const pendingItemFocusRef = useRef<{ id: string; offset: number; text: string } | null>(null)
+    const lastNodeRef = useRef(node)
+    useLayoutEffect(() => {
+      if (lastNodeRef.current === node) return
+      lastNodeRef.current = node
+      const current = itemsRef.current
+      const incoming = nodeToItems(node)
+      const { matches, exact } = alignSequences(current.map(itemSignature), incoming.map(itemSignature))
+      const changed: string[] = []
+      const next = incoming.map((item, index) => {
+        const match = matches[index]
+        if (match === -1) return item
+        // Case à cocher encore vide : le markdown ne sait pas l'écrire (« - » ou
+        // « - [ ] » relu comme du texte). Elle reste locale tant qu'on n'a rien tapé.
+        if (isEmptyTaskItem(current[match]) && isLostEmptyTask(item)) return current[match]
+        if (!exact[index]) changed.push(current[match].id)
+        return { ...item, id: current[match].id }
+      })
+      const unchanged = changed.length === 0 && next.length === current.length && next.every((item, index) => item.id === current[index].id)
+      if (unchanged) return
+      const active = document.activeElement as HTMLElement | null
+      const activeId = Array.from(itemRefs.current.entries()).find(([, element]) => element === active)?.[0]
+      if (active && activeId && changed.includes(activeId)) {
+        pendingItemFocusRef.current = { id: activeId, offset: caretOffsetIn(active), text: active.textContent ?? '' }
+      }
+      itemsRef.current = next
+      setItems(next)
+      if (changed.length > 0) {
+        setItemRevisions((previous) => {
+          const revisions = { ...previous }
+          for (const id of changed) revisions[id] = (revisions[id] ?? 0) + 1
+          return revisions
+        })
+      }
+    }, [node])
+    useLayoutEffect(() => {
+      const pending = pendingItemFocusRef.current
+      if (!pending) return
+      pendingItemFocusRef.current = null
+      const element = itemRefs.current.get(pending.id)
+      if (!element) return
+      let offset = pending.offset
+      const splice = singleSpliceDiff(pending.text, element.textContent ?? '')
+      if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      element.focus({ preventScroll: true })
+      placeCaretAtTextOffset(element, offset)
+    }, [itemRevisions])
 
     // ── Focus helper ──────────────────────────────────────────────────────────
 
@@ -346,7 +454,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       <div className="my-4 space-y-0.5">
         {items.map((item, idx) => (
           <ListItemRow
-            key={item.id}
+            key={`${item.id}:${itemRevisions[item.id] ?? 0}`}
             item={item}
             idx={idx}
             label={labels[idx]}
@@ -421,12 +529,36 @@ function ListItemRow({
   const selectionRangeRef = useRef<Range | null>(null)
   const [toolbar, setToolbar] = useState<FormatToolbarState | null>(null)
 
-  // Initialiser le contenu une seule fois au mount
-  useEffect(() => {
-    if (divRef.current) {
-      divRef.current.innerHTML = inlinesToHtml(item.inlines)
-    }
+  // Initialiser le contenu une seule fois au mount (avant l'affichage, et
+  // avant la restauration du curseur par la liste après une mise à jour reçue).
+  const initializedRef = useRef(false)
+  useLayoutEffect(() => {
+    if (!divRef.current || initializedRef.current) return
+    initializedRef.current = true
+    divRef.current.innerHTML = inlinesToHtml(item.inlines)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Enregistrement pendant la frappe (après une courte pause) : en édition
+  // temps réel, les autres voient la saisie sans attendre la sortie du champ.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+  const saveNow = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    const el = divRef.current
+    if (!el || savedRef.current) return
+    savedRef.current = true
+    onSaveRef.current(domToInlines(el))
+  }, [])
+  useEffect(() => registerPendingEditFlusher(() => {
+    if (saveTimerRef.current) saveNow()
+  }), [saveNow])
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+  }, [])
 
   useEffect(() => {
     const handleSelectionChange = () => {
@@ -829,7 +961,11 @@ function ListItemRow({
             }
           }, 0)
         }}
-        onInput={() => { savedRef.current = false }}
+        onInput={() => {
+          savedRef.current = false
+          if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+          saveTimerRef.current = setTimeout(() => flushSync(saveNow), 400)
+        }}
         onPaste={(e) => {
           e.preventDefault()
           const text = e.clipboardData.getData('text/plain')

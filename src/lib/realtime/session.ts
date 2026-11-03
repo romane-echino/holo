@@ -16,7 +16,7 @@
  */
 import * as Y from 'yjs'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
-import { PayloadCipher, singleSpliceDiff } from './encoding'
+import { PayloadCipher, multiSpliceDiff } from './encoding'
 
 export type RealtimeUser = { name: string; email: string; color: string }
 /** Position du curseur : bloc (rang dans le document), champ éditable du bloc (ex. cellule), position dans son texte */
@@ -120,11 +120,15 @@ export class RealtimeSession {
   onLocalMarkdown(markdown: string): void {
     if (!this.joined || !this.doc || markdown === this.lastText) return
     const text = this.doc.getText('markdown')
-    const splice = singleSpliceDiff(this.lastText, markdown)
-    if (!splice) return
+    // Zones modifiées séparément, de la dernière à la première (les indices
+    // des précédentes restent valables).
+    const splices = multiSpliceDiff(this.lastText, markdown)
+    if (splices.length === 0) return
     this.doc.transact(() => {
-      if (splice.remove > 0) text.delete(splice.index, splice.remove)
-      if (splice.insert) text.insert(splice.index, splice.insert)
+      for (const splice of [...splices].reverse()) {
+        if (splice.remove > 0) text.delete(splice.index, splice.remove)
+        if (splice.insert) text.insert(splice.index, splice.insert)
+      }
     }, LOCAL_ORIGIN)
     this.lastText = markdown
   }

@@ -10,7 +10,7 @@ import { promisify } from 'node:util'
 import crypto from 'node:crypto'
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import os from 'node:os'
-import { watchFile, unwatchFile } from 'node:fs'
+import { existsSync, watch as watchFs, watchFile, unwatchFile } from 'node:fs'
 import { cleanupStaleTempFiles, createKeyedLock, readFileIfExists, readFileWithRetry, writeFileAtomic } from './fsSafe.js'
 import { registerRealtimeIpc } from './realtime.js'
 
@@ -929,6 +929,28 @@ async function removeStaleGitIndexLock(cwd) {
 }
 
 async function runGit(args, cwd) {
+  if (args[0] === 'push') return runGitPush(args, cwd)
+  return runGitWithLockRetry(args, cwd)
+}
+
+// Après chaque envoi réussi, les fenêtres en sont informées : la présence
+// d'espace le signale aux collègues, qui récupèrent sans attendre la
+// synchronisation périodique. « structural » : fichiers ou dossiers ajoutés,
+// supprimés ou renommés (l'arborescence des autres doit changer).
+async function runGitPush(args, cwd) {
+  const pending = await runGitOnce(['diff', '--name-status', '--no-renames', '@{upstream}', 'HEAD'], cwd)
+  const hasChanges = !pending.ok || pending.stdout.trim() !== ''
+  const structural = !pending.ok || pending.stdout.split('\n').some((line) => line.trim() && !line.startsWith('M'))
+  const result = await runGitWithLockRetry(args, cwd)
+  if (result.ok && hasChanges) {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.webContents.isDestroyed()) window.webContents.send('git:pushed', { rootPath: cwd, structural })
+    }
+  }
+  return result
+}
+
+async function runGitWithLockRetry(args, cwd) {
   let result = await runGitOnce(args, cwd)
   // Un autre processus git (ou une synchro OneDrive) tient l'index : on patiente
   // un peu plutôt que d'échouer, puis on nettoie un verrou manifestement orphelin.
@@ -2171,16 +2193,42 @@ ipcMain.handle('clipboard:write-text', async (_event, text) => {
 })
 
 /** Chemin absolu d'une image référencée par un document (relative à la racine de l'espace). */
-function resolveDocumentImagePath(source) {
+function isInsideRoot(root, targetPath) {
+  const normalizedRoot = path.normalize(root)
+  const normalizedTarget = path.normalize(targetPath)
+  return normalizedTarget === normalizedRoot
+    || normalizedTarget.startsWith(normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep)
+}
+
+/** Dossier du document s'il fait partie de l'espace ouvert, sinon null. */
+function documentDirectory(documentPath) {
+  if (!currentRootPath || !documentPath) return null
+  const directory = path.dirname(path.resolve(String(documentPath)))
+  return isInsideRoot(currentRootPath, directory) ? directory : null
+}
+
+/**
+ * Chemin d'une image locale d'un document. Les liens sont relatifs au document
+ * (`../images/photo.png`), comme pour tout lecteur markdown (Gitea, GitHub…) ;
+ * les anciens liens, relatifs à la racine de l'espace, restent lus.
+ */
+function resolveDocumentImagePath(source, documentPath) {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
   let decoded = String(source ?? '')
   try { decoded = decodeURIComponent(decoded) } catch { /* chemin laissé tel quel */ }
-  const imagePath = path.normalize(path.join(currentRootPath, decoded))
-  const root = path.normalize(currentRootPath)
-  if (imagePath !== root && !imagePath.startsWith(root.endsWith(path.sep) ? root : root + path.sep)) {
-    throw new Error('Accès refusé.')
-  }
-  return imagePath
+  const candidates = []
+  const directory = documentDirectory(documentPath)
+  if (directory) candidates.push(path.normalize(path.resolve(directory, decoded)))
+  candidates.push(path.normalize(path.join(currentRootPath, decoded)))
+  const allowed = candidates.filter((candidate) => isInsideRoot(currentRootPath, candidate))
+  if (allowed.length === 0) throw new Error('Accès refusé.')
+  return allowed.find((candidate) => existsSync(candidate)) ?? allowed[0]
+}
+
+/** Lien à écrire dans le document pour une image de l'espace (séparateurs « / »). */
+function imageLinkForDocument(absoluteImagePath, documentPath) {
+  const directory = documentDirectory(documentPath) ?? currentRootPath
+  return path.relative(directory, absoluteImagePath).split(path.sep).join('/')
 }
 
 // Dernière image copiée depuis Holo : permet de reconnaître un collage interne
@@ -2203,9 +2251,10 @@ async function readClipboardImage() {
   return null
 }
 
-ipcMain.handle('clipboard:write-image', async (_event, source) => {
+ipcMain.handle('clipboard:write-image', async (_event, source, documentPath) => {
   const value = String(source ?? '')
   let image
+  let imagePath = null
   if (value.startsWith('data:')) {
     image = nativeImage.createFromDataURL(value)
   } else if (/^https?:\/\//i.test(value)) {
@@ -2213,25 +2262,31 @@ ipcMain.handle('clipboard:write-image', async (_event, source) => {
     if (!response.ok) throw new Error(`Téléchargement de l'image impossible (${response.status}).`)
     image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()))
   } else {
-    image = nativeImage.createFromPath(resolveDocumentImagePath(value))
+    imagePath = resolveDocumentImagePath(value, documentPath)
+    image = nativeImage.createFromPath(imagePath)
   }
   if (image.isEmpty()) {
     throw new Error('Ce format d\'image ne peut pas être copié (SVG non pris en charge).')
   }
   await clipboard.write([new ClipboardItem({ 'image/png': new Blob([image.toPNG()], { type: 'image/png' }) })])
-  lastCopiedHoloImage = { source: value, hash: hashImage(image) }
+  // Fichier local : on retient son chemin absolu, le lien sera recalculé pour
+  // le document où l'image est collée.
+  const localPath = imagePath && existsSync(imagePath) ? imagePath : null
+  lastCopiedHoloImage = { source: value, localPath, hash: hashImage(image) }
   return { ok: true }
 })
 
-ipcMain.handle('clipboard:get-copied-holo-image', async () => {
+ipcMain.handle('clipboard:get-copied-holo-image', async (_event, documentPath) => {
   if (!lastCopiedHoloImage) return null
   const image = await readClipboardImage()
   if (!image || image.isEmpty() || hashImage(image) !== lastCopiedHoloImage.hash) return null
-  return lastCopiedHoloImage.source
+  const { localPath, source } = lastCopiedHoloImage
+  if (localPath && currentRootPath && isInsideRoot(currentRootPath, localPath)) return imageLinkForDocument(localPath, documentPath)
+  return localPath ? null : source
 })
 
-ipcMain.handle('shell:show-image-in-folder', async (_event, source) => {
-  shell.showItemInFolder(resolveDocumentImagePath(source))
+ipcMain.handle('shell:show-image-in-folder', async (_event, source, documentPath) => {
+  shell.showItemInFolder(resolveDocumentImagePath(source, documentPath))
   return { ok: true }
 })
 
@@ -2532,6 +2587,56 @@ ipcMain.handle('fs:write-document', async (_event, filePath, content, baseConten
   })
 })
 
+// Surveillance de l'espace ouvert (une par fenêtre) : fichiers et dossiers
+// ajoutés, renommés ou supprimés hors de Holo (Finder, OneDrive, git…).
+const watchedSpaceByWindow = new Map()
+
+function isIgnoredSpaceChange(relativePath) {
+  const normalized = String(relativePath ?? '').split(path.sep).join('/')
+  return normalized === '' || normalized.startsWith('.git/') || normalized === '.git'
+    || normalized.endsWith('.holo-tmp') || normalized.startsWith('.holo/')
+}
+
+ipcMain.handle('fs:watch-space', async (event, rootPath) => {
+  const webContents = event.sender
+  watchedSpaceByWindow.get(webContents.id)?.close()
+  watchedSpaceByWindow.delete(webContents.id)
+  if (!rootPath) return { ok: true }
+  if (!isPathInsideAnyKnownRoot(rootPath)) throw new Error('Chemin non autorisé.')
+  let timer = null
+  // Chemins déjà vus présents : réécrire un fichier existant (enregistrement
+  // du document ouvert) ne change pas l'arborescence et ne la recharge pas.
+  const knownPaths = new Set()
+  const notify = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (!webContents.isDestroyed()) webContents.send('fs:space-changed', { rootPath })
+    }, 400)
+  }
+  try {
+    const watcher = watchFs(rootPath, { recursive: true, persistent: false }, (_type, filename) => {
+      if (!filename) return notify()
+      if (isIgnoredSpaceChange(filename)) return
+      const relativePath = String(filename)
+      void fs.access(path.join(rootPath, relativePath)).then(() => true, () => false).then((exists) => {
+        if (exists === knownPaths.has(relativePath)) return
+        if (exists) knownPaths.add(relativePath)
+        else knownPaths.delete(relativePath)
+        notify()
+      })
+    })
+    watcher.on('error', () => watcher.close())
+    watchedSpaceByWindow.set(webContents.id, watcher)
+    webContents.once('destroyed', () => {
+      watchedSpaceByWindow.get(webContents.id)?.close()
+      watchedSpaceByWindow.delete(webContents.id)
+    })
+  } catch {
+    // Surveillance récursive indisponible (ancien noyau Linux) : la synchro périodique suffit.
+  }
+  return { ok: true }
+})
+
 // Surveillance du document ouvert (une par fenêtre) : signale toute
 // modification faite hors de l'éditeur (pull, OneDrive, autre application).
 const watchedDocumentByWindow = new Map()
@@ -2585,6 +2690,9 @@ ipcMain.handle('fs:create-directory', async (_event, parentDirectoryPath, name) 
   const targetPath = path.join(parentDirectoryPath, safeName)
   assertPathInsideRoot(targetPath)
   await fs.mkdir(targetPath)
+  // git ne suit pas les dossiers vides : sans ce fichier, un dossier créé
+  // n'apparaîtrait pas chez les autres membres de l'espace.
+  await fs.writeFile(path.join(targetPath, '.gitkeep'), '').catch(() => undefined)
   return { ok: true }
 })
 
@@ -2788,9 +2896,11 @@ ipcMain.handle('fs:restore-archived-path', async (_event, archivedPath) => {
   }
 })
 
-ipcMain.handle('git:get-state', async (_event, fetchRemote = false) =>
+// Sous le verrou du dépôt : une synchronisation en cours (tentative de rebase
+// aussitôt annulée) ne doit pas être lue comme un conflit.
+ipcMain.handle('git:get-state', withCurrentRepoLock(async (_event, fetchRemote = false) =>
   getGitState({ fetchRemote: Boolean(fetchRemote) }),
-)
+))
 
 ipcMain.handle('git:get-folder-statuses', async (_event, folderPaths) => {
   const results = {}
@@ -3288,6 +3398,92 @@ ipcMain.handle('git:pull', withCurrentRepoLock(async () => {
   }
 }))
 
+// Un document en direct est enregistré dans git par chaque participant, à des
+// instants différents : les commits reçus en sont des instantanés, souvent
+// plus anciens que l'état partagé. Les laisser remplacer le fichier ferait
+// réinjecter dans la session une version périmée, qui effacerait les dernières
+// saisies. Quand tous les commits reçus pour ce document viennent des
+// participants, on garde donc le contenu actuel (l'état partagé), que le
+// prochain enregistrement committe. Une modification d'une autre personne
+// (hors session) suit le chemin habituel et est fusionnée.
+async function captureSessionLiveFiles(cwd, liveFiles, liveAuthors) {
+  const kept = []
+  if (liveAuthors.size === 0) return kept
+  for (const file of liveFiles) {
+    const log = await runGit(['log', '--format=%ae', 'HEAD..@{upstream}', '--', file], cwd)
+    if (!log.ok) continue
+    const authors = log.stdout.split('\n').map((line) => line.trim().toLowerCase()).filter(Boolean)
+    if (authors.length === 0 || !authors.every((author) => liveAuthors.has(author))) continue
+    const content = await readFileIfExists(path.join(cwd, file))
+    if (content !== null) kept.push({ file, content })
+  }
+  return kept
+}
+
+async function restoreSessionLiveFiles(cwd, kept) {
+  for (const { file, content } of kept) {
+    const target = path.join(cwd, file)
+    if ((await readFileIfExists(target)) !== content) await writeFileAtomic(target, content)
+  }
+}
+
+async function commitFiles(cwd, files, author) {
+  const add = await runGit(['add', '--', ...files], cwd)
+  if (!add.ok) return false
+  const args = ['commit', '--no-gpg-sign', '-m', 'Enregistrement automatique']
+  const name = String(author?.name ?? '').trim()
+  const email = String(author?.email ?? '').trim()
+  if (name) args.push(`--author=${name} <${email}>`)
+  const commit = await runGit(args, cwd)
+  return commit.ok
+}
+
+// Divergence pendant une édition en temps réel : chaque poste enregistre le
+// même document à des instants différents. Rejouer ces commits un à un
+// (rebase) bute sur des états intermédiaires alors que les contenus finaux
+// convergent. On fusionne donc les états finaux ; un conflit sur un document
+// en direct se résout avec la version locale, l'état partagé qui contient déjà
+// les modifications des autres. Tout autre conflit annule (rien n'est perdu).
+// Le résultat est un seul commit au-dessus du distant : l'historique reste linéaire.
+async function mergeDivergedFinalStates(cwd, liveFiles) {
+  const upstream = await runGit(['rev-parse', '@{upstream}'], cwd)
+  const lastAuthor = await runGit(['log', '-1', '--format=%an%n%ae', 'HEAD'], cwd)
+  if (!upstream.ok) return false
+  const abort = async () => {
+    await runGit(['merge', '--abort'], cwd)
+    return false
+  }
+  const merge = await runGit(['-c', 'core.editor=true', 'merge', '--no-commit', '--no-ff', upstream.stdout.trim()], cwd)
+  if (!merge.ok) {
+    const conflicted = await runGit(['diff', '--name-only', '--diff-filter=U'], cwd)
+    const files = conflicted.ok ? conflicted.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : []
+    if (files.length === 0 || files.some((file) => !liveFiles.has(file))) return abort()
+    for (const file of files) {
+      const ours = await runGit(['checkout', '--ours', '--', file], cwd)
+      const staged = ours.ok ? await runGit(['add', '--', file], cwd) : ours
+      if (!staged.ok) return abort()
+    }
+  }
+  const tree = await runGit(['write-tree'], cwd)
+  if (!tree.ok) return abort()
+  const [name, email] = lastAuthor.ok ? lastAuthor.stdout.split('\n') : []
+  const identity = name && email ? ['-c', `user.name=${name}`, '-c', `user.email=${email}`] : []
+  const commit = await runGit([...identity, 'commit-tree', tree.stdout.trim(), '-p', upstream.stdout.trim(), '-m', 'Enregistrement automatique'], cwd)
+  if (!commit.ok) return abort()
+  // Oublie la fusion en cours (index et fichiers sont déjà ceux du commit),
+  // puis place la branche sur le commit unique.
+  const quit = await runGit(['merge', '--quit'], cwd)
+  if (!quit.ok) {
+    const gitDir = await runGit(['rev-parse', '--absolute-git-dir'], cwd)
+    if (!gitDir.ok) return abort()
+    for (const name of ['MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'AUTO_MERGE']) {
+      await fs.rm(path.join(gitDir.stdout.trim(), name), { force: true }).catch(() => undefined)
+    }
+  }
+  const reset = await runGit(['reset', '--soft', commit.stdout.trim()], cwd)
+  return reset.ok
+}
+
 async function pushCurrentBranch(cwd) {
   let pushResult = await runGit(['push'], cwd)
   if (!pushResult.ok) {
@@ -3305,9 +3501,22 @@ async function pushCurrentBranch(cwd) {
 //   - en avance seulement → push des commits en attente ;
 //   - divergé → rebase automatique s'il passe sans conflit, sinon annulation
 //     complète et retour 'diverged' (l'utilisateur résout via « Récupérer »).
-ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async () => {
+ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async (_event, options) => {
   const cwd = currentRootPath
   if (!cwd) return { ok: true, pulled: false, reason: 'no-root', incoming: 0, outgoing: 0, changedFiles: [] }
+  // Documents en cours d'édition en temps réel : leur état partagé (Yjs) fait
+  // foi et contient déjà les modifications des autres participants.
+  const liveFiles = new Set(
+    (Array.isArray(options?.liveFiles) ? options.liveFiles : [])
+      .map((filePath) => path.relative(cwd, String(filePath)))
+      .filter((relativePath) => relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+      .map((relativePath) => relativePath.split(path.sep).join('/')),
+  )
+  const liveAuthors = new Set(
+    (Array.isArray(options?.liveAuthors) ? options.liveAuthors : [])
+      .map((email) => String(email ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  )
 
   const isRepo = await isGitRepository(cwd)
   if (!isRepo) return { ok: true, pulled: false, reason: 'not-a-repo', incoming: 0, outgoing: 0, changedFiles: [] }
@@ -3357,22 +3566,34 @@ ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async () => {
       .map((rel) => path.join(cwd, rel))
     : []
 
-  // Modifications locales non commitées → pas sûr, on diffère.
+  // Modifications locales non commitées → pas sûr, on diffère. Exception :
+  // un document en direct, réécrit à chaque frappe reçue ; on l'enregistre.
   const statusResult = await runGit(['status', '--porcelain'], cwd)
-  const hasLocalChanges = statusResult.ok
-    && statusResult.stdout.split('\n').map((line) => line.trim()).filter(Boolean).length > 0
-  if (hasLocalChanges) {
-    return { ok: true, pulled: false, reason: 'dirty', incoming, outgoing, changedFiles }
+  const dirtyFiles = statusResult.ok
+    ? statusResult.stdout.split('\n').filter((line) => line.trim()).map((line) => line.slice(3).replace(/^"|"$/g, ''))
+    : null
+  let pendingOutgoing = outgoing
+  if (dirtyFiles === null || dirtyFiles.length > 0) {
+    const onlyLiveFiles = dirtyFiles !== null && dirtyFiles.every((file) => liveFiles.has(file))
+    const committed = onlyLiveFiles && await commitFiles(cwd, dirtyFiles, options?.author)
+    if (!committed) return { ok: true, pulled: false, reason: 'dirty', incoming, outgoing, changedFiles }
+    pendingOutgoing += 1
   }
 
-  if (outgoing > 0) {
+  // Documents en direct dont toutes les modifications reçues viennent des
+  // participants de la session : leur contenu est déjà dans l'état partagé.
+  const keptLiveFiles = await captureSessionLiveFiles(cwd, liveFiles, liveAuthors)
+
+  if (pendingOutgoing > 0) {
     // Divergence : rebase de nos commits sur le distant, uniquement s'il passe
     // sans conflit. En cas d'échec, on restaure exactement l'état précédent.
     const rebaseResult = await runGit(['-c', 'core.editor=true', 'rebase', '@{upstream}'], cwd)
     if (!rebaseResult.ok) {
       await runGit(['rebase', '--abort'], cwd)
-      return { ok: true, pulled: false, reason: 'diverged', incoming, outgoing, changedFiles }
+      const reconciled = liveFiles.size > 0 && await mergeDivergedFinalStates(cwd, liveFiles)
+      if (!reconciled) return { ok: true, pulled: false, reason: 'diverged', incoming, outgoing: pendingOutgoing, changedFiles }
     }
+    await restoreSessionLiveFiles(cwd, keptLiveFiles)
     const pushResult = await pushCurrentBranch(cwd)
     return {
       ok: true,
@@ -3381,7 +3602,7 @@ ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async () => {
       reason: 'rebased',
       error: pushResult.ok ? undefined : pushResult.stderr,
       incoming: 0,
-      outgoing: pushResult.ok ? 0 : outgoing,
+      outgoing: pushResult.ok ? 0 : pendingOutgoing,
       changedFiles,
     }
   }
@@ -3391,6 +3612,7 @@ ipcMain.handle('git:pull-if-safe', withCurrentRepoLock(async () => {
   if (!ffResult.ok) {
     return { ok: true, pulled: false, reason: 'ff-failed', incoming, outgoing, changedFiles }
   }
+  await restoreSessionLiveFiles(cwd, keptLiveFiles)
 
   return { ok: true, pulled: true, reason: 'pulled', incoming: 0, outgoing, changedFiles }
 }))
@@ -3587,7 +3809,7 @@ ipcMain.handle('git:resolve-conflict', withCurrentRepoLock(async (_event, filePa
   }
 }))
 
-ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions) => {
+ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions, documentPath) => {
   if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
 
   const ext = path.extname(name) || '.png'
@@ -3690,30 +3912,11 @@ ipcMain.handle('fs:save-image', async (_event, name, dataBase64, storageOptions)
     console.error('[main] fs:save-image git add', err)
   }
 
-  return { ok: true, relativePath: `images/${uniqueName}`, absolutePath: destPath }
+  return { ok: true, relativePath: imageLinkForDocument(destPath, documentPath), absolutePath: destPath }
 })
 
-ipcMain.handle('fs:load-image', async (_event, relativePath) => {
-  if (!currentRootPath) throw new Error('Aucun dossier ouvert.')
-
-  // Decode the path in case it contains URL-encoded characters
-  let decodedPath = String(relativePath ?? '')
-  try {
-    decodedPath = decodeURIComponent(decodedPath)
-  } catch {
-    // Keep original path when decode fails (e.g. stray %)
-  }
-  const imagePath = path.join(currentRootPath, decodedPath)
-  const normalizedRoot = path.normalize(currentRootPath)
-  const normalizedPath = path.normalize(imagePath)
-  const normalizedRootWithSep = normalizedRoot.endsWith(path.sep)
-    ? normalizedRoot
-    : `${normalizedRoot}${path.sep}`
-
-  // Security check: ensure file is within project root
-  if (normalizedPath !== normalizedRoot && !normalizedPath.startsWith(normalizedRootWithSep)) {
-    throw new Error('Accès refusé.')
-  }
+ipcMain.handle('fs:load-image', async (_event, relativePath, documentPath) => {
+  const normalizedPath = resolveDocumentImagePath(relativePath, documentPath)
 
   try {
     const data = await fs.readFile(normalizedPath)

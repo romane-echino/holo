@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RealtimeSession, colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
-import { setHistoryOverride } from '../lib/editorFlush'
+import { registerCloseTask, setHistoryOverride } from '../lib/editorFlush'
 import { readLocalCursor } from '../lib/realtime/cursorDom'
 
 export type RealtimeDocumentState = {
@@ -67,8 +67,13 @@ export function useRealtimeDocument(options: Options) {
       sessionRef.current = session
       await session.start()
     })()
+    // Départ annoncé à la fermeture de la fenêtre.
+    const unregisterCloseTask = registerCloseTask(async () => {
+      await session?.stop()
+    })
 
     return () => {
+      unregisterCloseTask()
       disposed = true
       if (session && sessionRef.current === session) sessionRef.current = null
       void session?.stop()
