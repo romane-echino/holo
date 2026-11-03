@@ -437,7 +437,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
 
   // Enregistrement forcé (Ctrl+S, pull, fermeture…) : remonte immédiatement
   // une saisie encore en attente du délai de 400 ms.
-  useEffect(() => registerPendingEditFlusher(() => {
+  useLayoutEffect(() => registerPendingEditFlusher(() => {
     if (saveTimerRef.current) save()
   }), [save])
 

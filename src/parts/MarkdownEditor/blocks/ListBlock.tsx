@@ -276,7 +276,7 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       const hint = getCaretHint()
       const item = itemsRef.current.find((entry) => entry.id === pending.id)
       if (hint?.field && 'item' in hint.field && hint.field.item === pending.id && item) {
-        offset = visibleOffset(inlinesToMarkdown(item.inlines), hint.index)
+        offset = visibleOffset(inlinesToMarkdown(item.inlines), item.inlines, hint.index)
       } else {
         const splice = singleSpliceDiff(sameSpaces(pending.text), sameSpaces(element.textContent ?? ''))
         if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
@@ -577,7 +577,7 @@ function ListItemRow({
     savedRef.current = true
     onSaveRef.current(domToInlines(el))
   }, [])
-  useEffect(() => registerPendingEditFlusher(() => {
+  useLayoutEffect(() => registerPendingEditFlusher(() => {
     if (saveTimerRef.current) saveNow()
   }), [saveNow])
   useEffect(() => () => {

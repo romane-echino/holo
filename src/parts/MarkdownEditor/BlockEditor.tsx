@@ -236,9 +236,7 @@ function hintedOffset(block: BlockState): number | null {
   if (block.node.type !== 'paragraph' && block.node.type !== 'heading') return null
   const shared = editorBlockToShared(block)
   if (shared.kind !== 'text') return null
-  const inline = inlinesToMarkdown(node.children ?? [])
-  const prefix = shared.md.indexOf(inline)
-  return prefix === -1 ? null : visibleOffset(inline, hint.index, prefix)
+  return visibleOffset(shared.md, node.children ?? [], hint.index)
 }
 
 export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale, onOpenLinkedFile }: BlockEditorProps, ref) {
@@ -406,7 +404,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // focus, le curseur est replacé au même endroit du texte. Tableaux et
   // listes se mettent à jour sur place.
   const [remoteRevisions, setRemoteRevisions] = useState<Record<string, number>>({})
-  const applySharedSnapshot = useCallback((snapshot: SharedSnapshot, caret: CaretAnchor | null = null) => {
+  const applySharedSnapshot = useCallback((snapshot: SharedSnapshot, caret: CaretAnchor | null = null, expectedBody?: string) => {
     // Nouvelle place du curseur : lue par l'éditeur qui le replace (paragraphe, cellule, élément).
     setCaretHint(caret)
     const footnoteMap = new Map(Object.entries(snapshot.footnotes))
@@ -438,8 +436,9 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         focusRestoreRef.current = { index: activeIndex, previousId: activeBlockId, offset: getCaretTextOffset(active), text: active.textContent ?? '', remounted: stillThere }
       }
     }
-    // Le markdown correspondant arrive ensuite par la propriété : déjà appliqué.
-    lastEmittedRef.current = blocksToMarkdown(next, footnoteMap)
+    // Le markdown correspondant arrive ensuite par la propriété : déjà appliqué
+    // (sans quoi il serait réaligné par le contenu, avec de nouveaux identifiants).
+    lastEmittedRef.current = expectedBody ?? blocksToMarkdown(next, footnoteMap)
     blocksDirtyRef.current = false
     blocksRef.current = next
     setBlocks(next)

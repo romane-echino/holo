@@ -509,6 +509,12 @@ interface FrontmatterData {
   [key: string]: string | string[] | undefined
 }
 
+/** Corps du document (sans l'en-tête), tel que l'éditeur de blocs le reçoit. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function documentBody(markdown: string): string {
+  return parseFrontmatter(markdown).body
+}
+
 function parseFrontmatter(rawMarkdown: string): { fm: FrontmatterData; body: string } {
   // Un BOM UTF-8 (fréquent avec certains éditeurs Windows) empêcherait de reconnaître le frontmatter.
   const markdown = rawMarkdown.replace(/^\uFEFF/, '')

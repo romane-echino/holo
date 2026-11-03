@@ -975,7 +975,10 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       const cellElement = document.querySelector<HTMLElement>(`[data-table-cell-key="${pending.cellKey}"]`)
       const [hintRow, hintColumn] = [cellElement?.dataset.rowId ?? '', cellElement?.dataset.columnId ?? '']
       const hinted = hint?.field && 'cell' in hint.field && hint.field.cell.rowId === hintRow && hint.field.cell.columnId === hintColumn
-        ? visibleOffset(cellSignature(tableRef.current.rows.find((row) => row.id === hintRow)?.cells[hintColumn]), hint.index)
+        ? (() => {
+            const nodes = (tableRef.current.rows.find((row) => row.id === hintRow)?.cells[hintColumn] ?? []) as InlineNode[]
+            return visibleOffset(inlinesToMarkdown(nodes), nodes, hint.index)
+          })()
         : null
       const splice = hinted === null && editable ? singleSpliceDiff(sameSpaces(pending.text), sameSpaces(editable.textContent ?? '')) : null
       if (hinted !== null) offset = hinted

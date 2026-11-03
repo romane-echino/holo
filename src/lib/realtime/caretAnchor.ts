@@ -10,7 +10,6 @@
  */
 import { domToInlines } from '../../parts/MarkdownEditor/lib/domToInlines'
 import { inlinesToMarkdown } from '../../parts/MarkdownEditor/lib/inlinesToMarkdown'
-import { parseInline } from '../../parts/MarkdownEditor/lib/sharedSnapshot'
 import type { InlineNode } from '../../parts/MarkdownEditor/lib/types'
 
 export type CaretField = { cell: { rowId: string; columnId: string } } | { item: string } | null
@@ -18,7 +17,7 @@ export type CaretField = { cell: { rowId: string; columnId: string } } | { item:
 /** Curseur dans le texte partagé : bloc, champ éventuel (cellule, élément) et position dans son markdown. */
 export type CaretAnchor = { blockId: string; field: CaretField; index: number }
 
-function plainText(nodes: InlineNode[]): string {
+export function plainText(nodes: InlineNode[]): string {
   return nodes.map((node) => {
     if (node.type === 'text' || node.type === 'inlineCode' || node.type === 'inlineMath') return node.value
     if (node.type === 'break') return '\n'
@@ -27,17 +26,83 @@ function plainText(nodes: InlineNode[]): string {
   }).join('')
 }
 
-function markdownOf(container: HTMLElement, range?: Range): string {
-  const holder = document.createElement('div')
-  holder.appendChild(range ? range.cloneContents() : container.cloneNode(true))
-  const content = range ? holder : (holder.firstChild as HTMLElement)
-  return inlinesToMarkdown(domToInlines(content))
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+const sameChar = (left: string, right: string) => left === right || (/\s/.test(left) && /\s/.test(right))
+
+/** Caractères du markdown tels qu'ils s'affichent : échappements (« \* ») et entités (« &#x20; ») décodés. */
+function markdownUnits(markdown: string): { value: string; start: number; end: number }[] {
+  const units: { value: string; start: number; end: number }[] = []
+  let index = 0
+  while (index < markdown.length) {
+    const char = markdown[index]
+    if (char === '\\' && index + 1 < markdown.length && /[!-/:-@[-`{-~]/.test(markdown[index + 1])) {
+      units.push({ value: markdown[index + 1], start: index, end: index + 2 })
+      index += 2
+      continue
+    }
+    if (char === '&') {
+      const entity = /^&(#x[0-9a-f]+|#\d+|[a-z]+);/i.exec(markdown.slice(index, index + 12))
+      if (entity) {
+        const body = entity[1]
+        const value = body.startsWith('#x') ? String.fromCodePoint(parseInt(body.slice(2), 16))
+          : body.startsWith('#') ? String.fromCodePoint(parseInt(body.slice(1), 10))
+            : NAMED_ENTITIES[body.toLowerCase()]
+        if (value !== undefined) {
+          units.push({ value, start: index, end: index + entity[0].length })
+          index += entity[0].length
+          continue
+        }
+      }
+    }
+    units.push({ value: char, start: index, end: index + 1 })
+    index += 1
+  }
+  return units
+}
+
+/**
+ * Pour chaque position du texte affiché (0 … longueur), la position
+ * correspondante dans son markdown : les caractères visibles sont retrouvés
+ * dans l'ordre, la syntaxe (« ## », « ** », « [lien](…) », échappements,
+ * entités) est sautée.
+ */
+function visibleToMarkdown(visible: string, markdown: string): number[] {
+  const units = markdownUnits(markdown)
+  const positions = new Array<number>(visible.length + 1).fill(0)
+  let next = 0
+  let lastEnd = 0
+  for (let index = 0; index < visible.length; index += 1) {
+    let match = next
+    while (match < units.length && !sameChar(units[match].value, visible[index])) match += 1
+    if (match < units.length) {
+      if (index === 0) positions[0] = units[match].start
+      lastEnd = units[match].end
+      next = match + 1
+    }
+    positions[index + 1] = lastEnd
+  }
+  if (visible.length === 0) positions[0] = markdown.length
+  return positions
+}
+
+/** Position dans le markdown d'un curseur placé après `offset` caractères visibles. */
+export function markdownIndexOf(visible: string, markdown: string, offset: number): number {
+  const positions = visibleToMarkdown(visible, markdown)
+  return positions[Math.max(0, Math.min(visible.length, offset))]
+}
+
+/** Nombre de caractères visibles avant la position `index` du markdown. */
+export function visibleOffsetOf(visible: string, markdown: string, index: number): number {
+  const positions = visibleToMarkdown(visible, markdown)
+  let offset = 0
+  for (let candidate = 0; candidate < positions.length; candidate += 1) if (positions[candidate] <= index) offset = candidate
+  return offset
 }
 
 /**
  * Curseur actuel dans le texte partagé, ou null (pas de curseur, sélection,
- * éditeur de code…). `blockMarkdown` donne le markdown complet d'un bloc texte
- * (pour situer le contenu éditable dans « ## Titre », « > citation »…).
+ * éditeur de code…). `blockMarkdown` donne le markdown partagé d'un bloc texte
+ * (« ## Titre », « > citation »…), tel que chaque poste l'écrit.
  */
 export function readCaretAnchor(blockMarkdown: (blockId: string) => string | null): CaretAnchor | null {
   const selection = window.getSelection()
@@ -51,26 +116,28 @@ export function readCaretAnchor(blockMarkdown: (blockId: string) => string | nul
   const prefixRange = document.createRange()
   prefixRange.selectNodeContents(editable)
   prefixRange.setEnd(range.startContainer, range.startOffset)
-  const prefix = markdownOf(editable, prefixRange)
+  const offset = prefixRange.toString().length
+  const visible = editable.textContent ?? ''
   const cell = editable.closest<HTMLElement>('td[data-row-id][data-column-id]')
-  if (cell) return { blockId, field: { cell: { rowId: cell.dataset.rowId!, columnId: cell.dataset.columnId! } }, index: prefix.length }
   const item = editable.closest<HTMLElement>('[data-list-item-id]')
-  if (item) return { blockId, field: { item: item.dataset.listItemId! }, index: prefix.length }
-  const full = blockMarkdown(blockId)
-  if (full === null) return null
-  const offset = full.indexOf(markdownOf(editable))
-  return offset === -1 ? null : { blockId, field: null, index: offset + prefix.length }
+  if (cell || item) {
+    // Cellules et éléments : leur markdown partagé est celui du contenu éditable.
+    const holder = document.createElement('div')
+    holder.appendChild(editable.cloneNode(true))
+    const markdown = inlinesToMarkdown(domToInlines(holder.firstChild as HTMLElement))
+    const index = markdownIndexOf(visible, markdown, offset)
+    return cell
+      ? { blockId, field: { cell: { rowId: cell.dataset.rowId!, columnId: cell.dataset.columnId! } }, index }
+      : { blockId, field: { item: item!.dataset.listItemId! }, index }
+  }
+  const markdown = blockMarkdown(blockId)
+  if (markdown === null) return null
+  return { blockId, field: null, index: markdownIndexOf(visible, markdown, offset) }
 }
 
-/**
- * Position à l'écran (nombre de caractères visibles avant le curseur) pour une
- * position `index` dans le markdown d'un bloc, d'une cellule ou d'un élément.
- * `inlineMarkdown` est le markdown du contenu éditable, `prefixLength` la
- * longueur de ce qui le précède dans le texte partagé (« ## », « > »…).
- */
-export function visibleOffset(inlineMarkdown: string, index: number, prefixLength = 0): number {
-  const within = Math.max(0, Math.min(inlineMarkdown.length, index - prefixLength))
-  return plainText(parseInline(inlineMarkdown.slice(0, within))).length
+/** Position à l'écran pour la position `index` d'un markdown dont le contenu affiché est `nodes`. */
+export function visibleOffset(markdown: string, nodes: InlineNode[], index: number): number {
+  return visibleOffsetOf(plainText(nodes), markdown, index)
 }
 
 export function sameField(left: CaretField, right: CaretField): boolean {

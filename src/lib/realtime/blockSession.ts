@@ -75,6 +75,21 @@ async function buildDoc(cipher: PayloadCipher, serverState: HoloRealtimeState | 
 
 const isEmptyDoc = (doc: Y.Doc) => doc.getArray('order').length === 0
 
+/** Poste (client Yjs) qui a tapé le caractère `index` d'un texte partagé. */
+function authorAt(text: Y.Text, index: number): number | null {
+  type Item = { right: Item | null; deleted: boolean; countable: boolean; length: number; id: { client: number } }
+  let item = (text as unknown as { _start: Item | null })._start
+  let position = 0
+  while (item) {
+    if (!item.deleted && item.countable) {
+      if (index < position + item.length) return item.id.client
+      position += item.length
+    }
+    item = item.right
+  }
+  return null
+}
+
 export class BlockSession {
   private readonly api: HoloRealtimeApi
   private readonly ref: DocumentRef
@@ -394,8 +409,11 @@ export class BlockSession {
     const text = anchor ? this.caretText(anchor) : null
     if (!anchor || !text) return null
     const index = Math.max(0, Math.min(text.length, anchor.index))
-    // assoc -1 : attaché au caractère de gauche (le dernier tapé par nous).
-    return { anchor, position: Y.createRelativePositionFromTypeIndex(text, index, -1) }
+    // Caractère de gauche tapé par nous : le curseur y reste attaché (notre
+    // saisie reste d'un seul tenant). Tapé par un collègue (fin d'un mot qu'il
+    // est en train d'écrire) : le curseur passe après ce qu'il y ajoute.
+    const ownLeft = index > 0 && authorAt(text, index - 1) === this.doc!.clientID
+    return { anchor, position: Y.createRelativePositionFromTypeIndex(text, index, ownLeft ? -1 : 0) }
   }
 
   private resolveCaret(captured: { anchor: CaretAnchor; position: Y.RelativePosition } | null): CaretAnchor | null {

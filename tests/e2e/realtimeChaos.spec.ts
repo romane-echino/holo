@@ -28,6 +28,7 @@ import { launchHolo, relayAvailable, setRelayReachable, setupSharedRepository, t
 const CHAOS_ENABLED = Boolean(process.env.HOLO_CHAOS_SECONDS)
 const DURATION_MS = Number(process.env.HOLO_CHAOS_SECONDS ?? 90) * 1000
 const SEED = Number(process.env.HOLO_CHAOS_SEED ?? 20261103)
+const CHAR_BY_CHAR = process.env.HOLO_CHAOS_TYPING === 'char'
 const DOCUMENT = 'Chaos.md'
 const INITIAL = [
   '# Chaos',
@@ -138,7 +139,13 @@ async function act(page: Page, person: Person, ledger: Ledger, next: () => numbe
   const typeToken = async (value: string, leadingSpace = true) => {
     ledger.typed.set(value, Date.now())
     try {
-      await page.keyboard.type(`${leadingSpace ? ' ' : ''}${value}`, { delay: 15 + Math.floor(next() * 30) })
+      const text = `${leadingSpace ? ' ' : ''}${value}`
+      // Par défaut, chaque mot est inséré d'un coup (frappe rapide, collage) :
+      // deux personnes au même endroit au même instant ne peuvent alors pas
+      // couper le mot de l'autre (cas qu'aucun outil ne peut trancher, voir
+      // HOLO_CHAOS_TYPING=char pour l'observer), tout le reste est exercé.
+      if (CHAR_BY_CHAR) await page.keyboard.type(text, { delay: 15 + Math.floor(next() * 30) })
+      else await page.keyboard.insertText(text)
     } catch (error) {
       ledger.uncertain.add(value)
       throw error

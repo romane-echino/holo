@@ -36,7 +36,7 @@ import { errorMessage, notify, notifyError } from './lib/notify'
 import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
 import type { ImageStorageMode } from './hooks/useRepoImageSettings'
-import { normalizeDocumentMarkdown } from './parts/EditorFrame'
+import { documentBody, normalizeDocumentMarkdown } from './parts/EditorFrame'
 import { flushPendingEdits, getSharedBlocksBridge, registerDocumentSession, runCloseTasks, saveOpenDocument } from './lib/editorFlush'
 
 function isSamePath(a?: string | null, b?: string | null) {
@@ -689,9 +689,20 @@ export default function App2() {
         }
         throw new Error(`Impossible de lire : ${node.path}`)
       }) ?? ''
-      initDocumentSync(node.path, content)
-      setOpenedFile({ path: node.path, name: node.name, content })
-      setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
+      const alreadyOpen = Boolean(openedFileRef.current && isSamePath(openedFileRef.current.path, node.path)
+        && docSyncRef.current && isSamePath(docSyncRef.current.path, node.path))
+      if (alreadyOpen) {
+        // Document déjà ouvert (second clic, ouverture au démarrage en deux
+        // temps) : la version lue est traitée comme une modification venue du
+        // disque. La réinitialiser en silence laisserait l'éditeur sur
+        // l'ancienne version sans plus jamais détecter l'écart. En session,
+        // le document partagé fait foi : rien à faire.
+        if (!realtimeRef.current.hasSession()) applyExternalContentRef.current(node.path, content)
+      } else {
+        initDocumentSync(node.path, content)
+        setOpenedFile({ path: node.path, name: node.name, content })
+        setLiveMarkdown(null) // réinitialiser le contenu live lors du changement de fichier
+      }
       setRecentFilePaths(prev => [node.path, ...prev.filter(p => p !== node.path)].slice(0, 50))
       setMobileEditorOpen(true)
       switchingToFilePathRef.current = null
@@ -981,6 +992,9 @@ export default function App2() {
     updateIndexEntry(path, diskContent)
   }, [updateIndexEntry])
 
+  const applyExternalContentRef = useRef(applyExternalContent)
+  applyExternalContentRef.current = applyExternalContent
+
   const drainWriteQueue = useCallback(async () => {
     for (;;) {
       const job = writeQueueRef.current.shift()
@@ -1123,7 +1137,7 @@ export default function App2() {
     flushSync(() => {
       // L'éditeur de blocs reçoit les blocs par identifiant ; le markdown suit
       // pour l'en-tête et le reste de l'application.
-      getSharedBlocksBridge()?.applySnapshot(snapshot, caret)
+      getSharedBlocksBridge()?.applySnapshot(snapshot, caret, documentBody(markdown))
       setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
       setExternalRevision((revision) => revision + 1)
       setLiveMarkdown(markdown)

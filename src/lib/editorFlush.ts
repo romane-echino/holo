@@ -118,7 +118,8 @@ export async function runCloseTasks(timeoutMs = 1500): Promise<void> {
  */
 type SharedBlocksBridge = {
   getBlocks: () => BlockState[]
-  applySnapshot: (snapshot: SharedSnapshot, caret?: CaretAnchor | null) => void
+  /** expectedBody : corps markdown que l'éditeur recevra ensuite par sa propriété (déjà appliqué) */
+  applySnapshot: (snapshot: SharedSnapshot, caret?: CaretAnchor | null, expectedBody?: string) => void
 }
 let sharedBlocksBridge: SharedBlocksBridge | null = null
 
