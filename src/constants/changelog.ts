@@ -2,6 +2,15 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.7.1',
+    releasedAt: '2026-11-03',
+    items: [
+      'macOS : l\'application n\'est plus signalée comme « endommagée » ; au premier lancement, Réglages Système → Confidentialité et sécurité → « Ouvrir quand même ».',
+      'macOS : Holo demande l\'autorisation d\'accéder au réseau local, nécessaire pour joindre le serveur de collaboration de l\'équipe.',
+      'Temps réel : messages d\'erreur de connexion explicites (autorisation réseau local, VPN, adresse introuvable).',
+    ],
+  },
+  {
     version: '0.7.0',
     releasedAt: '2026-11-03',
     items: [
