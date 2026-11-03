@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RealtimeSession, colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
+import { setHistoryOverride } from '../lib/editorFlush'
+import { readLocalCursor } from '../lib/realtime/cursorDom'
 
 export type RealtimeDocumentState = {
   /** null : pas de session (temps réel désactivé ou document non partageable) */
@@ -74,6 +76,34 @@ export function useRealtimeDocument(options: Options) {
     }
     // configRevision : la session repart quand l'adresse ou le jeton du relais change.
   }, [filePath, user.name, user.email, configRevision])
+
+  // En session, Ctrl/Cmd+Z annule nos propres modifications via Yjs.
+  useEffect(() => {
+    const session = sessionRef.current
+    if (state.status !== 'live' || !session) return
+    setHistoryOverride({ undo: () => session.undo(), redo: () => session.redo() })
+    return () => setHistoryOverride(null)
+  }, [state.status])
+
+  // Position de notre curseur, publiée dans la présence (les autres l'affichent).
+  useEffect(() => {
+    const session = sessionRef.current
+    if (state.status !== 'live' || !session) return
+    let frame: number | null = null
+    const publish = () => {
+      frame = null
+      session.setLocalCursor(readLocalCursor())
+    }
+    const onSelectionChange = () => {
+      if (frame === null) frame = requestAnimationFrame(publish)
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    publish()
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange)
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [state.status])
 
   const onLocalMarkdown = useCallback((markdown: string) => {
     sessionRef.current?.onLocalMarkdown(markdown)

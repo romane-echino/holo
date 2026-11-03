@@ -6,7 +6,9 @@ import { cn } from '../utils/global'
 import { BlockEditor, normalizeBodyMarkdown, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
 import { INSERT_INLINE_IMAGE_EVENT, type InsertInlineImageDetail } from './MarkdownEditor/InlineEditor'
 import { notifyError } from '../lib/notify'
+import { getHistoryOverride } from '../lib/editorFlush'
 import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/session'
+import { RemoteCursors } from './RemoteCursors'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { FootnotesProvider } from '../contexts/FootnotesContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -693,6 +695,7 @@ export function EditorFrame({
   const sectionRef = useRef<HTMLElement>(null)
   const iconPickerRef = useRef<HTMLDivElement>(null)
   const blockEditorRef = useRef<BlockEditorHandle>(null)
+  const articleRef = useRef<HTMLElement>(null)
 
   const { rootPath } = useWorkspace()
   const {
@@ -939,6 +942,15 @@ export function EditorFrame({
     if (!target) return
     const tagName = target.tagName
     if (tagName !== 'INPUT' && tagName !== 'TEXTAREA') return
+
+    const historyOverride = getHistoryOverride()
+    if (historyOverride && (event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z' || event.key === 'y')) {
+      // Session temps réel : annule nos propres modifications sans toucher à celles des autres.
+      event.preventDefault()
+      if (event.key === 'z' && !event.shiftKey) historyOverride.undo()
+      else historyOverride.redo()
+      return
+    }
 
     if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
       event.preventDefault()
@@ -1443,7 +1455,8 @@ export function EditorFrame({
             />
           )
         ) : (
-          <article>
+          <article ref={articleRef} className="relative">
+            {realtimePeers.length > 0 && <RemoteCursors peers={realtimePeers} containerRef={articleRef} />}
             {isConflicted && (
               <div className="mb-4 flex items-center gap-3 rounded-holo-xl border border-amber-600/30 bg-amber-500/10 px-4 py-3">
                 <span className="text-amber-400 text-sm">⚠️</span>

@@ -145,6 +145,27 @@ test.describe('Édition en temps réel (relais Codenotch)', () => {
       await expect.poll(async () => paragraph(bob.page, 'Note : Point Bob.').first().innerText(), { timeout: 15_000 })
         .toBe('Note : Point Bob. Relu par Bob. Alice continue')
 
+      // Curseurs : Alice voit où Bob se trouve, à la hauteur du paragraphe qu'il édite.
+      await paragraph(bob.page, 'Réunion').first().click().catch(() => {})
+      const bobParagraph = paragraph(bob.page, 'Point Alice. Validé par Alice.')
+      await bobParagraph.click()
+      const remoteCursor = alice.page.locator('[data-remote-cursor="Bob Keller"]')
+      await expect(remoteCursor).toBeVisible({ timeout: 10_000 })
+      const targetBox = await paragraph(alice.page, 'Point Alice. Validé par Alice.').boundingBox()
+      await expect.poll(async () => {
+        const cursorBox = await remoteCursor.boundingBox()
+        return Boolean(cursorBox && targetBox && cursorBox.y >= targetBox.y - 4 && cursorBox.y <= targetBox.y + targetBox.height)
+      }, { timeout: 10_000 }).toBe(true)
+
+      // Annuler (Cmd/Ctrl+Z) n'annule que la saisie d'Alice, chez tout le monde.
+      await appendTo(alice.page, 'Paragraphe tampon.', ' ANNULABLE')
+      await expect(paragraph(bob.page, 'ANNULABLE')).toBeVisible({ timeout: 15_000 })
+      // « z » minuscule : avec « Z », le raccourci est Cmd/Ctrl+Maj+Z (rétablir).
+      await alice.page.keyboard.press('ControlOrMeta+z')
+      await expect(paragraph(alice.page, 'ANNULABLE')).toHaveCount(0, { timeout: 10_000 })
+      await expect(paragraph(bob.page, 'ANNULABLE')).toHaveCount(0, { timeout: 15_000 })
+      await expect(paragraph(alice.page, 'Relu par Bob.').first()).toBeVisible()
+
       // Les deux fichiers sur disque convergent.
       await expect.poll(async () => {
         const [a, b] = await Promise.all([

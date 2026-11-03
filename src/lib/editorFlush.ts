@@ -48,6 +48,22 @@ type DocumentSession = {
 
 let session: DocumentSession | null = null
 
+/**
+ * Annuler / rétablir pendant une session temps réel : l'historique de Yjs
+ * n'annule que nos propres modifications, jamais celles des autres. Quand il
+ * est défini, il remplace l'historique local de l'éditeur.
+ */
+type HistoryOverride = { undo: () => void; redo: () => void }
+let historyOverride: HistoryOverride | null = null
+
+export function setHistoryOverride(next: HistoryOverride | null): void {
+  historyOverride = next
+}
+
+export function getHistoryOverride(): HistoryOverride | null {
+  return historyOverride
+}
+
 export function registerDocumentSession(next: DocumentSession): () => void {
   session = next
   return () => {

@@ -536,6 +536,37 @@ test.describe('RealtimeSession contre un relais simulé', () => {
     await Promise.all([alice, bob, intruder].map((editor) => editor.session.stop()))
   })
 
+  test('annuler n annule que ses propres modifications, pas celles des autres', async () => {
+    const relay = new FakeRelay(113)
+    const initial = 'Début.\n\nMilieu.\n\nFin.\n'
+    const alice = new SimulatedEditor(relay, 'alice', initial)
+    const bob = new SimulatedEditor(relay, 'bob', initial)
+    await alice.start()
+    await waitLive([alice])
+    await bob.start()
+    await waitLive([alice, bob])
+
+    alice.type(alice.text.replace('Début.', 'Début. [Alice]'))
+    await waitConverged([alice, bob])
+    bob.type(bob.text.replace('Fin.', 'Fin. [Bob]'))
+    await waitConverged([alice, bob])
+    // Alice continue après la modification de Bob, puis annule deux fois.
+    await sleep(700)
+    alice.type(alice.text.replace('Milieu.', 'Milieu. [Alice 2]'))
+    await waitConverged([alice, bob])
+
+    alice.session.undo()
+    await waitFor(() => !alice.text.includes('[Alice 2]'), 5_000, 'premier annuler')
+    alice.session.undo()
+    let final = await waitConverged([alice, bob])
+    expect(final).toBe('Début.\n\nMilieu.\n\nFin. [Bob]\n')
+
+    alice.session.redo()
+    final = await waitConverged([alice, bob])
+    expect(final).toBe('Début. [Alice]\n\nMilieu.\n\nFin. [Bob]\n')
+    await Promise.all([alice, bob].map((editor) => editor.session.stop()))
+  })
+
   test('départ d un participant : les autres ne le voient plus', async () => {
     const relay = new FakeRelay(97)
     const alice = new SimulatedEditor(relay, 'alice', 'x')

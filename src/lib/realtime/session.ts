@@ -19,7 +19,9 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwareness
 import { PayloadCipher, singleSpliceDiff } from './encoding'
 
 export type RealtimeUser = { name: string; email: string; color: string }
-export type RealtimePeer = RealtimeUser & { clientId: number }
+/** Position du curseur : bloc (rang dans le document), champ éditable du bloc (ex. cellule), position dans son texte */
+export type RealtimeCursor = { block: number; field: number; offset: number }
+export type RealtimePeer = RealtimeUser & { clientId: number; cursor: RealtimeCursor | null }
 export type RealtimeStatus = 'connecting' | 'joining' | 'live' | 'reconnecting' | 'unauthorized' | 'error' | 'stopped'
 
 export type RealtimeSessionCallbacks = {
@@ -39,7 +41,7 @@ export type RealtimeSessionCallbacks = {
 
 /** `key` : clé du dépôt (base64) ; tout ce qui passe par le relais est chiffré avec. */
 type DocumentRef = { documentId: string; key?: string | null }
-type AwarenessState = { user: RealtimeUser; established: boolean; epoch: string | null }
+type AwarenessState = { user: RealtimeUser; established: boolean; epoch: string | null; cursor?: RealtimeCursor | null }
 
 const LOCAL_ORIGIN = 'holo-local'
 const REMOTE_ORIGIN = 'holo-remote'
@@ -71,6 +73,8 @@ export class RealtimeSession {
   private readonly cipher: PayloadCipher
 
   private doc: Y.Doc | null = null
+  /** N'annule que nos propres modifications (origine locale), jamais celles des autres. */
+  private undoManager: Y.UndoManager | null = null
   // La présence vit sur son propre document, stable toute la session : le
   // document de contenu peut être remplacé (jonction, redémarrage de session)
   // sans que les autres perdent notre trace.
@@ -123,6 +127,40 @@ export class RealtimeSession {
       if (splice.insert) text.insert(splice.index, splice.insert)
     }, LOCAL_ORIGIN)
     this.lastText = markdown
+  }
+
+  /** Publie la position de notre curseur (null : hors du document). */
+  setLocalCursor(cursor: RealtimeCursor | null): void {
+    if (!this.awareness) return
+    const state = this.awareness.getLocalState() as AwarenessState | null
+    if (!state) return
+    const previous = state.cursor ?? null
+    if (previous === cursor || (previous && cursor && previous.block === cursor.block && previous.field === cursor.field && previous.offset === cursor.offset)) return
+    this.awareness.setLocalStateField('cursor', cursor)
+  }
+
+  /** Annule notre dernière modification (celles des autres sont conservées). */
+  undo(): void {
+    void this.moveInHistory('undo')
+  }
+
+  redo(): void {
+    void this.moveInHistory('redo')
+  }
+
+  private async moveInHistory(direction: 'undo' | 'redo') {
+    if (!this.joined || !this.doc || !this.undoManager) return
+    // La saisie en attente fait partie de ce qu'on annule.
+    await this.callbacks.flushLocalEdits()
+    if (!this.doc || !this.undoManager) return
+    this.undoManager.stopCapturing()
+    const changed = direction === 'undo' ? this.undoManager.undo() : this.undoManager.redo()
+    if (!changed) return
+    const nextText = this.doc.getText('markdown').toString()
+    if (nextText !== this.lastText) {
+      this.lastText = nextText
+      this.callbacks.applyRemoteMarkdown(nextText)
+    }
   }
 
   /**
@@ -296,8 +334,11 @@ export class RealtimeSession {
     if (this.doc && this.doc !== doc) this.detachDoc()
     this.doc = doc
     this.epoch = epoch
+    this.undoManager?.destroy()
+    this.undoManager = new Y.UndoManager(doc.getText('markdown'), { trackedOrigins: new Set([LOCAL_ORIGIN]), captureTimeout: 600 })
+    // Saisies locales et annulations / rétablissements partent vers le relais.
     doc.on('update', (update: Uint8Array, origin: unknown) => {
-      if (origin !== LOCAL_ORIGIN) return
+      if (origin === REMOTE_ORIGIN) return
       this.pendingLocal.push(update)
       this.schedulePush()
     })
@@ -305,6 +346,8 @@ export class RealtimeSession {
 
   private detachDoc() {
     this.joined = false
+    this.undoManager?.destroy()
+    this.undoManager = null
     this.doc?.destroy()
     this.doc = null
     this.pendingLocal = []
@@ -389,7 +432,8 @@ export class RealtimeSession {
   }
 
   private setLocalAwareness(established: boolean) {
-    this.awareness?.setLocalState({ user: this.user, established, epoch: this.epoch } satisfies AwarenessState)
+    const cursor = (this.awareness?.getLocalState() as AwarenessState | null)?.cursor ?? null
+    this.awareness?.setLocalState({ user: this.user, established, epoch: this.epoch, cursor } satisfies AwarenessState)
   }
 
   private applyRemoteAwareness(update: Uint8Array) {
@@ -427,7 +471,7 @@ export class RealtimeSession {
   }
 
   private getPeers(): RealtimePeer[] {
-    return this.getPeerEntries().map(([clientId, state]) => ({ clientId, ...state.user }))
+    return this.getPeerEntries().map(([clientId, state]) => ({ clientId, ...state.user, cursor: state.established ? state.cursor ?? null : null }))
   }
 
   /** Le participant de plus petit identifiant compacte le journal. */

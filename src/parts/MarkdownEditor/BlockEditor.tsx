@@ -41,7 +41,7 @@ import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
-import { flushPendingEdits } from '../../lib/editorFlush'
+import { flushPendingEdits, getHistoryOverride } from '../../lib/editorFlush'
 import { singleSpliceDiff } from '../../lib/realtime/encoding'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, TableMetadata, TableColumnAggregation, ListNode, CodeNode, BlockquoteNode, ImageNode, ImageMetadata, ImageDisplayMode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
@@ -1371,6 +1371,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (isFormFieldTarget && selectedBlockIds.size === 0) return
       e.preventDefault()
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      const historyOverride = getHistoryOverride()
+      if (historyOverride) {
+        historyOverride.undo()
+        return
+      }
       const focusedId = lastFocusedBlockIdRef.current
       if (focusedId) {
         blockRefs.current.get(focusedId)?.flush?.()
@@ -1397,6 +1402,11 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
       if (isFormFieldTarget && selectedBlockIds.size === 0) return
       e.preventDefault()
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current)
+      const historyOverride = getHistoryOverride()
+      if (historyOverride) {
+        historyOverride.redo()
+        return
+      }
       const h = historyRef.current
       if (h.pos < h.stack.length - 1) {
         h.pos++
