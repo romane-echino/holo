@@ -2327,7 +2327,16 @@ ipcMain.handle('app:install-update', async () => {
 })
 
 ipcMain.handle('app:get-update-state', async () => updateState)
-ipcMain.handle('app:get-version', async () => app.getVersion())
+ipcMain.handle('app:get-version', async () => {
+  // En développement, Electron est lancé sur electron/main.js : app.getVersion()
+  // renvoie alors la version d'Electron et non celle de Holo.
+  if (isDev) {
+    const pkg = await fs.readFile(path.join(__dirname, '..', 'package.json'), 'utf8').catch(() => null)
+    const version = pkg ? JSON.parse(pkg).version : null
+    if (typeof version === 'string') return version
+  }
+  return app.getVersion()
+})
 ipcMain.handle('app:export-pdf', async (event, payload) => {
   const rawHtml = typeof payload?.html === 'string' ? payload.html : ''
   const rawSuggestedName = typeof payload?.suggestedName === 'string' ? payload.suggestedName : 'document'
