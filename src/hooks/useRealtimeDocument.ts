@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
 import { BlockSession } from '../lib/realtime/blockSession'
 import type { SharedSnapshot } from '../lib/realtime/sharedModel'
+import type { CaretAnchor } from '../lib/realtime/caretAnchor'
 import { alignSnapshotIds, markdownToSnapshot } from '../parts/MarkdownEditor/lib/sharedSnapshot'
 import { registerCloseTask, setHistoryOverride } from '../lib/editorFlush'
 import { readLocalCursor } from '../lib/realtime/cursorDom'
@@ -20,8 +21,10 @@ type Options = {
   configRevision: number
   /** Photo de ce que l'éditeur affiche (blocs avec leurs identifiants) */
   getEditorSnapshot: () => SharedSnapshot
-  /** Affiche et enregistre le document fusionné avec les modifications des autres */
-  applyRemoteSnapshot: (snapshot: SharedSnapshot) => void
+  /** Affiche et enregistre le document fusionné avec les modifications des autres (caret : nouvelle place du curseur) */
+  applyRemoteSnapshot: (snapshot: SharedSnapshot, caret?: CaretAnchor | null) => void
+  /** Curseur local dans le texte partagé */
+  getLocalCaret?: () => CaretAnchor | null
   flushLocalEdits: () => Promise<void>
 }
 
@@ -57,7 +60,8 @@ export function useRealtimeDocument(options: Options) {
         { name: user.name || user.email || 'Anonyme', email: user.email, color: colorForUser(user.email || user.name) },
         {
           getEditorSnapshot: () => optionsRef.current.getEditorSnapshot(),
-          applyRemoteSnapshot: (snapshot) => optionsRef.current.applyRemoteSnapshot(snapshot),
+          applyRemoteSnapshot: (snapshot, caret) => optionsRef.current.applyRemoteSnapshot(snapshot, caret),
+          getLocalCaret: () => optionsRef.current.getLocalCaret?.() ?? null,
           alignIds: alignSnapshotIds,
           flushLocalEdits: () => optionsRef.current.flushLocalEdits(),
           getLocalModifiedAt: async () => {

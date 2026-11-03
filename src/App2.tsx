@@ -18,6 +18,7 @@ import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
 import { multiSpliceDiff } from './lib/realtime/encoding'
 import type { SharedSnapshot } from './lib/realtime/sharedModel'
+import { readCaretAnchor, type CaretAnchor } from './lib/realtime/caretAnchor'
 import { alignContainerIds, alignSnapshotIds, editorBlockToShared, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
 import { extractFootnoteMapFromMarkdown } from './parts/MarkdownEditor/lib/markdownBlocks'
 import { usePopup } from './hooks/usePopup'
@@ -1099,14 +1100,14 @@ export default function App2() {
   // ─── Édition en temps réel ────────────────────────────────────────────────
   // Contenu fusionné reçu de la session : affiché sans remonter l'éditeur et
   // enregistré sur disque (fusion avec le fichier comme pour une saisie).
-  const applyRealtimeSnapshot = useCallback((snapshot: SharedSnapshot) => {
+  const applyRealtimeSnapshot = useCallback((snapshot: SharedSnapshot, caret: CaretAnchor | null = null) => {
     const file = openedFileRef.current
     const sync = docSyncRef.current
     if (!file || !sync || !isSamePath(sync.path, file.path)) return
     const markdown = snapshotToMarkdown(snapshot)
     if (sync.editorState === markdown) {
       // Même texte, mais identifiants ou lignes vides à jour (jonction…).
-      flushSync(() => getSharedBlocksBridge()?.applySnapshot(snapshot))
+      flushSync(() => getSharedBlocksBridge()?.applySnapshot(snapshot, caret))
       return
     }
     // Diagnostic (activé par les tests) : texte de l'éditeur que la version reçue fait disparaître.
@@ -1122,7 +1123,7 @@ export default function App2() {
     flushSync(() => {
       // L'éditeur de blocs reçoit les blocs par identifiant ; le markdown suit
       // pour l'en-tête et le reste de l'application.
-      getSharedBlocksBridge()?.applySnapshot(snapshot)
+      getSharedBlocksBridge()?.applySnapshot(snapshot, caret)
       setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
       setExternalRevision((revision) => revision + 1)
       setLiveMarkdown(markdown)
@@ -1167,6 +1168,11 @@ export default function App2() {
     configRevision: realtimeConfigRevision,
     getEditorSnapshot: () => buildLocalSnapshot(docSyncRef.current?.editorState ?? '', true),
     applyRemoteSnapshot: applyRealtimeSnapshot,
+    getLocalCaret: () => readCaretAnchor((blockId) => {
+      const block = getSharedBlocksBridge()?.getBlocks().find((candidate) => candidate.id === blockId)
+      const shared = block ? editorBlockToShared(block) : null
+      return shared?.kind === 'text' ? shared.md : null
+    }),
     flushLocalEdits: async () => {
       // Tout est synchrone : aucune frappe ne peut s'intercaler entre
       // l'enregistrement de la saisie et l'application des modifications reçues

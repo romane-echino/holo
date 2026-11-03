@@ -16,6 +16,42 @@ const randomId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 /** Identifiants des lignes, colonnes et éléments, gardés dans le nœud pour l'éditeur. */
 export type HoloIds = { columns?: string[]; rows?: string[]; items?: string[] }
 
+function fillIds(ids: string[] | undefined, count: number, prefix: string): string[] {
+  const result = (ids ?? []).slice(0, count)
+  while (result.length < count) result.push(randomId(prefix))
+  return result
+}
+
+/**
+ * Identifiants des colonnes et des lignes d'un tableau, créés la première fois
+ * et rangés dans le nœud : l'éditeur de tableau et le document partagé
+ * utilisent ainsi les mêmes, d'un poste à l'autre.
+ */
+export function ensureTableIds(node: TableNode): { columns: string[]; rows: string[] } {
+  const header = node.children[0]
+  const columnCount = Math.max(1, header?.children.length ?? 0)
+  const data = (node.data ??= {}) as NonNullable<TableNode['data']>
+  const ids = ((data.holoIds as HoloIds | undefined) ?? {}) as HoloIds
+  const result = { columns: fillIds(ids.columns, columnCount, 'c'), rows: fillIds(ids.rows, Math.max(0, node.children.length - 1), 'r') }
+  data.holoIds = { ...ids, ...result } satisfies HoloIds
+  return result
+}
+
+function countListItems(node: ListNode): number {
+  return node.children.reduce((total, item) => {
+    const sublist = item.children.find((child) => child.type === 'list') as ListNode | undefined
+    return total + 1 + (sublist ? countListItems(sublist) : 0)
+  }, 0)
+}
+
+/** Identifiants des éléments d'une liste (sous-listes comprises, dans l'ordre), rangés dans le nœud. */
+export function ensureListIds(node: ListNode): string[] {
+  const data = (node.data ??= {}) as Record<string, unknown>
+  const items = fillIds((data.holoIds as HoloIds | undefined)?.items, countListItems(node), 'i')
+  data.holoIds = { ...((data.holoIds as HoloIds | undefined) ?? {}), items } satisfies HoloIds
+  return items
+}
+
 const FRONTMATTER = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/
 
 export function splitFrontmatter(markdown: string): { frontmatter: string; body: string } {
@@ -46,12 +82,11 @@ export function parseInline(markdown: string, footnotes?: Footnotes): InlineNode
 // ─── Blocs de l'éditeur → blocs partagés ─────────────────────────────────────
 
 function tableToShared(id: string, node: TableNode): SharedTableBlock {
-  const ids = (node.data?.holoIds ?? {}) as HoloIds
+  const ids = ensureTableIds(node)
   const metadata = node.data?.holoTable ?? {}
   const [header, ...body] = node.children
-  const columnCount = Math.max(header?.children.length ?? 0, ...body.map((row) => row.children.length))
-  const columns: SharedTableColumn[] = Array.from({ length: columnCount }, (_, index) => ({
-    id: ids.columns?.[index] ?? randomId('c'),
+  const columns: SharedTableColumn[] = ids.columns.map((columnId, index) => ({
+    id: columnId,
     title: inlinesToMarkdown((header?.children[index]?.children ?? []) as InlineNode[]),
     props: {
       align: node.align?.[index] ?? null,
@@ -62,20 +97,20 @@ function tableToShared(id: string, node: TableNode): SharedTableBlock {
     },
   }))
   const rows: SharedTableRow[] = body.map((row, rowIndex) => ({
-    id: ids.rows?.[rowIndex] ?? randomId('r'),
+    id: ids.rows[rowIndex],
     cells: Object.fromEntries(columns.map((column, index) => [column.id, inlinesToMarkdown((row.children[index]?.children ?? []) as InlineNode[])])),
   }))
   return { id, kind: 'table', props: {}, columns, rows }
 }
 
 function listToShared(id: string, node: ListNode): SharedListBlock {
-  const ids = ((node.data?.holoIds ?? {}) as HoloIds).items ?? []
+  const ids = ensureListIds(node)
   const items: SharedListItem[] = []
   const walk = (list: ListNode, depth: number) => {
     for (const item of list.children) {
       const paragraph = item.children.find((child) => child.type === 'paragraph') as ParagraphNode | undefined
       items.push({
-        id: ids[items.length] ?? randomId('i'),
+        id: ids[items.length],
         text: inlinesToMarkdown(paragraph?.children ?? []),
         depth,
         checked: item.checked ?? null,
@@ -235,16 +270,24 @@ export function alignSnapshotIds(target: SharedSnapshot, reference: SharedSnapsh
 }
 
 /**
- * Blocs déjà identifiés (même identifiant des deux côtés) : seules leurs
- * lignes, colonnes et éléments reprennent les identifiants de `previous`,
- * par le contenu (l'éditeur de tableau et de liste ne les garde pas encore).
+ * Blocs déjà identifiés (même identifiant des deux côtés) dont les lignes,
+ * colonnes ou éléments n'ont pas encore d'identifiants partagés (tableau ou
+ * liste tout juste créé, document lu sans eux) : ils reprennent ceux de
+ * `previous`, par le contenu.
  */
 export function alignContainerIds(next: SharedSnapshot, previous: SharedSnapshot): SharedSnapshot {
   const previousById = new Map(previous.blocks.map((block) => [block.id, block]))
   const blocks = next.blocks.map((block): SharedBlock => {
     const counterpart = previousById.get(block.id)
-    if (block.kind === 'table' && counterpart?.kind === 'table') return alignTableIds(block, counterpart)
-    if (block.kind === 'list' && counterpart?.kind === 'list') return alignListIds(block, counterpart)
+    // Identifiants déjà partagés (au moins un en commun) : rien à réaligner.
+    if (block.kind === 'table' && counterpart?.kind === 'table') {
+      const known = new Set([...counterpart.rows.map((row) => row.id), ...counterpart.columns.map((column) => column.id)])
+      return [...block.rows, ...block.columns].some((entry) => known.has(entry.id)) ? block : alignTableIds(block, counterpart)
+    }
+    if (block.kind === 'list' && counterpart?.kind === 'list') {
+      const known = new Set(counterpart.items.map((item) => item.id))
+      return block.items.some((item) => known.has(item.id)) ? block : alignListIds(block, counterpart)
+    }
     return block
   })
   return { ...next, blocks }

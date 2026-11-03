@@ -308,3 +308,12 @@ export function rebaseText(base: string, ours: string, theirs: string): string {
   }
   return result
 }
+
+/**
+ * Espaces insécables → espaces : l'éditeur affiche un espace tapé en fin de
+ * texte comme insécable, la version reçue a un espace normal. Pour replacer
+ * le curseur, les deux doivent compter comme le même caractère.
+ */
+export function sameSpaces(text: string): string {
+  return text.replace(/\u00a0/g, ' ')
+}

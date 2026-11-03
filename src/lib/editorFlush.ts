@@ -1,6 +1,7 @@
 import { flushSync } from 'react-dom'
 import type { BlockState } from '../parts/MarkdownEditor/lib/types'
 import type { SharedSnapshot } from './realtime/sharedModel'
+import type { CaretAnchor } from './realtime/caretAnchor'
 
 /**
  * Registre des éditeurs ayant une saisie pas encore remontée au document
@@ -117,7 +118,7 @@ export async function runCloseTasks(timeoutMs = 1500): Promise<void> {
  */
 type SharedBlocksBridge = {
   getBlocks: () => BlockState[]
-  applySnapshot: (snapshot: SharedSnapshot) => void
+  applySnapshot: (snapshot: SharedSnapshot, caret?: CaretAnchor | null) => void
 }
 let sharedBlocksBridge: SharedBlocksBridge | null = null
 
@@ -130,4 +131,19 @@ export function registerSharedBlocksBridge(next: SharedBlocksBridge): () => void
 
 export function getSharedBlocksBridge(): SharedBlocksBridge | null {
   return sharedBlocksBridge
+}
+
+/**
+ * Nouvelle place du curseur local dans le texte partagé, après une
+ * modification reçue : l'éditeur (paragraphe, cellule, élément de liste) qui
+ * replace le curseur la lit au lieu d'estimer la position.
+ */
+let caretHint: CaretAnchor | null = null
+
+export function setCaretHint(next: CaretAnchor | null): void {
+  caretHint = next
+}
+
+export function getCaretHint(): CaretAnchor | null {
+  return caretHint
 }

@@ -420,6 +420,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       saveTimerRef.current = null
     }
     savedRef.current = true
+    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) console.info('[holo-realtime] saisie enregistrée', JSON.stringify(el.textContent ?? ''))
     onSave(domToInlines(el))
   }, [onSave])
 

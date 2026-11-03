@@ -20,12 +20,19 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwareness
 import { PayloadCipher } from './encoding'
 import { applySnapshot, readSnapshot, sameSnapshot, sharedRoots, writeSnapshot, type SharedSnapshot } from './sharedModel'
 import type { RealtimeCursor, RealtimePeer, RealtimeStatus, RealtimeUser } from './session'
+import type { CaretAnchor } from './caretAnchor'
 
 export type BlockSessionCallbacks = {
   /** Photo de ce que l'éditeur affiche actuellement */
   getEditorSnapshot: () => SharedSnapshot
-  /** Affiche (et enregistre) le document fusionné avec les modifications des autres */
-  applyRemoteSnapshot: (snapshot: SharedSnapshot) => void
+  /**
+   * Affiche (et enregistre) le document fusionné avec les modifications des
+   * autres. `caret` : nouvelle place du curseur local dans le texte partagé,
+   * s'il a été suivi pendant l'application des modifications reçues.
+   */
+  applyRemoteSnapshot: (snapshot: SharedSnapshot, caret?: CaretAnchor | null) => void
+  /** Curseur local dans le texte partagé (bloc, cellule ou élément), ou null */
+  getLocalCaret?: () => CaretAnchor | null
   /** Remonte immédiatement les frappes en attente de l'éditeur (elles arrivent via onLocalSnapshot) */
   flushLocalEdits: () => Promise<void>
   /** Dernière version poussée du fichier, en photo (base de fusion des modifications hors session) */
@@ -363,12 +370,40 @@ export class BlockSession {
   // ─── Document ────────────────────────────────────────────────────────────
 
   /** Envoie à l'éditeur la photo du document partagé si elle a changé. */
-  private publishDocument() {
+  private publishDocument(caret: CaretAnchor | null = null) {
     if (!this.doc) return
     const next = readSnapshot(this.doc)
     if (this.lastSnapshot && sameSnapshot(next, this.lastSnapshot)) return
     this.lastSnapshot = next
-    this.callbacks.applyRemoteSnapshot(next)
+    this.callbacks.applyRemoteSnapshot(next, caret)
+  }
+
+  /** Texte partagé où se trouve un curseur (bloc texte, cellule ou élément de liste). */
+  private caretText(anchor: CaretAnchor): Y.Text | null {
+    const block = this.doc?.getMap<Y.Map<unknown>>('blocks').get(anchor.blockId)
+    if (!block) return null
+    let text: unknown
+    if (anchor.field === null) text = block.get('md')
+    else if ('cell' in anchor.field) text = (block.get('rowData') as Y.Map<Y.Map<unknown>> | undefined)?.get(anchor.field.cell.rowId)?.get(anchor.field.cell.columnId)
+    else text = (block.get('itemData') as Y.Map<Y.Map<unknown>> | undefined)?.get(anchor.field.item)?.get('text')
+    return text instanceof Y.Text ? text : null
+  }
+
+  private captureCaret(): { anchor: CaretAnchor; position: Y.RelativePosition } | null {
+    const anchor = this.callbacks.getLocalCaret?.() ?? null
+    const text = anchor ? this.caretText(anchor) : null
+    if (!anchor || !text) return null
+    const index = Math.max(0, Math.min(text.length, anchor.index))
+    // assoc -1 : attaché au caractère de gauche (le dernier tapé par nous).
+    return { anchor, position: Y.createRelativePositionFromTypeIndex(text, index, -1) }
+  }
+
+  private resolveCaret(captured: { anchor: CaretAnchor; position: Y.RelativePosition } | null): CaretAnchor | null {
+    if (!captured || !this.doc) return null
+    const absolute = Y.createAbsolutePositionFromRelativePosition(captured.position, this.doc)
+    const text = this.caretText(captured.anchor)
+    if (!absolute || !text || absolute.type !== text) return null
+    return { ...captured.anchor, index: absolute.index }
   }
 
   private attachDoc(doc: Y.Doc, epoch: string | null) {
@@ -443,10 +478,13 @@ export class BlockSession {
         // Nos frappes en attente passent d'abord dans le document partagé.
         await this.callbacks.flushLocalEdits()
         const updates = this.remoteQueue.splice(0)
+        // Le curseur local est attaché au caractère qui le précède : si un
+        // collègue tape au même endroit, notre saisie reste d'un seul tenant.
+        const caret = this.captureCaret()
         this.doc.transact(() => {
           for (const update of updates) Y.applyUpdate(this.doc!, update, REMOTE_ORIGIN)
         }, REMOTE_ORIGIN)
-        this.publishDocument()
+        this.publishDocument(this.resolveCaret(caret))
       }
     } finally {
       this.processingRemote = false

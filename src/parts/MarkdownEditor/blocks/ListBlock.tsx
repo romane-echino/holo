@@ -31,9 +31,11 @@ import type { FormatToolbarState } from '../FormatToolbar'
 import { domToInlines } from '../lib/domToInlines'
 import { inlinesToHtml } from '../lib/inlinesToHtml'
 import { inlinesToMarkdown } from '../lib/inlinesToMarkdown'
-import { registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { getCaretHint, registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { visibleOffset } from '../../../lib/realtime/caretAnchor'
 import { alignSequences } from '../../../lib/alignSequences'
-import { singleSpliceDiff } from '../../../lib/realtime/encoding'
+import { sameSpaces, singleSpliceDiff } from '../../../lib/realtime/encoding'
+import { ensureListIds } from '../lib/sharedSnapshot'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
 import type { BlockNode, InlineNode, ListItemNode, ListNode, ParagraphNode } from '../lib/types'
 
@@ -66,8 +68,8 @@ export interface ListBlockItem {
   depth: number
 }
 
-let _li = 0
-const newItemId = () => `li${++_li}`
+// Identifiants partagés d'un poste à l'autre (édition en temps réel) : aléatoires.
+const newItemId = () => `i-${crypto.randomUUID()}`
 
 // ─── Conversion node ↔ items ─────────────────────────────────────────────────
 
@@ -121,14 +123,20 @@ function caretOffsetIn(element: HTMLElement): number {
   return range.toString().length
 }
 
-function nodeToItems(node: ListNode, depth = 0): ListBlockItem[] {
+function collectItems(node: ListNode, depth: number): Omit<ListBlockItem, 'id'>[] {
   return node.children.flatMap((item) => {
     const para = item.children.find((c): c is ParagraphNode => c.type === 'paragraph')
     const sublist = item.children.find((c): c is ListNode => c.type === 'list')
-    const result: ListBlockItem[] = [{ id: newItemId(), inlines: para?.children ?? [], checked: item.checked, depth }]
-    if (sublist) result.push(...nodeToItems(sublist, depth + 1))
+    const result: Omit<ListBlockItem, 'id'>[] = [{ inlines: para?.children ?? [], checked: item.checked, depth }]
+    if (sublist) result.push(...collectItems(sublist, depth + 1))
     return result
   })
+}
+
+/** Éléments de la liste (sous-listes à plat, avec leur niveau) et leurs identifiants partagés. */
+function nodeToItems(node: ListNode): ListBlockItem[] {
+  const ids = ensureListIds(node)
+  return collectItems(node, 0).map((item, index) => ({ ...item, id: ids[index] }))
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -157,7 +165,7 @@ export function listBlockItemsToNode(items: ListBlockItem[], base: ListNode): Li
     return { listItems, nextIdx: i }
   }
   const { listItems } = buildLevel(0, 0)
-  return { ...base, spread: false, children: listItems }
+  return { ...base, spread: false, children: listItems, data: { ...(base.data ?? {}), holoIds: { items: items.map((item) => item.id) } } }
 }
 
 // ─── Calcul des marqueurs imbriqués (1.1, a.1, a.1.1…) ──────────────────────
@@ -220,7 +228,16 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       lastNodeRef.current = node
       const current = itemsRef.current
       const incoming = nodeToItems(node)
-      const { matches, exact } = alignSequences(current.map(itemSignature), incoming.map(itemSignature))
+      // Identifiants partagés : les éléments se reconnaissent par identifiant ;
+      // sinon (liste lue sans identifiants), par le contenu.
+      const currentIndex = new Map(current.map((item, index) => [item.id, index]))
+      const byId = incoming.some((item) => currentIndex.has(item.id))
+      const { matches, exact } = byId
+        ? {
+            matches: incoming.map((item) => currentIndex.get(item.id) ?? -1),
+            exact: incoming.map((item) => currentIndex.has(item.id) && itemSignature(current[currentIndex.get(item.id)!]) === itemSignature(item)),
+          }
+        : alignSequences(current.map(itemSignature), incoming.map(itemSignature))
       const changed: string[] = []
       const next = incoming.map((item, index) => {
         const match = matches[index]
@@ -255,8 +272,15 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       const element = itemRefs.current.get(pending.id)
       if (!element) return
       let offset = pending.offset
-      const splice = singleSpliceDiff(pending.text, element.textContent ?? '')
-      if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      // Curseur suivi par la session dans le texte partagé de l'élément, sinon estimation.
+      const hint = getCaretHint()
+      const item = itemsRef.current.find((entry) => entry.id === pending.id)
+      if (hint?.field && 'item' in hint.field && hint.field.item === pending.id && item) {
+        offset = visibleOffset(inlinesToMarkdown(item.inlines), hint.index)
+      } else {
+        const splice = singleSpliceDiff(sameSpaces(pending.text), sameSpaces(element.textContent ?? ''))
+        if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      }
       element.focus({ preventScroll: true })
       placeCaretAtTextOffset(element, offset)
     }, [itemRevisions])
@@ -946,6 +970,7 @@ function ListItemRow({
         contentEditable
         suppressContentEditableWarning
         data-list-text
+        data-list-item-id={item.id}
         className={cn('min-h-[1.5em] flex-1 outline-none transition-opacity', item.checked && 'opacity-40 line-through')}
         onFocus={() => { savedRef.current = false }}
         onKeyDown={handleKeyDown}

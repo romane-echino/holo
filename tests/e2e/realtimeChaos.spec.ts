@@ -337,14 +337,14 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
       // Parcours détaillé des deux premiers jetons perdus (émis par l'éditeur, envoyés, retirés…).
       for (const value of lostTokens.slice(0, 2)) {
         const stem = value.slice(0, -1)
-        const trail = log.filter((line) => line.includes(stem) && /éditeur émet|envoi|version reçue retire/.test(line))
+        const trail = log.filter((line) => line.includes(stem) && /éditeur émet|envoi|version reçue retire|saisie enregistrée|bloc redessiné/.test(line))
         log.push(`── parcours de ${value} ──`, ...trail.slice(0, 25).map((line) => `  ${line.slice(0, 300)}`))
       }
       // Dans ce test, une suppression normale retire exactement un jeton de son auteur ;
       // toute autre suppression est suspecte.
       const relevant = log.filter((line) => {
         if (line.startsWith('  ')) return true
-        if (/éditeur émet|\] envoi /.test(line)) return false
+        if (/éditeur émet|\] envoi |saisie enregistrée|bloc redessiné/.test(line)) return false
         if (line.includes('version reçue retire')) {
           // Normal : la suppression d'un jeton par son auteur. Suspect : tout le reste.
           const removed = /"removed":"((?:[^"\\]|\\.)*)"/.exec(line)?.[1] ?? ''

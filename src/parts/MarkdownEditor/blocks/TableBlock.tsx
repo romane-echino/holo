@@ -24,10 +24,12 @@ import {
 import { createPortal } from 'react-dom'
 import { AlignCenter, AlignLeft, AlignRight, ArrowDownAZ, ArrowUpAZ, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { cn } from '../../../utils/global'
-import { registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { getCaretHint, registerPendingEditFlusher } from '../../../lib/editorFlush'
+import { visibleOffset } from '../../../lib/realtime/caretAnchor'
 import { alignSequences } from '../../../lib/alignSequences'
-import { singleSpliceDiff } from '../../../lib/realtime/encoding'
+import { sameSpaces, singleSpliceDiff } from '../../../lib/realtime/encoding'
 import { inlinesToMarkdown } from '../lib/inlinesToMarkdown'
+import { ensureTableIds } from '../lib/sharedSnapshot'
 import { InlineEditor } from '../InlineEditor'
 import { setClipboardEventData } from '../lib/clipboard'
 import type { InlineEditorHandle, InitialCursor } from '../InlineEditor'
@@ -129,10 +131,9 @@ const ROW_HANDLE_COLUMN_WIDTH = 42
 const clampManualWidth = (width: number) =>
   Math.round(Math.min(MAX_MANUAL_COLUMN_WIDTH, Math.max(MIN_MANUAL_COLUMN_WIDTH, width)))
 
-let _tc = 0
-let _tr = 0
-const newColId = () => `tc${++_tc}`
-const newRowId = () => `tr${++_tr}`
+// Identifiants partagés d'un poste à l'autre (édition en temps réel) : aléatoires.
+const newColId = () => `c-${crypto.randomUUID()}`
+const newRowId = () => `r-${crypto.randomUUID()}`
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const cellText = (cell: any): string =>
@@ -216,6 +217,27 @@ function sameColumnSettings(left: InternalColumn, right: InternalColumn): boolea
     && left.width === right.width && Boolean(left.manualWidth) === Boolean(right.manualWidth)
 }
 
+/** Nouvelles lignes et colonnes, et cellules à redessiner (null : rien n'a changé). */
+function describeTableChanges(current: InternalTable, columns: InternalColumn[], rows: InternalRow[]): { table: InternalTable; changedCells: string[] } | null {
+  const currentRows = new Map(current.rows.map((row) => [row.id, row]))
+  const changedCells: string[] = []
+  for (const row of rows) {
+    const previous = currentRows.get(row.id)
+    for (const column of columns) {
+      const before = previous?.cells[column.id]
+      if (before === undefined || cellSignature(before) !== cellSignature(row.cells[column.id])) {
+        changedCells.push(`${row.id}-${column.id}`)
+      }
+    }
+  }
+  const unchanged = changedCells.length === 0
+    && rows.length === current.rows.length
+    && rows.every((row, index) => row.id === current.rows[index].id)
+    && columns.length === current.columns.length
+    && columns.every((column, index) => column.id === current.columns[index].id && sameColumnSettings(column, current.columns[index]))
+  return unchanged ? null : { table: { columns, rows }, changedCells }
+}
+
 /**
  * Applique le tableau reçu (modification d'un collègue) au tableau affiché :
  * les lignes et colonnes qui se correspondent gardent leur identifiant, une
@@ -223,6 +245,12 @@ function sameColumnSettings(left: InternalColumn, right: InternalColumn): boolea
  * null si rien n'a changé, sinon le tableau et les cellules à rafraîchir.
  */
 function mergeIncomingTable(current: InternalTable, incoming: InternalTable): { table: InternalTable; changedCells: string[] } | null {
+  // Identifiants partagés : lignes et colonnes se reconnaissent par identifiant.
+  const currentIds = new Set([...current.columns.map((column) => column.id), ...current.rows.map((row) => row.id)])
+  if ([...incoming.columns, ...incoming.rows].some((entry) => currentIds.has(entry.id))) {
+    return describeTableChanges(current, incoming.columns, incoming.rows)
+  }
+  // Sinon (tableau lu sans identifiants) : par le contenu.
   const columnAlignment = alignSequences(
     current.columns.map((column) => columnSignature(current, column)),
     incoming.columns.map((column) => columnSignature(incoming, column)),
@@ -244,23 +272,7 @@ function mergeIncomingTable(current: InternalTable, incoming: InternalTable): { 
     return { id: match === -1 ? row.id : current.rows[match].id, cells }
   })
 
-  const currentRows = new Map(current.rows.map((row) => [row.id, row]))
-  const changedCells: string[] = []
-  for (const row of rows) {
-    const previous = currentRows.get(row.id)
-    for (const column of columns) {
-      const before = previous?.cells[column.id]
-      if (before === undefined || cellSignature(before) !== cellSignature(row.cells[column.id])) {
-        changedCells.push(`${row.id}-${column.id}`)
-      }
-    }
-  }
-  const unchanged = changedCells.length === 0
-    && rows.length === current.rows.length
-    && rows.every((row, index) => row.id === current.rows[index].id)
-    && columns.length === current.columns.length
-    && columns.every((column, index) => column.id === current.columns[index].id && sameColumnSettings(column, current.columns[index]))
-  return unchanged ? null : { table: { columns, rows }, changedCells }
+  return describeTableChanges(current, columns, rows)
 }
 
 /** Position du curseur dans le texte d'un élément éditable. */
@@ -799,9 +811,11 @@ function nodeToInternal(node: TableNode): InternalTable {
   const bodyRows = node.children.slice(1)
   const totalColumns = Math.max(1, headerCells.length)
   const metadata = normalizeTableMetadata(node.data?.holoTable, totalColumns)
+  // Identifiants des colonnes et lignes, rangés dans le nœud (partagés en temps réel).
+  const ids = ensureTableIds(node)
 
   const columns: InternalColumn[] = headerCells.map((cell, i) => ({
-    id: newColId(),
+    id: ids.columns[i],
     title: inlineNodesToPlainText((cell?.children ?? []) as InlineNode[]),
     titleNodes: (cell?.children ?? []) as InlineNode[],
     align: toColAlign(node.align?.[i]),
@@ -817,10 +831,10 @@ function nodeToInternal(node: TableNode): InternalTable {
   }))
 
   if (columns.length === 0) {
-    columns.push({ id: newColId(), title: '', align: null, type: DEFAULT_TABLE_COLUMN_TYPE, aggregation: DEFAULT_TABLE_COLUMN_AGGREGATION, color: null, width: 180, manualWidth: false })
+    columns.push({ id: ids.columns[0] ?? newColId(), title: '', align: null, type: DEFAULT_TABLE_COLUMN_TYPE, aggregation: DEFAULT_TABLE_COLUMN_AGGREGATION, color: null, width: 180, manualWidth: false })
   }
 
-  const rows: InternalRow[] = node.children.slice(1).map((row) => {
+  const rows: InternalRow[] = node.children.slice(1).map((row, rowIndex) => {
     const cells: Record<string, InlineNode[]> = {}
 
     columns.forEach((column, ci) => {
@@ -828,7 +842,7 @@ function nodeToInternal(node: TableNode): InternalTable {
     })
 
     return {
-      id: newRowId(),
+      id: ids.rows[rowIndex] ?? newRowId(),
       cells,
     }
   })
@@ -853,6 +867,7 @@ function internalToNode(t: InternalTable): TableNode {
     align: t.columns.map((c) => c.align),
     data: {
       holoTable: metadata,
+      holoIds: { columns: t.columns.map((column) => column.id), rows: t.rows.map((row) => row.id) },
     },
     children: [
       {
@@ -955,8 +970,16 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       pendingCellFocusRef.current = null
       const editable = document.querySelector<HTMLElement>(`[data-table-cell-key="${pending.cellKey}"] [contenteditable="true"]`)
       let offset = pending.offset
-      const splice = editable ? singleSpliceDiff(pending.text, editable.textContent ?? '') : null
-      if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      // Curseur suivi par la session dans le texte partagé de la cellule, sinon estimation.
+      const hint = getCaretHint()
+      const cellElement = document.querySelector<HTMLElement>(`[data-table-cell-key="${pending.cellKey}"]`)
+      const [hintRow, hintColumn] = [cellElement?.dataset.rowId ?? '', cellElement?.dataset.columnId ?? '']
+      const hinted = hint?.field && 'cell' in hint.field && hint.field.cell.rowId === hintRow && hint.field.cell.columnId === hintColumn
+        ? visibleOffset(cellSignature(tableRef.current.rows.find((row) => row.id === hintRow)?.cells[hintColumn]), hint.index)
+        : null
+      const splice = hinted === null && editable ? singleSpliceDiff(sameSpaces(pending.text), sameSpaces(editable.textContent ?? '')) : null
+      if (hinted !== null) offset = hinted
+      else if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
       cellRefs.current.get(pending.cellKey)?.focus({ type: 'offset', offset })
     }, [cellRevisions])
     const menuRef = useRef<HTMLDivElement | null>(null)
@@ -2019,6 +2042,8 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
                         <td
                           key={`${cellKey}:${cellRevisions[cellKey] ?? 0}`}
                           data-table-cell-key={cellKey}
+                          data-row-id={row.id}
+                          data-column-id={col.id}
                           className={cn(
                             'bg-transparent p-0',
                             !isLastRow && 'border-b border-holo-border-soft',

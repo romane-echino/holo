@@ -35,10 +35,11 @@ import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
-import { flushPendingEdits, getHistoryOverride, registerSharedBlocksBridge } from '../../lib/editorFlush'
-import { singleSpliceDiff } from '../../lib/realtime/encoding'
+import { flushPendingEdits, getCaretHint, getHistoryOverride, registerSharedBlocksBridge, setCaretHint } from '../../lib/editorFlush'
+import { visibleOffset, type CaretAnchor } from '../../lib/realtime/caretAnchor'
+import { sameSpaces, singleSpliceDiff } from '../../lib/realtime/encoding'
 import { blocksToMarkdown, extractFootnoteMapFromMarkdown, freshParagraph, isEmptyParagraphBlock, markdownToBlocks, newClipboardTableId, newId, paragraphSingleImage, slugifyHeadingText } from './lib/markdownBlocks'
-import { sharedBlockToEditor } from './lib/sharedSnapshot'
+import { editorBlockToShared, sharedBlockToEditor } from './lib/sharedSnapshot'
 import type { SharedSnapshot } from '../../lib/realtime/sharedModel'
 import { alignSequences } from '../../lib/alignSequences'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
@@ -224,6 +225,22 @@ export interface BlockEditorProps {
   onOpenLinkedFile?: (filePath: string) => Promise<void> | void
 }
 
+/**
+ * Place du curseur à l'écran dans un bloc texte redessiné, d'après le curseur
+ * suivi par la session dans le texte partagé ; null si inconnue (on estime alors).
+ */
+function hintedOffset(block: BlockState): number | null {
+  const hint = getCaretHint()
+  if (!hint || hint.blockId !== block.id || hint.field !== null) return null
+  const node = block.node as { children?: InlineNode[] }
+  if (block.node.type !== 'paragraph' && block.node.type !== 'heading') return null
+  const shared = editorBlockToShared(block)
+  if (shared.kind !== 'text') return null
+  const inline = inlinesToMarkdown(node.children ?? [])
+  const prefix = shared.md.indexOf(inline)
+  return prefix === -1 ? null : visibleOffset(inline, hint.index, prefix)
+}
+
 export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale, onOpenLinkedFile }: BlockEditorProps, ref) {
   const { footnotes, setFootnote, removeFootnote: removeFootnoteCtx, initFootnotes } = useFootnotes()
 
@@ -370,12 +387,18 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     // Texte inséré ou supprimé avant le curseur : la position suit.
     const element = document.querySelector<HTMLElement>(`[data-block-id="${block.id}"] [contenteditable="true"]`)
     let offset = restore.offset
-    const splice = element ? singleSpliceDiff(restore.text, element.textContent ?? '') : null
-    if (splice && splice.index < offset) {
-      offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+    const hinted = hintedOffset(block)
+    if (hinted !== null) {
+      offset = hinted
+    } else {
+      const splice = element ? singleSpliceDiff(sameSpaces(restore.text), sameSpaces(element.textContent ?? '')) : null
+      if (splice && splice.index < offset) {
+        offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
+      }
     }
     blockRefs.current.get(block.id)?.focus({ type: 'offset', offset })
   }, [blocks])
+
 
   // Édition en temps réel : photo du document reçue, appliquée bloc par bloc
   // par identifiant. Un bloc inchangé n'est pas touché ; un bloc modifié par
@@ -383,7 +406,9 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // focus, le curseur est replacé au même endroit du texte. Tableaux et
   // listes se mettent à jour sur place.
   const [remoteRevisions, setRemoteRevisions] = useState<Record<string, number>>({})
-  const applySharedSnapshot = useCallback((snapshot: SharedSnapshot) => {
+  const applySharedSnapshot = useCallback((snapshot: SharedSnapshot, caret: CaretAnchor | null = null) => {
+    // Nouvelle place du curseur : lue par l'éditeur qui le replace (paragraphe, cellule, élément).
+    setCaretHint(caret)
     const footnoteMap = new Map(Object.entries(snapshot.footnotes))
     const previousById = new Map(blocksRef.current.map((block) => [block.id, block]))
     const remounted: string[] = []
@@ -398,6 +423,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         } else if (BLOCK_TYPES_UPDATED_IN_PLACE.has(block.node.type) && before.node.type === block.node.type) {
           next.push({ id: block.id, node: block.node })
         } else {
+          if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) console.info('[holo-realtime] bloc redessiné', JSON.stringify({ avant: blocksToMarkdown([before]), après: blocksToMarkdown([block]) }))
           remounted.push(block.id)
           next.push(block)
         }
@@ -434,6 +460,8 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // version périmée du document et annulerait les modifications reçues.
   useLayoutEffect(() => {
     if (markdown !== lastEmittedRef.current) {
+      // Mise à jour hors session : pas de curseur suivi par la session.
+      setCaretHint(null)
       lastEmittedRef.current = markdown
       blocksDirtyRef.current = false
       const active = document.activeElement as HTMLElement | null
