@@ -1,4 +1,6 @@
 import { flushSync } from 'react-dom'
+import type { BlockState } from '../parts/MarkdownEditor/lib/types'
+import type { SharedSnapshot } from './realtime/sharedModel'
 
 /**
  * Registre des éditeurs ayant une saisie pas encore remontée au document
@@ -106,4 +108,26 @@ export async function runCloseTasks(timeoutMs = 1500): Promise<void> {
     Promise.allSettled([...closeTasks].map((task) => task())),
     new Promise((resolve) => setTimeout(resolve, timeoutMs)),
   ])
+}
+
+/**
+ * Pont entre l'éditeur de blocs et l'édition en temps réel : l'éditeur donne
+ * ses blocs avec leurs identifiants (photo locale sans réalignement), et
+ * applique une photo reçue bloc par bloc, par identifiant.
+ */
+type SharedBlocksBridge = {
+  getBlocks: () => BlockState[]
+  applySnapshot: (snapshot: SharedSnapshot) => void
+}
+let sharedBlocksBridge: SharedBlocksBridge | null = null
+
+export function registerSharedBlocksBridge(next: SharedBlocksBridge): () => void {
+  sharedBlocksBridge = next
+  return () => {
+    if (sharedBlocksBridge === next) sharedBlocksBridge = null
+  }
+}
+
+export function getSharedBlocksBridge(): SharedBlocksBridge | null {
+  return sharedBlocksBridge
 }

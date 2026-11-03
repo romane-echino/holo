@@ -283,7 +283,9 @@ export function registerRealtimeIpc({
     const relativePath = path.relative(root, filePath).split(path.sep).join('/')
     return {
       available: true,
-      documentId: channelId(derived.key, `document\n${relativePath}`),
+      // « document-v2 » : modèle partagé par blocs (0.9). Les postes en 0.8
+      // (un seul texte) ont d'autres identifiants : leurs sessions ne se mélangent pas.
+      documentId: channelId(derived.key, `document-v2\n${relativePath}`),
       key: derived.key.toString('base64'),
       workspace: derived.workspace,
       path: relativePath,

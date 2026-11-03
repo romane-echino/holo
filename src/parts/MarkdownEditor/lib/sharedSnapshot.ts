@@ -192,6 +192,25 @@ function alignIds<T extends { id: string }>(target: T[], reference: T[], key: (e
   return mapping
 }
 
+/** Lignes et colonnes de `block` reprennent les identifiants de leurs équivalents dans `counterpart`. */
+function alignTableIds(block: SharedTableBlock, counterpart: SharedTableBlock): SharedTableBlock {
+  const columnIds = alignIds(block.columns, counterpart.columns, (column) => column.title)
+  const columns = block.columns.map((column) => ({ ...column, id: columnIds.get(column.id) ?? column.id }))
+  // Une ligne se compare par le contenu de ses cellules, dans l'ordre des colonnes de son tableau.
+  const rowKey = (table: SharedTableBlock, row: SharedTableRow) => JSON.stringify(table.columns.map((column) => row.cells[column.id] ?? ''))
+  const rowMatches = alignSequences(counterpart.rows.map((row) => rowKey(counterpart, row)), block.rows.map((row) => rowKey(block, row))).matches
+  const rows = block.rows.map((row, rowIndex) => ({
+    id: rowMatches[rowIndex] === -1 ? row.id : counterpart.rows[rowMatches[rowIndex]].id,
+    cells: Object.fromEntries(block.columns.map((column) => [columnIds.get(column.id) ?? column.id, row.cells[column.id] ?? ''])),
+  }))
+  return { ...block, columns, rows }
+}
+
+function alignListIds(block: SharedListBlock, counterpart: SharedListBlock): SharedListBlock {
+  const itemIds = alignIds(block.items, counterpart.items, (item) => JSON.stringify([item.text, item.depth]))
+  return { ...block, items: block.items.map((item) => ({ ...item, id: itemIds.get(item.id) ?? item.id })) }
+}
+
 /**
  * Redonne aux blocs de `target` (et à leurs lignes, colonnes, éléments) les
  * identifiants de leurs équivalents dans `reference`, par le contenu. Deux
@@ -208,23 +227,25 @@ export function alignSnapshotIds(target: SharedSnapshot, reference: SharedSnapsh
     const match = matches[index]
     if (match === -1) return block
     const counterpart = reference.blocks[match]
-    if (block.kind === 'table' && counterpart.kind === 'table') {
-      const columnIds = alignIds(block.columns, counterpart.columns, (column) => column.title)
-      const columns = block.columns.map((column) => ({ ...column, id: columnIds.get(column.id) ?? column.id }))
-      // Une ligne se compare par le contenu de ses cellules, dans l'ordre des colonnes de son tableau.
-      const rowKey = (table: SharedTableBlock, row: SharedTableRow) => JSON.stringify(table.columns.map((column) => row.cells[column.id] ?? ''))
-      const rowMatches = alignSequences(counterpart.rows.map((row) => rowKey(counterpart, row)), block.rows.map((row) => rowKey(block, row))).matches
-      const rows = block.rows.map((row, rowIndex) => ({
-        id: rowMatches[rowIndex] === -1 ? row.id : counterpart.rows[rowMatches[rowIndex]].id,
-        cells: Object.fromEntries(block.columns.map((column) => [columnIds.get(column.id) ?? column.id, row.cells[column.id] ?? ''])),
-      }))
-      return { ...block, id: counterpart.id, columns, rows }
-    }
-    if (block.kind === 'list' && counterpart.kind === 'list') {
-      const itemIds = alignIds(block.items, counterpart.items, (item) => JSON.stringify([item.text, item.depth]))
-      return { ...block, id: counterpart.id, items: block.items.map((item) => ({ ...item, id: itemIds.get(item.id) ?? item.id })) }
-    }
+    if (block.kind === 'table' && counterpart.kind === 'table') return { ...alignTableIds(block, counterpart), id: counterpart.id }
+    if (block.kind === 'list' && counterpart.kind === 'list') return { ...alignListIds(block, counterpart), id: counterpart.id }
     return { ...block, id: counterpart.id }
   })
   return { ...target, blocks }
+}
+
+/**
+ * Blocs déjà identifiés (même identifiant des deux côtés) : seules leurs
+ * lignes, colonnes et éléments reprennent les identifiants de `previous`,
+ * par le contenu (l'éditeur de tableau et de liste ne les garde pas encore).
+ */
+export function alignContainerIds(next: SharedSnapshot, previous: SharedSnapshot): SharedSnapshot {
+  const previousById = new Map(previous.blocks.map((block) => [block.id, block]))
+  const blocks = next.blocks.map((block): SharedBlock => {
+    const counterpart = previousById.get(block.id)
+    if (block.kind === 'table' && counterpart?.kind === 'table') return alignTableIds(block, counterpart)
+    if (block.kind === 'list' && counterpart?.kind === 'list') return alignListIds(block, counterpart)
+    return block
+  })
+  return { ...next, blocks }
 }

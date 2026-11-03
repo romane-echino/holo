@@ -17,6 +17,9 @@ import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
 import { multiSpliceDiff } from './lib/realtime/encoding'
+import type { SharedSnapshot } from './lib/realtime/sharedModel'
+import { alignContainerIds, alignSnapshotIds, editorBlockToShared, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
+import { extractFootnoteMapFromMarkdown } from './parts/MarkdownEditor/lib/markdownBlocks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { RealtimeSetup, connectRealtimeServer } from './popup/RealtimeSetup'
@@ -33,7 +36,7 @@ import { useAppUpdates } from './hooks/useAppUpdates'
 import { applyTheme, applyAccent } from './lib/themeUtils'
 import type { ImageStorageMode } from './hooks/useRepoImageSettings'
 import { normalizeDocumentMarkdown } from './parts/EditorFrame'
-import { flushPendingEdits, registerDocumentSession, runCloseTasks, saveOpenDocument } from './lib/editorFlush'
+import { flushPendingEdits, getSharedBlocksBridge, registerDocumentSession, runCloseTasks, saveOpenDocument } from './lib/editorFlush'
 
 function isSamePath(a?: string | null, b?: string | null) {
   if (!a || !b) return false
@@ -624,8 +627,15 @@ export default function App2() {
   const docSyncRef = useRef<{ path: string; editorState: string; expectedDisk: string; lastWritten?: string } | null>(null)
   const [externalRevision, setExternalRevision] = useState(0)
   // Session temps réel du document ouvert (voir useRealtimeDocument plus bas).
-  const realtimeRef = useRef<{ onLocalMarkdown: (markdown: string) => void; shouldApplyExternalChanges: () => boolean; hasSession: () => boolean }>({
-    onLocalMarkdown: () => {},
+  const realtimeRef = useRef<{
+    /** Saisie locale (fromEditor : blocs de l'éditeur avec leurs identifiants ; sinon markdown réaligné par le contenu) */
+    sendLocal: (markdown: string, fromEditor: boolean) => void
+    currentSnapshot: () => SharedSnapshot | null
+    shouldApplyExternalChanges: () => boolean
+    hasSession: () => boolean
+  }>({
+    sendLocal: () => {},
+    currentSnapshot: () => null,
     shouldApplyExternalChanges: () => true,
     hasSession: () => false,
   })
@@ -951,13 +961,23 @@ export default function App2() {
     if (origin === 'disk' && !realtimeRef.current.shouldApplyExternalChanges()) return
     const normalized = normalizeDocumentMarkdown(diskContent)
     if (normalized === sync.editorState) return
+    if (realtimeRef.current.hasSession()) {
+      // En session, la modification passe par le document partagé (bloc par
+      // bloc), puis l'éditeur reçoit le résultat avec les identifiants partagés.
+      if (origin === 'disk' && realtimeLiveRef.current) console.info('[holo-realtime] modification venue du disque réinjectée dans la session', { length: normalized.length })
+      realtimeRef.current.sendLocal(normalized, false)
+      const shared = realtimeRef.current.currentSnapshot()
+      if (shared) {
+        applyRealtimeSnapshotRef.current(shared)
+        updateIndexEntry(path, diskContent)
+        return
+      }
+    }
     sync.editorState = normalized
     setOpenedFile((prev) => (prev && isSamePath(prev.path, path) ? { ...prev, content: diskContent } : prev))
     setExternalRevision((revision) => revision + 1)
     setLiveMarkdown(diskContent)
     updateIndexEntry(path, diskContent)
-    if (origin === 'disk' && realtimeLiveRef.current) console.info('[holo-realtime] modification venue du disque réinjectée dans la session', { length: normalized.length })
-    realtimeRef.current.onLocalMarkdown(normalized)
   }, [updateIndexEntry])
 
   const drainWriteQueue = useCallback(async () => {
@@ -1079,10 +1099,16 @@ export default function App2() {
   // ─── Édition en temps réel ────────────────────────────────────────────────
   // Contenu fusionné reçu de la session : affiché sans remonter l'éditeur et
   // enregistré sur disque (fusion avec le fichier comme pour une saisie).
-  const applyRealtimeContent = useCallback((markdown: string) => {
+  const applyRealtimeSnapshot = useCallback((snapshot: SharedSnapshot) => {
     const file = openedFileRef.current
     const sync = docSyncRef.current
-    if (!file || !sync || !isSamePath(sync.path, file.path) || sync.editorState === markdown) return
+    if (!file || !sync || !isSamePath(sync.path, file.path)) return
+    const markdown = snapshotToMarkdown(snapshot)
+    if (sync.editorState === markdown) {
+      // Même texte, mais identifiants ou lignes vides à jour (jonction…).
+      flushSync(() => getSharedBlocksBridge()?.applySnapshot(snapshot))
+      return
+    }
     // Diagnostic (activé par les tests) : texte de l'éditeur que la version reçue fait disparaître.
     if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
       for (const splice of multiSpliceDiff(sync.editorState, markdown)) {
@@ -1094,11 +1120,38 @@ export default function App2() {
     // saisie, qui partira donc de cette version (et non d'une version périmée
     // qui annulerait les modifications des collègues).
     flushSync(() => {
+      // L'éditeur de blocs reçoit les blocs par identifiant ; le markdown suit
+      // pour l'en-tête et le reste de l'application.
+      getSharedBlocksBridge()?.applySnapshot(snapshot)
       setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
       setExternalRevision((revision) => revision + 1)
       setLiveMarkdown(markdown)
     })
   }, [enqueueDocumentWrite])
+  const applyRealtimeSnapshotRef = useRef(applyRealtimeSnapshot)
+  applyRealtimeSnapshotRef.current = applyRealtimeSnapshot
+
+  /**
+   * Photo du document pour la session : blocs de l'éditeur avec leurs
+   * identifiants (fromEditor), sinon le markdown réaligné sur la photo
+   * partagée par le contenu (mode brut, modification venue du disque).
+   */
+  const buildLocalSnapshot = useCallback((markdown: string, fromEditor: boolean): SharedSnapshot => {
+    const previous = realtimeRef.current.currentSnapshot()
+    const bridge = fromEditor ? getSharedBlocksBridge() : null
+    let snapshot: SharedSnapshot
+    if (bridge) {
+      const { frontmatter, body } = splitFrontmatter(markdown)
+      snapshot = {
+        frontmatter,
+        footnotes: Object.fromEntries(extractFootnoteMapFromMarkdown(body)),
+        blocks: bridge.getBlocks().map(editorBlockToShared),
+      }
+    } else {
+      snapshot = previous ? alignSnapshotIds(markdownToSnapshot(markdown), previous) : markdownToSnapshot(markdown)
+    }
+    return previous ? alignContainerIds(snapshot, previous) : snapshot
+  }, [])
 
   const [realtimeConfigRevision, setRealtimeConfigRevision] = useState(0)
   const [, setEffectsDrain] = useState(0)
@@ -1112,8 +1165,8 @@ export default function App2() {
     filePath: openedFile?.path ?? null,
     user: { name: appAuthor, email: gitEmail },
     configRevision: realtimeConfigRevision,
-    getEditorMarkdown: () => docSyncRef.current?.editorState ?? '',
-    applyRemoteMarkdown: applyRealtimeContent,
+    getEditorSnapshot: () => buildLocalSnapshot(docSyncRef.current?.editorState ?? '', true),
+    applyRemoteSnapshot: applyRealtimeSnapshot,
     flushLocalEdits: async () => {
       // Tout est synchrone : aucune frappe ne peut s'intercaler entre
       // l'enregistrement de la saisie et l'application des modifications reçues
@@ -1124,7 +1177,6 @@ export default function App2() {
       // reçues (sinon elle serait calculée sur une version périmée, puis écrasée).
       flushSync(() => setEffectsDrain((value) => value + 1))
     },
-    normalizeMarkdown: normalizeDocumentMarkdown,
   })
   const realtimeLiveRef = useRef(false)
   const realtimeAuthorsRef = useRef<string[]>([])
@@ -1144,26 +1196,25 @@ export default function App2() {
   useEffect(() => {
     const hasSession = realtime.status !== null && realtime.status !== 'stopped'
     realtimeRef.current = {
-      onLocalMarkdown: realtime.onLocalMarkdown,
+      sendLocal: (markdown, fromEditor) => realtime.onLocalSnapshot(buildLocalSnapshot(markdown, fromEditor)),
+      currentSnapshot: realtime.currentSnapshot,
       shouldApplyExternalChanges: realtime.shouldApplyExternalChanges,
       hasSession: () => hasSession,
     }
-  }, [realtime.onLocalMarkdown, realtime.shouldApplyExternalChanges, realtime.status])
+  }, [buildLocalSnapshot, realtime.onLocalSnapshot, realtime.currentSnapshot, realtime.shouldApplyExternalChanges, realtime.status])
 
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
     const sync = docSyncRef.current
+    // Session : envoyé même si le markdown n'a pas changé (une ligne vide, un
+    // bloc déplacé… changent les blocs partagés sans changer le texte).
+    if (realtimeRef.current.hasSession()) realtimeRef.current.sendLocal(markdown, true)
     // Rien de nouveau par rapport à ce que l'éditeur représente déjà (écho).
     if (sync && isSamePath(sync.path, file.path) && sync.editorState === markdown) return
     if (sync && (globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
       console.info('[holo-realtime] éditeur émet', JSON.stringify(multiSpliceDiff(sync.editorState, markdown).map((splice) => ({ del: sync.editorState.slice(splice.index, splice.index + splice.remove), ins: splice.insert }))))
     }
-    // La session reçoit la forme que tous les postes relisent (ex. un espace en
-    // début de paragraphe n'existe pas en markdown). Sinon chaque éditeur
-    // garderait un écart avec le texte partagé et le « corrigerait » à chaque
-    // envoi, en réécrivant au passage les saisies des autres.
-    realtimeRef.current.onLocalMarkdown(realtimeRef.current.hasSession() ? normalizeDocumentMarkdown(markdown) : markdown)
 
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length

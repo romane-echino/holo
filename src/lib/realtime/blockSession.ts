@@ -118,6 +118,11 @@ export class BlockSession {
     await this.api.subscribe(this.ref.documentId)
   }
 
+  /** Photo du document partagé que l'éditeur affiche (null hors session). */
+  currentSnapshot(): SharedSnapshot | null {
+    return this.joined ? this.lastSnapshot : null
+  }
+
   /** Saisie locale : nouvelle photo de l'éditeur. */
   onLocalSnapshot(snapshot: SharedSnapshot): void {
     if (!this.joined || !this.doc || !this.lastSnapshot || sameSnapshot(snapshot, this.lastSnapshot)) return

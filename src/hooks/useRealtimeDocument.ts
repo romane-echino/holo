@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RealtimeSession, colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
+import { colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
+import { BlockSession } from '../lib/realtime/blockSession'
+import type { SharedSnapshot } from '../lib/realtime/sharedModel'
+import { alignSnapshotIds, markdownToSnapshot } from '../parts/MarkdownEditor/lib/sharedSnapshot'
 import { registerCloseTask, setHistoryOverride } from '../lib/editorFlush'
 import { readLocalCursor } from '../lib/realtime/cursorDom'
 
@@ -15,10 +18,11 @@ type Options = {
   user: { name: string; email: string }
   /** Incrémenté quand la configuration du temps réel change */
   configRevision: number
-  getEditorMarkdown: () => string
-  applyRemoteMarkdown: (markdown: string) => void
+  /** Photo de ce que l'éditeur affiche (blocs avec leurs identifiants) */
+  getEditorSnapshot: () => SharedSnapshot
+  /** Affiche et enregistre le document fusionné avec les modifications des autres */
+  applyRemoteSnapshot: (snapshot: SharedSnapshot) => void
   flushLocalEdits: () => Promise<void>
-  normalizeMarkdown: (markdown: string) => string
 }
 
 /**
@@ -29,7 +33,7 @@ type Options = {
 export function useRealtimeDocument(options: Options) {
   const { filePath, user, configRevision } = options
   const [state, setState] = useState<RealtimeDocumentState>({ status: null, peers: [] })
-  const sessionRef = useRef<RealtimeSession | null>(null)
+  const sessionRef = useRef<BlockSession | null>(null)
   const optionsRef = useRef(options)
   useEffect(() => {
     optionsRef.current = options
@@ -39,7 +43,7 @@ export function useRealtimeDocument(options: Options) {
     const api = window.holo?.realtime
     if (!filePath || !api) return
     let disposed = false
-    let session: RealtimeSession | null = null
+    let session: BlockSession | null = null
 
     void (async () => {
       const resolved = await api.resolveDocument(filePath).catch(() => null)
@@ -47,24 +51,24 @@ export function useRealtimeDocument(options: Options) {
         setState({ status: null, peers: [] })
         return
       }
-      session = new RealtimeSession(
+      session = new BlockSession(
         api,
         { documentId: resolved.documentId, key: resolved.key },
         { name: user.name || user.email || 'Anonyme', email: user.email, color: colorForUser(user.email || user.name) },
         {
-          getEditorMarkdown: () => optionsRef.current.getEditorMarkdown(),
-          applyRemoteMarkdown: (markdown) => optionsRef.current.applyRemoteMarkdown(markdown),
+          getEditorSnapshot: () => optionsRef.current.getEditorSnapshot(),
+          applyRemoteSnapshot: (snapshot) => optionsRef.current.applyRemoteSnapshot(snapshot),
+          alignIds: alignSnapshotIds,
           flushLocalEdits: () => optionsRef.current.flushLocalEdits(),
           getLocalModifiedAt: async () => {
             const stats = await window.holo?.getPathStats(filePath).catch(() => null)
             const time = stats ? Date.parse(stats.modifiedAt) : Number.NaN
             return Number.isFinite(time) ? time : null
           },
-          getUpstreamMarkdown: async () => {
+          getUpstreamSnapshot: async () => {
             const content = await api.getUpstreamContent(filePath)
-            return content === null ? null : optionsRef.current.normalizeMarkdown(content)
+            return content === null ? null : markdownToSnapshot(content)
           },
-          mergeText: (base, ours, theirs) => api.mergeText(base, ours, theirs),
           onPeers: (peers) => { if (!disposed) setState((previous) => ({ ...previous, peers })) },
           onStatus: (status, detail) => { if (!disposed) setState((previous) => ({ ...previous, status, detail })) },
         },
@@ -119,11 +123,14 @@ export function useRealtimeDocument(options: Options) {
     }
   }, [state.status])
 
-  const onLocalMarkdown = useCallback((markdown: string) => {
-    sessionRef.current?.onLocalMarkdown(markdown)
+  const onLocalSnapshot = useCallback((snapshot: SharedSnapshot) => {
+    sessionRef.current?.onLocalSnapshot(snapshot)
   }, [])
+
+  /** Photo du document partagé (celle que l'éditeur affiche), ou null hors session. */
+  const currentSnapshot = useCallback(() => sessionRef.current?.currentSnapshot() ?? null, [])
 
   const shouldApplyExternalChanges = useCallback(() => sessionRef.current?.shouldApplyExternalChanges() ?? true, [])
 
-  return { ...state, onLocalMarkdown, shouldApplyExternalChanges }
+  return { ...state, onLocalSnapshot, currentSnapshot, shouldApplyExternalChanges }
 }

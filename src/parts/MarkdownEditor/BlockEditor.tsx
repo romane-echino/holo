@@ -35,9 +35,11 @@ import { useEditorFilePath } from './EditorFileContext'
 import { getParentPath, resolveRepoRelativePath } from '../../lib/appUtils'
 import { parseMarkdownToClipboardHtml } from '../../lib/markdown'
 import { useFootnotes } from '../../contexts/FootnotesContext'
-import { flushPendingEdits, getHistoryOverride } from '../../lib/editorFlush'
+import { flushPendingEdits, getHistoryOverride, registerSharedBlocksBridge } from '../../lib/editorFlush'
 import { singleSpliceDiff } from '../../lib/realtime/encoding'
 import { blocksToMarkdown, extractFootnoteMapFromMarkdown, freshParagraph, isEmptyParagraphBlock, markdownToBlocks, newClipboardTableId, newId, paragraphSingleImage, slugifyHeadingText } from './lib/markdownBlocks'
+import { sharedBlockToEditor } from './lib/sharedSnapshot'
+import type { SharedSnapshot } from '../../lib/realtime/sharedModel'
 import { alignSequences } from '../../lib/alignSequences'
 import type { BlockNode, BlockState, InlineNode, ParagraphNode, HeadingNode, TableNode, ListNode, CodeNode, BlockquoteNode, ImageNode, TextNode } from './lib/types'
 import type { MathNode } from './blocks/MathBlock'
@@ -352,15 +354,16 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
   // Bloc en cours d'édition au moment d'une mise à jour externe : s'il est
   // remplacé (un collègue l'a modifié), le focus et le curseur sont restaurés
   // à la même position.
-  const focusRestoreRef = useRef<{ index: number; previousId: string; offset: number; text: string } | null>(null)
+  // remounted : bloc gardé (même identifiant) mais redessiné avec le contenu reçu.
+  const focusRestoreRef = useRef<{ index: number; previousId: string; offset: number; text: string; remounted?: boolean } | null>(null)
   const replacedBlocksRef = useRef<Map<string, string>>(new Map())
   useLayoutEffect(() => {
     const restore = focusRestoreRef.current
     if (!restore) return
     focusRestoreRef.current = null
     // Bloc toujours là (même identité) : son éditeur a gardé le focus.
-    if (blocks.some((candidate) => candidate.id === restore.previousId)) return
-    const replacementId = replacedBlocksRef.current.get(restore.previousId)
+    if (!restore.remounted && blocks.some((candidate) => candidate.id === restore.previousId)) return
+    const replacementId = restore.remounted ? restore.previousId : replacedBlocksRef.current.get(restore.previousId)
     const block = (replacementId && blocks.find((candidate) => candidate.id === replacementId))
       || blocks[Math.min(restore.index, blocks.length - 1)]
     if (!block) return
@@ -373,6 +376,57 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     }
     blockRefs.current.get(block.id)?.focus({ type: 'offset', offset })
   }, [blocks])
+
+  // Édition en temps réel : photo du document reçue, appliquée bloc par bloc
+  // par identifiant. Un bloc inchangé n'est pas touché ; un bloc modifié par
+  // un collègue est redessiné (clé de rendu incrémentée) et, s'il avait le
+  // focus, le curseur est replacé au même endroit du texte. Tableaux et
+  // listes se mettent à jour sur place.
+  const [remoteRevisions, setRemoteRevisions] = useState<Record<string, number>>({})
+  const applySharedSnapshot = useCallback((snapshot: SharedSnapshot) => {
+    const footnoteMap = new Map(Object.entries(snapshot.footnotes))
+    const previousById = new Map(blocksRef.current.map((block) => [block.id, block]))
+    const remounted: string[] = []
+    const next: BlockState[] = []
+    for (const shared of snapshot.blocks) {
+      for (const block of sharedBlockToEditor(shared, snapshot.footnotes)) {
+        const before = previousById.get(block.id)
+        if (!before) {
+          next.push(block)
+        } else if (blocksToMarkdown([before]) === blocksToMarkdown([block])) {
+          next.push(before)
+        } else if (BLOCK_TYPES_UPDATED_IN_PLACE.has(block.node.type) && before.node.type === block.node.type) {
+          next.push({ id: block.id, node: block.node })
+        } else {
+          remounted.push(block.id)
+          next.push(block)
+        }
+      }
+    }
+    const active = document.activeElement as HTMLElement | null
+    const activeBlockId = (active?.closest('[data-block-id]') as HTMLElement | null)?.dataset.blockId ?? null
+    const activeIndex = activeBlockId ? blocksRef.current.findIndex((block) => block.id === activeBlockId) : -1
+    if (active && activeBlockId && activeIndex !== -1) {
+      const stillThere = next.some((block) => block.id === activeBlockId)
+      if (!stillThere || remounted.includes(activeBlockId)) {
+        focusRestoreRef.current = { index: activeIndex, previousId: activeBlockId, offset: getCaretTextOffset(active), text: active.textContent ?? '', remounted: stillThere }
+      }
+    }
+    // Le markdown correspondant arrive ensuite par la propriété : déjà appliqué.
+    lastEmittedRef.current = blocksToMarkdown(next, footnoteMap)
+    blocksDirtyRef.current = false
+    blocksRef.current = next
+    setBlocks(next)
+    if (remounted.length > 0) {
+      setRemoteRevisions((previous) => {
+        const revisions = { ...previous }
+        for (const id of remounted) revisions[id] = (revisions[id] ?? 0) + 1
+        return revisions
+      })
+    }
+    initFootnotes(footnoteMap)
+  }, [initFootnotes])
+  useEffect(() => registerSharedBlocksBridge({ getBlocks: () => blocksRef.current, applySnapshot: applySharedSnapshot }), [applySharedSnapshot])
 
   // Changement externe du prop markdown → réinitialise sans émettre en retour.
   // useLayoutEffect : appliqué dans le même rendu que la réception (édition
@@ -1224,7 +1278,7 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     >
       {blocks.map((block, idx) => (
         <div
-          key={block.id}
+          key={`${block.id}:${remoteRevisions[block.id] ?? 0}`}
           data-block-id={block.id}
           id={block.node.type === 'heading' ? headingDomIdByBlockId.get(block.id) : undefined}
           draggable
