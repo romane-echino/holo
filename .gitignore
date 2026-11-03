@@ -9,3 +9,6 @@
 *.log
 build_output.txt
 /dist-pwa
+
+# Worktrees des agents Claude Code
+/.claude/worktrees/
