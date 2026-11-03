@@ -12,6 +12,7 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import os from 'node:os'
 import { watchFile, unwatchFile } from 'node:fs'
 import { cleanupStaleTempFiles, createKeyedLock, readFileIfExists, readFileWithRetry, writeFileAtomic } from './fsSafe.js'
+import { registerRealtimeIpc } from './realtime.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -1895,6 +1896,28 @@ ipcMain.handle('holo:get-space-warnings', async (_event, spacePath) => {
   const provider = detectSyncedFolderProvider(spacePath)
   const isRepo = provider ? await isGitRepository(String(spacePath)).catch(() => false) : false
   return { syncedFolderProvider: isRepo ? provider : null }
+})
+
+/** Contenu du fichier dans la dernière version poussée (branche amont), ou null. */
+async function getUpstreamFileContent(filePath) {
+  const root = findOwningRoot(filePath)
+  if (!root || !(await isGitRepository(root).catch(() => false))) return null
+  const relativePath = path.relative(root, filePath).split(path.sep).join('/')
+  const result = await runGitOnce(['show', `@{upstream}:${relativePath}`], root, { raw: true })
+  return result.ok ? result.stdout : null
+}
+
+registerRealtimeIpc({
+  ipcMain,
+  net,
+  getUpstreamFileContent,
+  mergeText: mergeTextThreeWay,
+  getConfigValue: (key) => getHoloConfigValue(key),
+  setConfigValue: (key, value) => setHoloConfigValue(key, value),
+  encryptSecret,
+  decryptSecret,
+  findOwningRoot,
+  getPrimaryRemoteWebUrl,
 })
 
 ipcMain.handle('app:get-share-info', async (_event, filePath) => {

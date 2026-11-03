@@ -13,6 +13,7 @@ import { normalizeGitState } from './lib/gitUtils'
 import { useSearchIndex } from './hooks/useSearchIndex'
 import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
+import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
 import { SpaceRoute } from './parts/SpacePanel'
@@ -589,6 +590,11 @@ export default function App2() {
   //                différence signale une modification externe (pull, OneDrive…).
   const docSyncRef = useRef<{ path: string; editorState: string; expectedDisk: string } | null>(null)
   const [externalRevision, setExternalRevision] = useState(0)
+  // Session temps réel du document ouvert (voir useRealtimeDocument plus bas).
+  const realtimeRef = useRef<{ onLocalMarkdown: (markdown: string) => void; shouldApplyExternalChanges: () => boolean }>({
+    onLocalMarkdown: () => {},
+    shouldApplyExternalChanges: () => true,
+  })
   const initDocumentSync = useCallback((path: string, diskContent: string) => {
     docSyncRef.current = { path, editorState: normalizeDocumentMarkdown(diskContent), expectedDisk: diskContent }
   }, [])
@@ -870,10 +876,16 @@ export default function App2() {
 
   // Met à jour l'éditeur avec un contenu modifié hors de lui (pull, OneDrive,
   // autre instance, fusion à l'écriture) sans le remonter.
-  const applyExternalContent = useCallback((path: string, diskContent: string) => {
+  // origin 'disk' : modification faite hors de l'app (pull, OneDrive…) ;
+  // 'local' : action de l'utilisateur qui réécrit le fichier (ex. modèle).
+  const applyExternalContent = useCallback((path: string, diskContent: string, origin: 'disk' | 'local' = 'disk') => {
     const sync = docSyncRef.current
     if (!sync || !isSamePath(sync.path, path)) return
     sync.expectedDisk = diskContent
+    // En session temps réel, seul le meneur réinjecte une modification venue du
+    // disque (chaque participant la reçoit) ; les autres la recevront par la
+    // session, et la fusion à l'écriture la préserve sur leur disque d'ici là.
+    if (origin === 'disk' && !realtimeRef.current.shouldApplyExternalChanges()) return
     const normalized = normalizeDocumentMarkdown(diskContent)
     if (normalized === sync.editorState) return
     sync.editorState = normalized
@@ -881,6 +893,7 @@ export default function App2() {
     setExternalRevision((revision) => revision + 1)
     setLiveMarkdown(diskContent)
     updateIndexEntry(path, diskContent)
+    realtimeRef.current.onLocalMarkdown(normalized)
   }, [updateIndexEntry])
 
   const drainWriteQueue = useCallback(async () => {
@@ -974,12 +987,52 @@ export default function App2() {
   }, [waitForWritesIdle])
   flushDocumentRef.current = flushDocument
 
+  // ─── Édition en temps réel ────────────────────────────────────────────────
+  // Contenu fusionné reçu de la session : affiché sans remonter l'éditeur et
+  // enregistré sur disque (fusion avec le fichier comme pour une saisie).
+  const applyRealtimeContent = useCallback((markdown: string) => {
+    const file = openedFileRef.current
+    const sync = docSyncRef.current
+    if (!file || !sync || !isSamePath(sync.path, file.path) || sync.editorState === markdown) return
+    void enqueueDocumentWrite(file.path, markdown)
+    setOpenedFile((prev) => (prev && isSamePath(prev.path, file.path) ? { ...prev, content: markdown } : prev))
+    setExternalRevision((revision) => revision + 1)
+    setLiveMarkdown(markdown)
+  }, [enqueueDocumentWrite])
+
+  const [realtimeConfigRevision, setRealtimeConfigRevision] = useState(0)
+  useEffect(() => {
+    const onConfigChanged = () => setRealtimeConfigRevision((revision) => revision + 1)
+    window.addEventListener('holo:realtime-config-changed', onConfigChanged)
+    return () => window.removeEventListener('holo:realtime-config-changed', onConfigChanged)
+  }, [])
+
+  const realtime = useRealtimeDocument({
+    filePath: openedFile?.path ?? null,
+    user: { name: appAuthor, email: gitEmail },
+    configRevision: realtimeConfigRevision,
+    getEditorMarkdown: () => docSyncRef.current?.editorState ?? '',
+    applyRemoteMarkdown: applyRealtimeContent,
+    flushLocalEdits: async () => {
+      flushPendingEdits()
+      await nextTick()
+    },
+    normalizeMarkdown: normalizeDocumentMarkdown,
+  })
+  useEffect(() => {
+    realtimeRef.current = {
+      onLocalMarkdown: realtime.onLocalMarkdown,
+      shouldApplyExternalChanges: realtime.shouldApplyExternalChanges,
+    }
+  }, [realtime.onLocalMarkdown, realtime.shouldApplyExternalChanges])
+
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
     if (!file) return
     const sync = docSyncRef.current
     // Rien de nouveau par rapport à ce que l'éditeur représente déjà (écho).
     if (sync && isSamePath(sync.path, file.path) && sync.editorState === markdown) return
+    realtimeRef.current.onLocalMarkdown(markdown)
 
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
@@ -1266,7 +1319,7 @@ export default function App2() {
     const next = updateMarkdownBooleanHeaderField(content, 'template', !cur)
     await window.holo?.writeFile(path, next)
     setFileMetaByPath(prev => ({ ...prev, [path]: { ...(prev[path] ?? { title: '', description: '', isTemplate: false }), isTemplate: !cur } }))
-    applyExternalContent(path, next)
+    applyExternalContent(path, next, 'local')
     scheduleGitSave()
   }, [openedFile?.path, fileMetaByPath, setFileMetaByPath, applyExternalContent, scheduleGitSave])
 
@@ -1466,6 +1519,8 @@ export default function App2() {
               filepath={openedFile.path}
               markdown={openedFile.content}
               externalRevision={externalRevision}
+              realtimeStatus={realtime.status}
+              realtimePeers={realtime.peers}
               onMarkdownChange={handleMarkdownChange}
               onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
               onToggleInspector={() => setInspectorOpen((o) => !o)}

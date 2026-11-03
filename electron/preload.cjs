@@ -26,6 +26,25 @@ contextBridge.exposeInMainWorld('holo', {
   openHoloLink: (url) => ipcRenderer.invoke('app:open-holo-link', url),
   getShareInfo: (filePath) => ipcRenderer.invoke('app:get-share-info', filePath),
   getSpaceWarnings: (spacePath) => ipcRenderer.invoke('holo:get-space-warnings', spacePath),
+  realtime: {
+    getConfig: () => ipcRenderer.invoke('realtime:get-config'),
+    setConfig: (config) => ipcRenderer.invoke('realtime:set-config', config),
+    testConnection: (candidate) => ipcRenderer.invoke('realtime:test-connection', candidate),
+    resolveDocument: (filePath) => ipcRenderer.invoke('realtime:resolve-document', filePath),
+    subscribe: (documentId) => ipcRenderer.invoke('realtime:subscribe', documentId),
+    unsubscribe: (documentId) => ipcRenderer.invoke('realtime:unsubscribe', documentId),
+    getState: (documentId) => ipcRenderer.invoke('realtime:get-state', documentId),
+    getUpstreamContent: (filePath) => ipcRenderer.invoke('realtime:get-upstream-content', filePath),
+    mergeText: (base, ours, theirs) => ipcRenderer.invoke('realtime:merge-text', base, ours, theirs),
+    pushUpdate: (documentId, payload) => ipcRenderer.invoke('realtime:push-update', documentId, payload),
+    pushAwareness: (documentId, payload) => ipcRenderer.invoke('realtime:push-awareness', documentId, payload),
+    compact: (documentId, payload) => ipcRenderer.invoke('realtime:compact', documentId, payload),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('realtime:event', listener)
+      return () => ipcRenderer.removeListener('realtime:event', listener)
+    },
+  },
   onLaunchPayload: (callback) => {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('app:open-launch-payload', listener)

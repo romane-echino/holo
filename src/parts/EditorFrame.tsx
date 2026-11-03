@@ -6,6 +6,7 @@ import { cn } from '../utils/global'
 import { BlockEditor, normalizeBodyMarkdown, type BlockEditorHandle } from './MarkdownEditor/BlockEditor'
 import { INSERT_INLINE_IMAGE_EVENT, type InsertInlineImageDetail } from './MarkdownEditor/InlineEditor'
 import { notifyError } from '../lib/notify'
+import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/session'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
 import { FootnotesProvider } from '../contexts/FootnotesContext'
 import { useConfig } from '../contexts/ConfigContext'
@@ -38,6 +39,9 @@ type EditorFrameProps = {
    * instance, OneDrive…) : l'éditeur se met à jour sans être remonté.
    */
   externalRevision?: number
+  /** Session d'édition en temps réel du document (null : pas de session) */
+  realtimeStatus?: RealtimeStatus | null
+  realtimePeers?: RealtimePeer[]
 }
 
 type ScrollTarget = Window | HTMLElement
@@ -314,6 +318,61 @@ function TagsMetaField({
   )
 }
 
+const REALTIME_STATUS_LABEL: Record<RealtimeStatus, string> = {
+  connecting: 'Connexion au temps réel…',
+  joining: 'Connexion au temps réel…',
+  live: 'En direct',
+  reconnecting: 'Reconnexion au temps réel…',
+  unauthorized: 'Temps réel : accès refusé (jeton)',
+  error: 'Temps réel indisponible',
+  stopped: 'Temps réel arrêté',
+}
+
+/** Participants connectés au document + état de la session temps réel. */
+function RealtimePresence({ status, peers }: { status: RealtimeStatus | null; peers: RealtimePeer[] }) {
+  if (!status || status === 'stopped') return null
+  const isLive = status === 'live'
+  const isProblem = status === 'unauthorized' || status === 'error'
+  const visiblePeers = peers.slice(0, 4)
+  const label = REALTIME_STATUS_LABEL[status]
+  const title = isLive && peers.length > 0
+    ? `En direct avec ${peers.map((peer) => peer.name).join(', ')}`
+    : label
+  return (
+    <span className="flex items-center gap-1.5" title={title} data-testid="realtime-presence" data-status={status}>
+      {visiblePeers.length > 0 && (
+        <span className="flex -space-x-1.5">
+          {visiblePeers.map((peer) => (
+            <span
+              key={peer.clientId}
+              className="flex size-6 items-center justify-center rounded-full text-[10px] font-semibold text-black/80 ring-2 ring-holo-bg"
+              style={{ backgroundColor: peer.color }}
+              aria-label={peer.name}
+            >
+              {peer.name.trim().split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase() || '?'}
+            </span>
+          ))}
+          {peers.length > visiblePeers.length && (
+            <span className="flex size-6 items-center justify-center rounded-full bg-holo-glass-strong text-[10px] text-holo-text-muted ring-2 ring-holo-bg">
+              +{peers.length - visiblePeers.length}
+            </span>
+          )}
+        </span>
+      )}
+      <span className={cn(
+        'flex items-center gap-1.5 text-xs',
+        isLive ? 'text-holo-success' : isProblem ? 'text-holo-warning' : 'text-holo-text-faint',
+      )}>
+        <span className={cn(
+          'size-1.5 shrink-0 rounded-full',
+          isLive ? 'bg-holo-success' : isProblem ? 'bg-holo-warning' : 'animate-pulse bg-holo-text-faint',
+        )} />
+        {isLive ? (peers.length > 0 ? 'En direct' : 'Temps réel') : isProblem ? 'Temps réel' : '…'}
+      </span>
+    </span>
+  )
+}
+
 function StickyEditorHeader({
   visible,
   icon,
@@ -327,7 +386,9 @@ function StickyEditorHeader({
   onToggleFavorite,
   onToggleInspector,
   onToggleRaw,
+  presence,
 }: {
+  presence?: React.ReactNode
   visible: boolean
   icon?: React.ReactNode
   title: string
@@ -372,6 +433,7 @@ function StickyEditorHeader({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {presence}
           <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
 
           {onToggleFavorite && (
@@ -596,6 +658,8 @@ export function EditorFrame({
   isTemplate,
   onToggleTemplate,
   externalRevision = 0,
+  realtimeStatus = null,
+  realtimePeers = [],
 }: EditorFrameProps) {
   const [showStickyHeader, setShowStickyHeader] = useState(false)
   const [rawMode, setRawMode] = useState(false)
@@ -1103,6 +1167,7 @@ export function EditorFrame({
         onToggleFavorite={onToggleFavorite}
         onToggleInspector={onToggleInspector}
         onToggleRaw={rawMode ? exitRawMode : enterRawMode}
+        presence={<RealtimePresence status={realtimeStatus} peers={realtimePeers} />}
       />
 
       <div className="mx-auto max-w-[920px] pl-8 pr-5 py-6 sm:px-8 md:px-10 md:py-9">
@@ -1175,6 +1240,7 @@ export function EditorFrame({
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
+              <RealtimePresence status={realtimeStatus} peers={realtimePeers} />
               <SaveStatusBadge status={saveStatus} errorMsg={saveErrorMsg} />
 
               {onToggleTemplate && (

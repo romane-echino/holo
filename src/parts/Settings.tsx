@@ -11,13 +11,14 @@ import {
   Settings,
   Sparkles,
   UserRound,
+  Users,
   X,
 } from 'lucide-react'
 import { cn } from '../utils/global'
 import { buildAzureSasUrl, parseAzureSasUrl } from '../utils/azureSas'
 import { CHANGELOG_ENTRIES } from '../constants/changelog'
 
-type SettingsTab = 'profile' | 'storage' | 'ai' | 'appearance' | 'about'
+type SettingsTab = 'profile' | 'storage' | 'collab' | 'ai' | 'appearance' | 'about'
 
 export type HoloSettingsValue = {
   firstName?: string
@@ -106,6 +107,7 @@ const tabs: Array<{
 }> = [
   { id: 'profile', label: 'Profil', description: 'Identité et Git', icon: <UserRound size={16} /> },
   { id: 'storage', label: 'Espace', description: 'Stockage & images', icon: <Database size={16} /> },
+  { id: 'collab', label: 'Collaboration', description: 'Édition en temps réel', icon: <Users size={16} /> },
   { id: 'ai', label: 'IA', description: 'Providers et prompt', icon: <Bot size={16} /> },
   { id: 'appearance', label: 'Apparence', description: 'Thème et accent', icon: <Palette size={16} /> },
   { id: 'about', label: 'Application', description: 'Version et changelog', icon: <Settings size={16} /> },
@@ -214,6 +216,134 @@ function PasswordInput({
         className={cn(inputClassName, 'pl-9')}
       />
     </div>
+  )
+}
+
+/**
+ * Relais temps réel (projet Codenotch « holo-realtime ») : réglage propre à
+ * ce poste, enregistré indépendamment des autres paramètres.
+ */
+function RealtimeSettingsSection() {
+  const api = window.holo?.realtime
+  const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [enabled, setEnabled] = useState(false)
+  const [hasToken, setHasToken] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+
+  useEffect(() => {
+    if (!api) return
+    void api.getConfig().then((config) => {
+      setUrl(config.url)
+      setEnabled(config.enabled)
+      setHasToken(config.hasToken)
+    })
+  }, [api])
+
+  if (!api) return null
+
+  const describeFailure = (result: { status?: number | null; error?: string }) =>
+    result.status === 401 || result.status === 403
+      ? 'Jeton refusé : vérifiez qu\'il est valide et qu\'il couvre le projet holo-realtime.'
+      : result.status === 404
+        ? 'Le relais n\'est pas installé à cette adresse (projet holo-realtime introuvable).'
+        : `Relais injoignable : ${result.error ?? 'erreur inconnue'}`
+
+  const test = async () => {
+    setBusy(true)
+    setFeedback(null)
+    try {
+      const result = await api.testConnection({ url, token: token || undefined })
+      setFeedback(result.ok ? { kind: 'success', message: 'Connexion au relais réussie.' } : { kind: 'error', message: describeFailure(result) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = async () => {
+    setBusy(true)
+    setFeedback(null)
+    try {
+      await api.setConfig({ url, enabled: enabled && Boolean(url.trim()), ...(token ? { token } : {}) })
+      if (token) setHasToken(true)
+      setToken('')
+      window.dispatchEvent(new CustomEvent('holo:realtime-config-changed'))
+      setFeedback({ kind: 'success', message: enabled ? 'Temps réel activé.' : 'Réglages enregistrés.' })
+    } catch (error) {
+      setFeedback({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Section
+      title="Édition en temps réel"
+      description="Plusieurs personnes peuvent modifier le même document en même temps et voir les changements des autres instantanément. Les documents restent enregistrés dans git comme d'habitude."
+      icon={<Users size={16} />}
+    >
+      <label className="flex items-center gap-3 text-sm text-holo-text">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+          className="size-4 accent-holo-primary"
+        />
+        Activer l'édition en temps réel
+      </label>
+
+      <Field
+        label="Adresse du relais"
+        description="Projet Codenotch « holo-realtime » installé sur votre serveur."
+      >
+        <input
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="https://cn.echino.com/holo-realtime"
+          className={inputClassName}
+          spellCheck={false}
+        />
+      </Field>
+
+      <Field
+        label="Jeton d'accès"
+        description={hasToken
+          ? 'Un jeton est enregistré (chiffré sur ce poste). Laissez vide pour le conserver.'
+          : 'Jeton API Codenotch personnel (portail → Mes jetons API), avec la portée process:*@holo_realtime:start.'}
+      >
+        <PasswordInput value={token} onChange={setToken} placeholder={hasToken ? '••••••••  (inchangé)' : 'CN_…'} />
+      </Field>
+
+      <p className="text-xs leading-5 text-holo-text-faint">
+        Seuls les espaces liés à un dépôt git distant sont partagés en temps réel : le document est identifié par l'URL du dépôt et son chemin.
+      </p>
+
+      {feedback && (
+        <p role={feedback.kind === 'error' ? 'alert' : 'status'} className={cn('text-xs', feedback.kind === 'error' ? 'text-holo-danger' : 'text-holo-success')}>
+          {feedback.message}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => void test()}
+          disabled={busy || !url.trim()}
+          className="rounded-holo-md px-4 py-2 text-sm text-holo-text-muted transition hover:bg-holo-glass-hover hover:text-holo-text disabled:opacity-40"
+        >
+          Tester la connexion
+        </button>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy}
+          className="rounded-holo-md bg-holo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-holo-primary/90 disabled:opacity-40"
+        >
+          Enregistrer
+        </button>
+      </div>
+    </Section>
   )
 }
 
@@ -660,6 +790,8 @@ export function HoloSettingsDialog({
                 </Field>
               </Section>
             )}
+
+            {activeTab === 'collab' && <RealtimeSettingsSection />}
 
             {activeTab === 'about' && (
               <Section title="Application" description="Informations sur la version courante." icon={<Sparkles size={16} />}>
