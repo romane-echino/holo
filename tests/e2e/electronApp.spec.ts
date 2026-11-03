@@ -49,6 +49,7 @@ async function launchHolo(args: string[]) {
     env: {
       ...process.env,
       XDG_CONFIG_HOME: configHome,
+      HOLO_APP_DATA_DIR: configHome,
     },
   })
   const page = await app.firstWindow()

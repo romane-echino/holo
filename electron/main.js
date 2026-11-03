@@ -13,6 +13,15 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const isDev = !app.isPackaged
+
+// Isolation des données (tests E2E / instances multiples) : XDG_CONFIG_HOME
+// n'est respecté que sous Linux, on expose donc un override explicite.
+if (process.env.HOLO_APP_DATA_DIR) {
+  const appDataDir = path.resolve(process.env.HOLO_APP_DATA_DIR)
+  app.setPath('appData', appDataDir)
+  app.setPath('userData', path.join(appDataDir, 'holo'))
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 const execFileAsync = promisify(execFile)
 let currentRootPath = null

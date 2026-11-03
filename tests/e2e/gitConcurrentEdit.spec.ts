@@ -101,7 +101,7 @@ async function launchHolo(args: string[], author: string, email: string) {
     executablePath: electronExecutable,
     args: [MAIN_PATH, ...args],
     cwd: process.cwd(),
-    env: { ...process.env, XDG_CONFIG_HOME: configHome },
+    env: { ...process.env, XDG_CONFIG_HOME: configHome, HOLO_APP_DATA_DIR: configHome },
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
