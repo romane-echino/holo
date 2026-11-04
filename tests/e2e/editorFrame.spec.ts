@@ -214,8 +214,9 @@ test.describe('EditorFrame — document history', () => {
 
       await dispatchGifPaste(page, '')
 
-      const md = await waitForMd(page, (value) => /images\/image-\d+\.gif/.test(value), 6000)
-      expect(md).toMatch(/images\/image-\d+\.gif/)
+      // Nommé d'après le document et la date, avec l'extension gif.
+      const md = await waitForMd(page, (value) => /images\/[a-z0-9-]+-\d{4}-\d{2}-\d{2}\.gif/.test(value), 6000)
+      expect(md).toMatch(/images\/[a-z0-9-]+-\d{4}-\d{2}-\d{2}\.gif/)
     })
 
   test('paste un GIF distant depuis une source HTML conserve l animation gif', async ({ page }) => {

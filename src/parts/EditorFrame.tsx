@@ -852,6 +852,9 @@ export function EditorFrame({
   }, [emitMarkdownChange])
 
   const displayTitle = (fm.title as string | undefined) || filename.replace(/\.[^/.]+$/, '')
+  // Sans titre propre (frontmatter), un document qui commence par un titre de
+  // niveau 1 a déjà son titre : on ne le répète pas au-dessus.
+  const titleInBody = !fm.title && /^\s*#[ \t]+\S/.test(body)
 
   useEffect(() => {
     const initialSnapshot = markdown.trim() === '' ? buildDocumentMarkdown(fmRef.current, bodyRef.current) : markdown
@@ -1422,14 +1425,16 @@ export function EditorFrame({
             </div>
 
             <div className="flex flex-col gap-2">
-              <EditableText
-                value={displayTitle}
-                onChange={(v) => handleFmChange({ title: v })}
-                placeholder="Untitled"
-                multiline
-                rows={1}
-                className="text-[clamp(2.25rem,5vw,4rem)] font-[650] leading-[1.1] tracking-[-0.05em] text-holo-text"
-              />
+              {!titleInBody && (
+                <EditableText
+                  value={displayTitle}
+                  onChange={(v) => handleFmChange({ title: v })}
+                  placeholder="Untitled"
+                  multiline
+                  rows={1}
+                  className="text-[clamp(2.25rem,5vw,4rem)] font-[650] leading-[1.1] tracking-[-0.05em] text-holo-text"
+                />
+              )}
 
               <EditableText
                 value={fm.description as string | undefined}

@@ -257,6 +257,23 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('le titre n est pas répété quand le document commence par un titre de niveau 1', async () => {
+    for (const [markdown, expected] of [['# Réunion du lundi\n\nTexte.\n', null], ['Texte sans titre.\n', 'doc']] as const) {
+      const ws = await createWorkspace(markdown)
+      let launched: Launched | null = null
+      try {
+        launched = await launchHolo(ws.rootPath, ws.filePath)
+        const page = launched.page
+        await expect(page.locator('[data-testid="block-editor"]')).toContainText('Texte', { timeout: 20_000 })
+        const headerTitle = page.getByPlaceholder('Untitled')
+        if (expected === null) await expect(headerTitle).toHaveCount(0)
+        else await expect(headerTitle).toHaveValue(expected)
+      } finally {
+        await cleanup(launched, ws.rootPath)
+      }
+    }
+  })
+
   test('un dépôt git dans un dossier OneDrive affiche un avertissement', async () => {
     const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'holo-onedrive-')))
     const rootPath = path.join(base, 'OneDrive - Echino', 'Documents', 'docs')
