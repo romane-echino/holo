@@ -118,7 +118,22 @@ export async function launchHolo(
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  traceUnexpectedClose(app, page, author)
   return { app, page, configHome }
+}
+
+/**
+ * Trace dans le rapport de test ce qui ferme une fenêtre de façon inattendue
+ * (plantage du rendu, sortie du processus) : sans elle, Playwright ne signale
+ * qu'un « Target page, context or browser has been closed ».
+ */
+export function traceUnexpectedClose(app: ElectronApplication, page: Page, who: string) {
+  const started = Date.now()
+  const at = () => `${((Date.now() - started) / 1000).toFixed(1)} s`
+  page.on('crash', () => console.log(`[${who}] plantage du rendu à ${at()}`))
+  app.process().on('exit', (code, signal) => {
+    if (code !== 0 || signal) console.log(`[${who}] processus terminé à ${at()} (code ${code}, signal ${signal})`)
+  })
 }
 
 /**

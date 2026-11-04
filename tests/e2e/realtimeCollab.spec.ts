@@ -14,6 +14,8 @@ import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
+import { traceUnexpectedClose } from './support/realtimeHarness'
+
 const require = createRequire(import.meta.url)
 const electronExecutable = require('electron') as string
 const MAIN_PATH = path.join(process.cwd(), 'electron/main.js')
@@ -56,6 +58,7 @@ async function launchHolo(rootPath: string, filePath: string, author: string, em
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  traceUnexpectedClose(app, page, author)
   return { app, page, configHome }
 }
 
