@@ -14,11 +14,21 @@ const execFileAsync = promisify(execFile)
 
 // ─── Helpers git ───────────────────────────────────────────────────────────
 async function git(cwd: string, ...args: string[]) {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  })
-  return stdout.trim()
+  // L'application ouverte sur le dépôt lance aussi git (git status prend le
+  // verrou de l'index) : une commande du test qui tombe au même moment est
+  // simplement relancée.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync('git', args, {
+        cwd,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      })
+      return stdout.trim()
+    } catch (error) {
+      if (attempt >= 10 || !String((error as { stderr?: string }).stderr ?? error).includes('index.lock')) throw error
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+  }
 }
 
 async function configureIdentity(repoDir: string, name: string, email: string) {

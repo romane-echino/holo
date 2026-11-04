@@ -75,8 +75,12 @@ type Ledger = {
   /** Action qui a tapé chaque jeton (diagnostic) */
   origin: Map<string, string>
   deleted: Set<string>
+  /** Moment de chaque suppression */
+  deletedAt: Map<string, number>
   /** Saisie interrompue (plantage, action échouée) : peut manquer */
   uncertain: Set<string>
+  /** Suppression faite juste avant un plantage : a pu ne jamais partir */
+  uncertainDeletion: Set<string>
   actions: Record<string, number>
 }
 
@@ -211,6 +215,7 @@ async function act(page: Page, person: Person, ledger: Ledger, next: () => numbe
     const victim = candidates[Math.floor(next() * candidates.length)]
     if (await deleteToken(page, victim)) {
       ledger.deleted.add(victim)
+      ledger.deletedAt.set(victim, Date.now())
       count('suppression')
       // Diagnostic : suppression restée sans effet à l'écran.
       await page.waitForTimeout(300)
@@ -229,7 +234,7 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
 
     const repository = await setupSharedRepository([...PEOPLE], { [DOCUMENT]: INITIAL })
     const launched: Partial<Record<Person, Launched>> = {}
-    const ledgers: Record<Person, Ledger> = Object.fromEntries(PEOPLE.map((person) => [person, { typed: new Map(), origin: new Map(), deleted: new Set(), uncertain: new Set(), actions: {} }])) as Record<Person, Ledger>
+    const ledgers: Record<Person, Ledger> = Object.fromEntries(PEOPLE.map((person) => [person, { typed: new Map(), origin: new Map(), deleted: new Set(), deletedAt: new Map(), uncertain: new Set(), uncertainDeletion: new Set(), actions: {} }])) as Record<Person, Ledger>
     const log: string[] = []
     const latency = LATENCY_MS > 0 ? await startLatencyRelay(RELAY_URL, LATENCY_MS, LATENCY_MS) : null
     if (latency) log.push(`latence ajoutée : ${LATENCY_MS} à ${LATENCY_MS * 2} ms dans chaque sens`)
@@ -283,9 +288,13 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
         const crashedAt = Date.now()
         const chloe = launched.chloe!
         chloe.app.process().kill('SIGKILL')
-        // Ce qui a été tapé dans les 1,5 s précédentes a pu ne pas partir.
-        for (const [value, at] of ledgers.chloe.typed) if (crashedAt - at < 1_500) ledgers.chloe.uncertain.add(value)
-        log.push(`chloé plantée (${ledgers.chloe.uncertain.size} jeton(s) incertain(s))`)
+        // Ce qui a été tapé ou supprimé juste avant (1,5 s, plus l'aller-retour
+        // de la latence ajoutée) a pu ne jamais partir.
+        const window = 1_500 + 4 * LATENCY_MS
+        for (const [value, at] of ledgers.chloe.typed) if (crashedAt - at < window) ledgers.chloe.uncertain.add(value)
+        for (const [value, at] of ledgers.chloe.deletedAt) if (crashedAt - at < window) ledgers.chloe.uncertainDeletion.add(value)
+        const recentDeletions = [...ledgers.chloe.deletedAt].filter(([, at]) => crashedAt - at < 5_000).map(([value, at]) => `${value} (${crashedAt - at} ms avant)`)
+        log.push(`chloé plantée (${ledgers.chloe.uncertain.size} jeton(s) incertain(s) ; suppressions récentes : ${recentDeletions.join(', ') || 'aucune'})`)
         await new Promise((resolve) => setTimeout(resolve, 3_000))
         const root = repository.clones.chloe
         launched.chloe = await launchHolo(root, path.join(root, DOCUMENT), NAMES.chloe, 'chloe@example.com', { configHome: chloe.configHome, relayUrl })
@@ -338,7 +347,9 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
         for (const value of ledger.typed.keys()) {
           const occurrences = final.split(value).length - 1
           if (ledger.deleted.has(value)) {
-            if (occurrences !== 0) problems.push(`${value} supprimé mais encore présent (${occurrences})`)
+            if (ledger.uncertainDeletion.has(value)) {
+              if (occurrences > 1) problems.push(`${value} dupliqué (${occurrences})`)
+            } else if (occurrences !== 0) problems.push(`${value} supprimé mais encore présent (${occurrences})`)
           } else if (ledger.uncertain.has(value)) {
             if (occurrences > 1) problems.push(`${value} dupliqué (${occurrences})`)
           } else if (occurrences !== 1) {
