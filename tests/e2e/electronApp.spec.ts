@@ -41,8 +41,11 @@ async function createTempConfigHome() {
   return configHome
 }
 
-async function launchHolo(args: string[]) {
+async function launchHolo(args: string[], options: { recentFolders?: string[] } = {}) {
   const configHome = await createTempConfigHome()
+  if (options.recentFolders) {
+    await fs.writeFile(path.join(configHome, 'holo', 'recent-folders.json'), JSON.stringify(options.recentFolders), 'utf8')
+  }
   const app = await electron.launch({
     executablePath: electronExecutable,
     args: [MAIN_PATH, ...args],
@@ -132,6 +135,25 @@ test.describe('Electron app — critical flows', () => {
       await fs.rm(workspace.rootPath, { recursive: true, force: true })
       await fs.rm(firstRun.configHome, { recursive: true, force: true })
       await fs.rm(secondRun.configHome, { recursive: true, force: true })
+    }
+  })
+
+  test('au démarrage, les espaces disparus du dossier temporaire sont retirés, pas un disque absent', async () => {
+    const workspace = await createTempWorkspace('# Doc\n')
+    // Copie temporaire supprimée (comme un ancien dossier de test) : ne reviendra pas.
+    const vanished = path.join(await fs.realpath(os.tmpdir()), 'holo-electron-disparu-test')
+    // Disque réseau ou clé non branchée : peut revenir, l'espace reste.
+    const offline = path.resolve(path.parse(process.cwd()).root, 'holo-disque-absent', 'Espace')
+    const { app, page } = await launchHolo([`--holo-root=${workspace.rootPath}`, `--holo-file=${workspace.filePath}`], {
+      recentFolders: [vanished, offline, workspace.rootPath],
+    })
+    try {
+      const folders = await page.evaluate(() => (window as unknown as { holo: { getRecentFolders: () => Promise<string[]> } }).holo.getRecentFolders())
+      expect(folders).not.toContain(vanished)
+      expect(folders).toContain(offline)
+      expect(folders.map((folder) => path.resolve(folder))).toContain(path.resolve(workspace.rootPath))
+    } finally {
+      await app.close()
     }
   })
 

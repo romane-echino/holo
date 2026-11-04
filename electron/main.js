@@ -102,43 +102,41 @@ function withRecentFoldersLock(task) {
   return result
 }
 
-async function keepOnlyExistingDirectories(folderPaths) {
-  const existing = []
-
-  for (const folderPath of folderPaths) {
-    try {
-      const stats = await fs.stat(folderPath)
-
-      if (stats.isDirectory()) {
-        existing.push(folderPath)
-      }
-    } catch {
-      // ignore paths no longer available
-    }
+async function isExistingDirectory(folderPath) {
+  try {
+    return (await fs.stat(folderPath)).isDirectory()
+  } catch {
+    return false
   }
-
-  return existing
 }
 
 async function getRecentFolders() {
-  // Retourne la liste brute sans purge — la purge des dossiers manquants
-  // ne s'effectue qu'au démarrage via cleanupRecentFolders() pour éviter
-  // que des dossiers temporairement inaccessibles (réseau, montage…) soient
-  // supprimés définitivement lors d'une simple lecture.
+  // Liste brute : un dossier momentanément inaccessible (disque réseau pas
+  // encore monté, OneDrive) n'est jamais retiré à la lecture.
   const rawFolders = await readRecentFoldersRaw()
   return rawFolders.slice(0, MAX_RECENT_FOLDERS)
 }
 
-// Appelée une seule fois au démarrage pour supprimer les entrées invalides.
-async function cleanupRecentFolders() {
+/**
+ * Au démarrage : retire les espaces disparus qui se trouvaient dans le dossier
+ * temporaire du système (copies de test, archives décompressées…), qui ne
+ * reviendront jamais. Les autres dossiers absents restent : ils peuvent n'être
+ * que momentanément inaccessibles (la purge générale avait été retirée pour ça).
+ */
+async function purgeVanishedTemporaryFolders() {
+  const tempRoots = [...new Set([os.tmpdir(), await fs.realpath(os.tmpdir()).catch(() => os.tmpdir())])]
+    .map((root) => path.resolve(root) + path.sep)
   return withRecentFoldersLock(async () => {
     const rawFolders = await readRecentFoldersRaw()
-    const existingFolders = await keepOnlyExistingDirectories(rawFolders)
-    const trimmed = existingFolders.slice(0, MAX_RECENT_FOLDERS)
-    if (JSON.stringify(trimmed) !== JSON.stringify(rawFolders)) {
-      await writeRecentFolders(trimmed)
+    const kept = []
+    for (const folder of rawFolders) {
+      const resolved = path.resolve(folder)
+      const temporary = tempRoots.some((root) => resolved.startsWith(root))
+      if (temporary && !(await isExistingDirectory(resolved))) continue
+      kept.push(folder)
     }
-    return trimmed
+    if (kept.length !== rawFolders.length) await writeRecentFolders(kept)
+    return kept
   })
 }
 
@@ -4002,6 +4000,8 @@ app.whenReady().then(async () => {
       },
     ]),
   )
+
+  await purgeVanishedTemporaryFolders().catch(() => { })
 
   // Pré-charger tous les espaces récents dans knownRootPaths (pour la lecture cross-espace)
   getRecentFolders().then(folders => { for (const f of folders) knownRootPaths.add(f) }).catch(() => { })
