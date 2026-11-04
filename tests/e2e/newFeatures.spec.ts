@@ -375,6 +375,9 @@ test.describe('BlockquoteBlock — édition et sérialisation', () => {
       6000,
     )
     expect(warningMd).toContain('Gamma-dernier')
+    // L'enregistrement de la saisie, programmé avant la conversion, ne la défait pas.
+    await page.waitForTimeout(800)
+    expect(await page.locator('#pw-md-output').textContent()).toContain('> [!WARNING]')
 
     await blockquote.hover()
     await blockquote.getByRole('button', { name: 'Type de citation Attention' }).click()

@@ -409,6 +409,14 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
     onSave(domToInlines(el))
   }, [onSave])
 
+  // Le délai appelle la version actuelle de save : entre la frappe et
+  // l'enregistrement, le bloc a pu changer (type de citation, alerte…), et
+  // l'ancienne version réécrirait le bloc tel qu'il était avant.
+  const saveRef = useRef(save)
+  useLayoutEffect(() => {
+    saveRef.current = save
+  }, [save])
+
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
@@ -416,9 +424,9 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       // Rendu synchrone : en édition temps réel, une modification reçue ne doit
       // pas s'intercaler entre l'enregistrement et son envoi (la saisie
       // partirait d'une version périmée ou serait écrasée).
-      flushSync(save)
+      flushSync(() => saveRef.current())
     }, 400)
-  }, [save])
+  }, [])
 
   // Enregistrement forcé (Ctrl+S, pull, fermeture…) : remonte immédiatement
   // une saisie encore en attente du délai de 400 ms.
