@@ -80,10 +80,12 @@ async function openBoth(initial = INITIAL) {
     await expect(launched[person]!.page.getByTestId('realtime-presence').first()).toHaveAttribute('data-status', 'live', { timeout: 30_000 })
   }
   const read = (person: Person) => fs.readFile(path.join(repository.clones[person], DOCUMENT), 'utf8')
+  const write = (person: Person, content: string) => fs.writeFile(path.join(repository.clones[person], DOCUMENT), content, 'utf8')
   return {
     alice: launched.alice!.page,
     bob: launched.bob!.page,
     read,
+    write,
     async converged() {
       await expect.poll(async () => (await read('alice')) === (await read('bob')), { timeout: 30_000 }).toBe(true)
       return read('alice')
@@ -227,6 +229,33 @@ test.describe('Sélection et historique en direct', () => {
       await header.getByRole('button', { name: 'bob' }).click()
       await expect.poll(inView, { timeout: 5_000 }).toBe(true)
       await expect.poll(async () => near(await frame.boundingBox(), await bottomFrame()), { timeout: 5_000 }).toBe(true)
+    } finally {
+      await session.close()
+    }
+  })
+
+  test('fichier modifié sur le disque (pull, OneDrive) juste après une saisie de Bob : la modification et la saisie restent', async () => {
+    test.skip(!(await relayAvailable()), 'Runtime Codenotch local ou projet holo-realtime indisponible')
+    const session = await openBoth()
+    try {
+      const { alice, bob } = session
+      const paragraph = (page: Page, text: string) => page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: text })
+      for (const [round, word] of ['motun', 'motdeux', 'mottrois'].entries()) {
+        await placeCaret(bob, paragraph(bob, 'Para un.'), 'end')
+        await bob.keyboard.insertText(` ${word}`)
+        // Dès qu'Alice a reçu le mot (avant qu'il soit forcément sur son disque),
+        // le fichier change sur le disque des deux postes, à partir de ce qui y
+        // est à cet instant (comme un pull ou une synchronisation OneDrive).
+        await expect(paragraph(alice, 'Para un.')).toContainText(word, { timeout: 10_000 })
+        for (const person of ['alice', 'bob'] as const) {
+          const disk = await session.read(person)
+          await session.write(person, disk.replace(/Para fin\.[^\n]*/, `Para fin. Externe ${round + 1}.`))
+        }
+        for (const page of [alice, bob]) await expect(paragraph(page, `Externe ${round + 1}.`)).toBeVisible({ timeout: 15_000 })
+      }
+      const final = await session.converged()
+      expect(final).toContain('Para un. motun motdeux mottrois')
+      expect(final).toContain('Para fin. Externe 3.')
     } finally {
       await session.close()
     }

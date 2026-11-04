@@ -18,7 +18,7 @@ import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, peersForSpace, useSpacePresences } from './hooks/useSpacePresences'
 import type { SharedSnapshot } from './lib/realtime/sharedModel'
 import { readCaretAnchor, type CaretAnchor } from './lib/realtime/caretAnchor'
-import { alignContainerIds, alignSnapshotIds, editorBlockToShared, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
+import { alignContainerIds, alignSnapshotIds, editorBlockToShared, externalChangeSnapshots, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
 import { extractFootnoteMapFromMarkdown } from './parts/MarkdownEditor/lib/markdownBlocks'
 import { usePopup } from './hooks/usePopup'
 import { AddSpace } from './popup/AddSpace'
@@ -630,6 +630,8 @@ export default function App2() {
   const realtimeRef = useRef<{
     /** Saisie locale (fromEditor : blocs de l'éditeur avec leurs identifiants ; sinon markdown réaligné par le contenu) */
     sendLocal: (markdown: string, fromEditor: boolean) => void
+    /** Modification venue du disque : seule la différence previousDisk → nextDisk est appliquée (faux si impossible) */
+    sendExternal: (previousDisk: string, nextDisk: string) => boolean
     currentSnapshot: () => SharedSnapshot | null
     shouldApplyExternalChanges: () => boolean
     /** Adresses de tous les participants de la session, même hors ligne */
@@ -637,6 +639,7 @@ export default function App2() {
     hasSession: () => boolean
   }>({
     sendLocal: () => {},
+    sendExternal: () => false,
     currentSnapshot: () => null,
     shouldApplyExternalChanges: () => true,
     participants: () => [],
@@ -965,9 +968,13 @@ export default function App2() {
   // autre instance, fusion à l'écriture) sans le remonter.
   // origin 'disk' : modification faite hors de l'app (pull, OneDrive…) ;
   // 'local' : action de l'utilisateur qui réécrit le fichier (ex. modèle).
-  const applyExternalContent = useCallback((path: string, diskContent: string, origin: 'disk' | 'local' = 'disk') => {
+  // knownBase : version à partir de laquelle diskContent a changé, si ce n'est
+  // pas la dernière version connue du disque (ex. ce que nous venons d'écrire).
+  const applyExternalContent = useCallback((path: string, diskContent: string, origin: 'disk' | 'local' = 'disk', knownBase?: string) => {
     const sync = docSyncRef.current
     if (!sync || !isSamePath(sync.path, path)) return
+    // Version du disque que nous connaissions : base de la fusion en session.
+    const previousDisk = knownBase ?? sync.expectedDisk
     sync.expectedDisk = diskContent
     // En session temps réel, seul le meneur réinjecte une modification venue du
     // disque (chaque participant la reçoit) ; les autres la recevront par la
@@ -979,7 +986,13 @@ export default function App2() {
       // En session, la modification passe par le document partagé (bloc par
       // bloc), puis l'éditeur reçoit le résultat avec les identifiants partagés.
       if (origin === 'disk' && realtimeLiveRef.current) console.info('[holo-realtime] modification venue du disque réinjectée dans la session', { length: normalized.length })
-      realtimeRef.current.sendLocal(normalized, false)
+      // Venue d'ailleurs (pull, OneDrive) : seule la différence avec la version
+      // du disque qu'on connaissait, pour ne pas effacer ce que les collègues
+      // viennent de taper et qui n'est pas encore enregistré. Action locale
+      // (modèle appliqué…) : le contenu remplace celui de la session.
+      flushPendingEdits()
+      const merged = origin === 'disk' && typeof previousDisk === 'string' && realtimeRef.current.sendExternal(previousDisk, normalized)
+      if (!merged) realtimeRef.current.sendLocal(normalized, false)
       const shared = realtimeRef.current.currentSnapshot()
       if (shared) {
         applyRealtimeSnapshotRef.current(shared)
@@ -1009,7 +1022,8 @@ export default function App2() {
         await nextTick()
         if (writeQueueRef.current.length > 0) continue
         externalChangePendingRef.current = false
-        applyExternalContent(sync.path, sync.expectedDisk)
+        // Ce que nous avions écrit → version fusionnée avec la modification externe.
+        applyExternalContent(sync.path, sync.expectedDisk, 'disk', sync.lastWritten)
         notify({ kind: 'info', title: 'Document mis à jour', message: 'Des modifications faites ailleurs ont été fusionnées avec les vôtres.' })
         return
       }
@@ -1024,7 +1038,13 @@ export default function App2() {
         if (current && isSamePath(current.path, job.path)) {
           current.expectedDisk = result.content
           current.lastWritten = job.content
-          if (result.externalChange && result.content !== job.content) externalChangePendingRef.current = true
+          // Le fichier écrit contient autre chose que ce que l'éditeur a envoyé
+          // (modification externe fusionnée, y compris quand la synchronisation
+          // git réécrit le document en direct) : à reporter dans l'éditeur et
+          // la session. Une simple différence de mise en forme ne compte pas.
+          if (result.content !== job.content && (result.externalChange || normalizeDocumentMarkdown(result.content) !== normalizeDocumentMarkdown(job.content))) {
+            externalChangePendingRef.current = true
+          }
         }
         updateIndexEntry(job.path, result.content)
         if (isCurrent()) {
@@ -1069,7 +1089,15 @@ export default function App2() {
       queue.push({ path, content, base })
     }
     if (!writeLoopRef.current) {
-      writeLoopRef.current = drainWriteQueue().finally(() => { writeLoopRef.current = null })
+      writeLoopRef.current = drainWriteQueue().finally(() => {
+        writeLoopRef.current = null
+        // Modification du disque vue pendant l'écriture : vérifiée maintenant
+        // (l'écriture ne la voit que si elle survient avant sa propre lecture).
+        if (diskRecheckPendingRef.current && !gitSyncInFlightRef.current) {
+          diskRecheckPendingRef.current = false
+          void diskCheckRef.current?.()
+        }
+      })
     }
     return writeLoopRef.current
   }, [drainWriteQueue])
@@ -1093,7 +1121,15 @@ export default function App2() {
       queue.push({ path, content: sync.editorState, base })
     }
     if (!writeLoopRef.current) {
-      writeLoopRef.current = drainWriteQueue().finally(() => { writeLoopRef.current = null })
+      writeLoopRef.current = drainWriteQueue().finally(() => {
+        writeLoopRef.current = null
+        // Modification du disque vue pendant l'écriture : vérifiée maintenant
+        // (l'écriture ne la voit que si elle survient avant sa propre lecture).
+        if (diskRecheckPendingRef.current && !gitSyncInFlightRef.current) {
+          diskRecheckPendingRef.current = false
+          void diskCheckRef.current?.()
+        }
+      })
     }
     await writeLoopRef.current
   }, [drainWriteQueue])
@@ -1213,12 +1249,19 @@ export default function App2() {
     const hasSession = realtime.status !== null && realtime.status !== 'stopped'
     realtimeRef.current = {
       sendLocal: (markdown, fromEditor) => realtime.onLocalSnapshot(buildLocalSnapshot(markdown, fromEditor)),
+      sendExternal: (previousDisk, nextDisk) => {
+        const current = realtime.currentSnapshot()
+        if (!current) return false
+        const { base, next } = externalChangeSnapshots(normalizeDocumentMarkdown(previousDisk), nextDisk, current)
+        realtime.onExternalChange(base, next)
+        return true
+      },
       currentSnapshot: realtime.currentSnapshot,
       shouldApplyExternalChanges: realtime.shouldApplyExternalChanges,
       participants: realtime.participants,
       hasSession: () => hasSession,
     }
-  }, [buildLocalSnapshot, realtime.onLocalSnapshot, realtime.currentSnapshot, realtime.shouldApplyExternalChanges, realtime.participants, realtime.status])
+  }, [buildLocalSnapshot, realtime.onLocalSnapshot, realtime.onExternalChange, realtime.currentSnapshot, realtime.shouldApplyExternalChanges, realtime.participants, realtime.status])
 
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
@@ -1331,11 +1374,11 @@ export default function App2() {
     if (!holo?.watchDocument || !openPath) return
     let disposed = false
     const checkDisk = async () => {
-      // Une écriture en cours détectera et fusionnera elle-même le changement.
-      // Pendant une synchronisation git, le fichier peut être réécrit
-      // transitoirement : la synchronisation relit elle-même le document après.
-      if (disposed || writeLoopRef.current) return
-      if (gitSyncInFlightRef.current) {
+      // Pendant une écriture (qui ne voit le changement que s'il précède sa
+      // lecture) ou une synchronisation git (fichier réécrit transitoirement),
+      // la vérification est refaite quand elles se terminent.
+      if (disposed) return
+      if (writeLoopRef.current || gitSyncInFlightRef.current) {
         diskRecheckPendingRef.current = true
         return
       }
@@ -1344,8 +1387,12 @@ export default function App2() {
       if (disposed || fresh == null || !sync || !samePath(sync.path, openPath) || fresh === sync.expectedDisk) return
       flushPendingEdits()
       await nextTick()
-      // La saisie remontée est en cours d'écriture : elle fusionnera la version disque.
-      if (writeLoopRef.current) return
+      // La saisie remontée est en cours d'écriture : elle fusionnera la version
+      // disque, sinon la vérification est refaite à la fin de l'écriture.
+      if (writeLoopRef.current) {
+        diskRecheckPendingRef.current = true
+        return
+      }
       applyExternalContent(openPath, fresh)
     }
     diskCheckRef.current = checkDisk

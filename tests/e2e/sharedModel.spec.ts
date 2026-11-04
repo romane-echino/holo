@@ -7,7 +7,7 @@
 import { test, expect } from '@playwright/test'
 import * as Y from 'yjs'
 import { applySnapshot, foldCommonAdditions, readSnapshot, writeSnapshot, type SharedSnapshot, type SharedTableBlock, type SharedListBlock, type SharedTextBlock } from '../../src/lib/realtime/sharedModel'
-import { alignSnapshotIds, markdownToSnapshot, snapshotToMarkdown } from '../../src/parts/MarkdownEditor/lib/sharedSnapshot'
+import { alignSnapshotIds, externalChangeSnapshots, markdownToSnapshot, snapshotToMarkdown } from '../../src/parts/MarkdownEditor/lib/sharedSnapshot'
 
 const DOCUMENT = [
   '---',
@@ -210,6 +210,31 @@ test.describe('Modèle partagé : modifications simultanées', () => {
     const intro = textBlock(readSnapshot(b), 'Introduction').md
     expect(intro).toContain('Introduction (B)')
     expect(intro.endsWith(' Fin (A).')).toBe(true)
+  })
+
+  test('modification venue du disque pendant la session : seule la différence est appliquée, les saisies récentes restent', () => {
+    const disk0 = ['# Notes', '', 'Para A.', '', 'Para B.', '', '| A | B |', '| --- | --- |', '| x | y |', '', 'Para fin.', ''].join('\n')
+    const doc = new Y.Doc()
+    writeSnapshot(doc, markdownToSnapshot(disk0))
+    // Dans la session, des collègues ont tapé ; ce n'est pas encore sur le disque.
+    const before = readSnapshot(doc)
+    applySnapshot(doc, before, edited(before, (draft) => {
+      textBlock(draft, 'Para A').md = 'Para A. Bob tape'
+      textBlock(draft, 'Para B').md = 'Para B. Chloé tape'
+      const table = tableOf(draft)
+      table.rows[0].cells[table.columns[0].id] = 'x Bob'
+    }))
+    // Un commit d'ailleurs arrive sur le disque : Para B corrigé au début,
+    // l'autre cellule modifiée, un paragraphe ajouté, Para fin supprimé.
+    const disk1 = disk0.replace('Para B.', 'Le Para B.').replace('| x | y |', '| x | y externe |').replace('Para fin.', 'Ajout externe.')
+    const { base, next } = externalChangeSnapshots(disk0, disk1, readSnapshot(doc))
+    applySnapshot(doc, base, next)
+    const result = snapshotToMarkdown(readSnapshot(doc))
+    expect(result).toContain('Para A. Bob tape')
+    expect(result).toContain('Le Para B. Chloé tape')
+    expect(result).toContain('| x Bob | y externe |')
+    expect(result).toContain('Ajout externe.')
+    expect(result).not.toContain('Para fin.')
   })
 
   test('à l arrivée, ce que la session a déjà (bloc, ligne, élément) n est pas doublé', () => {

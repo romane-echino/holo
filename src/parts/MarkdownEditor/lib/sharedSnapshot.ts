@@ -292,3 +292,16 @@ export function alignContainerIds(next: SharedSnapshot, previous: SharedSnapshot
   })
   return { ...next, blocks }
 }
+
+/**
+ * Modification venue du disque (pull, OneDrive, autre application) pendant
+ * une session : `previousDisk`, la version du disque que Holo connaissait, et
+ * `nextDisk`, la nouvelle, alignées sur la session (`current`). Appliquer
+ * `base → next` sur la session (3 points) n'y porte que ce qui a changé sur le
+ * disque : ce que les collègues viennent de taper, pas encore enregistré, reste.
+ */
+export function externalChangeSnapshots(previousDisk: string, nextDisk: string, current: SharedSnapshot): { base: SharedSnapshot; next: SharedSnapshot } {
+  const base = alignContainerIds(alignSnapshotIds(markdownToSnapshot(previousDisk), current), current)
+  const next = alignContainerIds(alignSnapshotIds(markdownToSnapshot(nextDisk), base), base)
+  return { base, next }
+}

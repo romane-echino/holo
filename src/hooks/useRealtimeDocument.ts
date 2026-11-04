@@ -155,11 +155,15 @@ export function useRealtimeDocument(options: Options) {
     sessionRef.current?.onLocalSnapshot(snapshot)
   }, [])
 
+  const onExternalChange = useCallback((base: SharedSnapshot, next: SharedSnapshot) => {
+    sessionRef.current?.onExternalChange(base, next)
+  }, [])
+
   /** Photo du document partagé (celle que l'éditeur affiche), ou null hors session. */
   const currentSnapshot = useCallback(() => sessionRef.current?.currentSnapshot() ?? null, [])
 
   const shouldApplyExternalChanges = useCallback(() => sessionRef.current?.shouldApplyExternalChanges() ?? true, [])
   const participants = useCallback(() => sessionRef.current?.participants() ?? [], [])
 
-  return { ...state, onLocalSnapshot, currentSnapshot, shouldApplyExternalChanges, participants }
+  return { ...state, onLocalSnapshot, onExternalChange, currentSnapshot, shouldApplyExternalChanges, participants }
 }

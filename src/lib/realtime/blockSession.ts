@@ -160,6 +160,20 @@ export class BlockSession {
     if (!sameSnapshot(actual, snapshot)) this.callbacks.applyRemoteSnapshot(actual)
   }
 
+  /**
+   * Modification venue du disque (pull, OneDrive…) : seule la différence entre
+   * la version du disque qu'on connaissait (`base`) et la nouvelle (`next`) est
+   * appliquée, par-dessus ce que la session a reçu depuis (saisies des
+   * collègues pas encore enregistrées). L'éditeur reçoit le résultat.
+   */
+  onExternalChange(base: SharedSnapshot, next: SharedSnapshot): void {
+    if (!this.joined || !this.doc || sameSnapshot(base, next)) return
+    applySnapshot(this.doc, base, next, LOCAL_ORIGIN)
+    const actual = readSnapshot(this.doc)
+    this.lastSnapshot = actual
+    this.callbacks.applyRemoteSnapshot(actual)
+  }
+
   /** Publie la position de notre curseur (null : hors du document). */
   setLocalCursor(cursor: RealtimeCursor | null): void {
     if (!this.awareness) return
