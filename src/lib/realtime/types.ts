@@ -10,6 +10,12 @@ export type RealtimeCursor = {
   offset: number
 }
 export type RealtimePeer = RealtimeUser & { clientId: number; cursor: RealtimeCursor | null }
+/**
+ * Format partagé des documents en direct (2 : par blocs, depuis la 0.9). Deux
+ * postes de formats différents ne rejoignent pas la même session.
+ */
+export const REALTIME_PROTOCOL = 2
+
 export type RealtimeStatus = 'connecting' | 'joining' | 'live' | 'reconnecting' | 'unauthorized' | 'error' | 'stopped'
 
 /** Couleur stable d'un participant, dérivée de son e-mail. */

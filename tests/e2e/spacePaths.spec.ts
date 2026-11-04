@@ -5,6 +5,8 @@
 import { test, expect } from '@playwright/test'
 import { peersForSpace, relativeSpacePath, sameSpacePath } from '../../src/hooks/useSpacePresences'
 import { isInSpace } from '../../src/lib/realtime/peers'
+import { absenceReason, absentEditors } from '../../src/lib/realtime/absentEditors'
+import type { SpacePeer } from '../../src/lib/realtime/spacePresence'
 
 test.describe('Chemins d espace', () => {
   test('même dossier : séparateurs, « / » final, casse sous Windows, accents', () => {
@@ -33,5 +35,23 @@ test.describe('Chemins d espace', () => {
     expect(isInSpace({ active: true, editing: null })).toBe(true)
     expect(isInSpace({ active: false, editing: 'notes/a.md' })).toBe(true)
     expect(isInSpace({ active: false, editing: null })).toBe(false)
+  })
+
+  test('collègue qui a le document ouvert sans être en direct : signalé, avec la raison', () => {
+    const peer = (clientId: number, name: string, editing: string | null, version: string | null, protocol: number | null): SpacePeer => ({
+      clientId, name, email: `${name.toLowerCase()}@example.com`, color: '#888', active: true, editing, version, protocol,
+    })
+    const spacePeers = [
+      peer(1, 'Bob', 'notes/a.md', '0.9.4', 2), // en direct avec nous
+      peer(2, 'Chloe', 'notes/a.md', null, null), // ancienne version
+      peer(3, 'Dan', 'notes/b.md', '0.9.4', 2), // autre document
+      peer(4, 'Moi', 'notes/a.md', '0.9.4', 2), // nous-même (autre fenêtre)
+    ]
+    const livePeers = [{ clientId: 9, name: 'Bob', email: 'BOB@example.com', color: '#888', cursor: null }]
+    const absent = absentEditors({ livePeers, spacePeers, rootPath: '/r', documentPath: '/r/notes/a.md', self: 'moi@example.com' })
+    expect(absent.map((entry) => entry.name)).toEqual(['Chloe'])
+    expect(absenceReason(absent[0])).toContain('0.9.4')
+    expect(absenceReason(peer(5, 'Eve', 'notes/a.md', '0.8.0', 1))).toContain('0.8.0')
+    expect(absenceReason(peer(6, 'Fred', 'notes/a.md', '0.9.4', 2))).toContain('temps réel est désactivé')
   })
 })

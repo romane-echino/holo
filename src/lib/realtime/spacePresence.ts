@@ -13,6 +13,9 @@ import type { RealtimeUser } from './types'
 
 export type SpacePeer = RealtimeUser & {
   clientId: number
+  /** Version de Holo et format des documents en direct (null : version ≤ 0.9.3, qui ne les publie pas) */
+  version: string | null
+  protocol: number | null
   /** L'espace est celui affiché par ce participant */
   active: boolean
   /** Chemin (relatif à l'espace, séparateurs « / ») du document ouvert, ou null */
@@ -21,6 +24,7 @@ export type SpacePeer = RealtimeUser & {
 
 type SpaceAwarenessState = {
   user: RealtimeUser
+  app?: { version: string; protocol: number }
   active: boolean
   editing: string | null
   /** Dernier envoi au dépôt ; structural : fichiers ajoutés, supprimés ou renommés */
@@ -47,12 +51,12 @@ export class SpacePresence {
   private readonly channelId: string
   private readonly callbacks: SpacePresenceCallbacks
 
-  constructor(api: HoloRealtimeApi, channelId: string, key: string, user: RealtimeUser, callbacks: SpacePresenceCallbacks) {
+  constructor(api: HoloRealtimeApi, channelId: string, key: string, user: RealtimeUser, callbacks: SpacePresenceCallbacks, app?: { version: string; protocol: number }) {
     this.api = api
     this.channelId = channelId
     this.callbacks = callbacks
     this.cipher = new PayloadCipher(key)
-    this.awareness.setLocalState({ user, active: false, editing: null, pushed: null } satisfies SpaceAwarenessState)
+    this.awareness.setLocalState({ user, app, active: false, editing: null, pushed: null } satisfies SpaceAwarenessState)
     this.awareness.on('update', ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
       if (origin === 'remote') {
         if (added.length > 0) this.schedulePush()
@@ -133,7 +137,14 @@ export class SpacePresence {
       .filter(([clientId, state]) => clientId !== ownId && Boolean((state as SpaceAwarenessState | null)?.user))
       .map(([clientId, state]) => {
         const presence = state as SpaceAwarenessState
-        return { clientId, ...presence.user, active: Boolean(presence.active), editing: presence.editing ?? null }
+        return {
+          clientId,
+          ...presence.user,
+          version: presence.app?.version ?? null,
+          protocol: presence.app?.protocol ?? null,
+          active: Boolean(presence.active),
+          editing: presence.editing ?? null,
+        }
       })
   }
 }

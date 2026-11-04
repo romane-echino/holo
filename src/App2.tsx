@@ -16,6 +16,8 @@ import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, peersForSpace, useSpacePresences } from './hooks/useSpacePresences'
+import { useAbsentEditors } from './hooks/useAbsentEditors'
+import type { SpacePeer } from './lib/realtime/spacePresence'
 import type { SharedSnapshot } from './lib/realtime/sharedModel'
 import { readCaretAnchor, type CaretAnchor } from './lib/realtime/caretAnchor'
 import { alignContainerIds, alignSnapshotIds, editorBlockToShared, externalChangeSnapshots, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
@@ -127,6 +129,8 @@ const PRIMARY_ITEMS = [
   { label: 'Assistant IA', icon: Bot, to: '/ai' },
 ]
 
+
+const NO_SPACE_PEERS: SpacePeer[] = []
 export default function App2() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
@@ -1646,6 +1650,15 @@ export default function App2() {
     configRevision: realtimeConfigRevision,
     onRemotePush: handleRemotePush,
   })
+  // Collègues qui ont ce document ouvert sans être en direct avec nous.
+  const absentEditors = useAbsentEditors({
+    live: realtime.status === 'live',
+    livePeers: realtime.peers,
+    spacePeers: (rootPath ? peersForSpace(peersBySpace, rootPath) : undefined) ?? NO_SPACE_PEERS,
+    rootPath,
+    documentPath: openedFile?.path ?? null,
+    self: gitEmail || appAuthor,
+  })
 
   // Après résolution d'un conflit : rafraîchir l'état git + recharger le document
   // résolu, et signaler un éventuel échec de push.
@@ -1884,6 +1897,7 @@ export default function App2() {
               realtimeStatus={realtime.status}
               realtimePeers={realtime.peers}
               realtimeDetail={realtime.detail}
+              realtimeAbsentPeers={absentEditors}
               onMarkdownChange={handleMarkdownChange}
               onOpenLinkedFile={(filePath) => handleSelectFile({ id: filePath, path: filePath, name: getBaseName(filePath), type: 'file' })}
               onToggleInspector={() => setInspectorOpen((o) => !o)}

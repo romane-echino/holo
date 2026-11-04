@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { SpacePresence, type SpacePeer } from '../lib/realtime/spacePresence'
-import { colorForUser } from '../lib/realtime/types'
+import { REALTIME_PROTOCOL, colorForUser } from '../lib/realtime/types'
 import { registerCloseTask } from '../lib/editorFlush'
 import { registerDiagnosticSection, reportDiagnostic } from '../lib/diagnostics'
 
@@ -63,6 +63,11 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
   const { activeRoot, editingFilePath, user, configRevision } = options
   const [peersBySpace, setPeersBySpace] = useState<Record<string, SpacePeer[]>>({})
   const presencesRef = useRef(new Map<string, SpacePresence>())
+  // Version publiée dans la présence (les autres repèrent une version incompatible).
+  const appVersionRef = useRef('')
+  useEffect(() => {
+    void window.holo?.getAppVersion().then((version) => { appVersionRef.current = version.replace(/^v/i, '') }).catch(() => {})
+  }, [])
   /** État de chaque canal, pour le diagnostic */
   const channelStatesRef = useRef(new Map<string, string>())
   const [presenceRevision, setPresenceRevision] = useState(0)
@@ -133,6 +138,7 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
             },
             onRemotePush: (structural) => onRemotePushRef.current(rootPath, structural),
           },
+          { version: appVersionRef.current, protocol: REALTIME_PROTOCOL },
         )
         presences.set(rootPath, presence)
         setPresenceRevision((revision) => revision + 1)
