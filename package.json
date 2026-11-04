@@ -114,6 +114,7 @@
     "extraMetadata": {
       "main": "electron/main.js"
     },
+    "afterSign": "scripts/macStableSignature.cjs",
     "win": {
       "icon": "public/app-icon.png",
       "target": [

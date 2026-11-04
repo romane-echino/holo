@@ -132,7 +132,7 @@ export default function App2() {
   const navigate = useNavigate()
   const hasPanel = pathname !== '/'
 
-  const { updateAvailable, updateReady, updateProgress, dismissUpdate } = useAppUpdates()
+  const { updateAvailable, updateReady, updateProgress, updateError, dismissUpdate } = useAppUpdates()
 
   const { appAuthor, gitEmail, gitState, setAppAuthor, setGitEmail,
     setAzureBlobContainerUrl, setAzureBlobSasToken,
@@ -1931,6 +1931,7 @@ export default function App2() {
         <AppUpdateNotification
           updateReady={updateReady}
           updateProgress={updateProgress}
+          updateError={updateError}
           onInstall={() => { void saveOpenDocument().finally(() => window.holo?.installUpdate?.()) }}
           onDismiss={dismissUpdate}
         />

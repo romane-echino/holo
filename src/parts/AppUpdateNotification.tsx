@@ -3,19 +3,22 @@
  *
  * Notification flottante en bas à droite quand une mise à jour est disponible.
  * Affiche la progression du téléchargement puis un bouton "Redémarrer & installer".
+ * Si l'installation automatique échoue, propose de télécharger la version à la main.
  */
 
-import { Download, RefreshCw, X, Sparkles } from 'lucide-react'
+import { AlertTriangle, Download, ExternalLink, RefreshCw, X, Sparkles } from 'lucide-react'
 import { cn } from '../utils/global'
 
 interface AppUpdateNotificationProps {
   updateReady: boolean
   updateProgress: number
+  updateError?: { message: string; releaseUrl: string } | null
   onInstall: () => void
   onDismiss: () => void
 }
 
-export function AppUpdateNotification({ updateReady, updateProgress, onInstall, onDismiss }: AppUpdateNotificationProps) {
+export function AppUpdateNotification({ updateReady, updateProgress, updateError, onInstall, onDismiss }: AppUpdateNotificationProps) {
+  const failed = Boolean(updateError) && !updateReady
   return (
     <div className="fixed bottom-5 right-5 z-[150] w-[320px] overflow-hidden rounded-[1.2rem] border border-holo-border-soft bg-holo-bg/95 shadow-[0_20px_60px_rgba(0,0,0,.5),inset_0_1px_0_rgba(255,255,255,.04)] backdrop-blur-2xl">
       {/* Accent strip */}
@@ -25,16 +28,20 @@ export function AppUpdateNotification({ updateReady, updateProgress, onInstall, 
         {/* Header */}
         <div className="mb-3 flex items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-holo-lg bg-holo-primary-surface text-holo-primary-soft">
-            {updateReady ? <Sparkles size={16} /> : <Download size={16} />}
+            {failed ? <AlertTriangle size={16} /> : updateReady ? <Sparkles size={16} /> : <Download size={16} />}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-holo-text">
-              {updateReady ? 'Mise à jour prête' : 'Mise à jour disponible'}
+              {failed ? 'Mise à jour impossible' : updateReady ? 'Mise à jour prête' : 'Mise à jour disponible'}
             </p>
-            <p className="text-[11px] text-holo-text-faint mt-0.5">
-              {updateReady
-                ? 'Redémarrez pour installer la nouvelle version.'
-                : 'Téléchargement en cours…'}
+            <p className="text-[11px] text-holo-text-faint mt-0.5" title={failed ? updateError?.message : undefined}>
+              {failed
+                ? 'L’installation automatique a échoué. Téléchargez la nouvelle version et installez-la à la main.'
+                : updateReady
+                  ? 'Redémarrez pour installer la nouvelle version.'
+                  : updateProgress >= 100
+                    ? 'Vérification de la mise à jour…'
+                    : 'Téléchargement en cours…'}
             </p>
           </div>
           <button
@@ -47,7 +54,7 @@ export function AppUpdateNotification({ updateReady, updateProgress, onInstall, 
         </div>
 
         {/* Barre de progression */}
-        {!updateReady && (
+        {!updateReady && !failed && (
           <div className="mb-3">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-holo-border-soft">
               <div
@@ -64,7 +71,23 @@ export function AppUpdateNotification({ updateReady, updateProgress, onInstall, 
 
         {/* Actions */}
         <div className="flex gap-2">
-          {updateReady ? (
+          {failed ? (
+            <>
+              <button
+                onClick={onDismiss}
+                className="flex-1 rounded-holo-lg border border-holo-border-soft bg-transparent py-2 text-xs text-holo-text-muted transition hover:bg-holo-glass"
+              >
+                Plus tard
+              </button>
+              <button
+                onClick={() => { void window.holo?.openExternalUrl?.(updateError!.releaseUrl) }}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-holo-lg bg-holo-primary py-2 text-xs font-medium text-white transition hover:bg-holo-primary/90"
+              >
+                <ExternalLink size={12} />
+                Télécharger
+              </button>
+            </>
+          ) : updateReady ? (
             <>
               <button
                 onClick={onDismiss}

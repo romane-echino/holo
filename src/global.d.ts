@@ -131,10 +131,11 @@ interface HoloApi {
   writeClipboardText: (text: string) => Promise<{ ok: true }>
   checkForUpdates: () => Promise<unknown>
   installUpdate: () => Promise<unknown>
-  getUpdateState: () => Promise<unknown>
+  getUpdateState: () => Promise<{ available: boolean; downloading: boolean; ready: boolean; version: string | null; error?: { message: string; releaseUrl: string } | null }>
   onUpdateAvailable: (callback: () => void) => () => void
   onUpdateReady: (callback: () => void) => () => void
   onUpdateProgress: (callback: (data: { percent: number }) => void) => () => void
+  onUpdateError?: (callback: (data: { message: string; releaseUrl: string }) => void) => () => void
   getHoloConfig: () => Promise<Record<string, unknown>>
   setHoloConfig: (cfg: Record<string, unknown>) => Promise<{ ok: true }>
   getHoloConfigValue: (key: string) => Promise<unknown>

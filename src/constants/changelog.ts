@@ -2,6 +2,14 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.1',
+    releasedAt: '2026-11-04',
+    items: [
+      'macOS : la mise à jour automatique fonctionne. Jusqu\'ici, macOS refusait chaque nouvelle version et le bouton « Redémarrer » ne faisait rien ; cette version-ci est à installer une dernière fois à la main, les suivantes s\'installeront seules.',
+      'Mises à jour : si l\'installation automatique échoue, la notification le dit et propose de télécharger la nouvelle version, au lieu de rester bloquée.',
+    ],
+  },
+  {
     version: '0.9.0',
     releasedAt: '2026-11-04',
     items: [

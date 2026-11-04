@@ -6,6 +6,7 @@ const { autoUpdater } = updaterPkg
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import crypto from 'node:crypto'
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
@@ -32,7 +33,7 @@ let currentRootPath = null
 const knownRootPaths = new Set() // tous les espaces jamais ouverts (pour la lecture cross-espace)
 const MAX_RECENT_FOLDERS = 10
 const ARCHIVE_DIR_NAME = '.archive'
-let updateState = { available: false, downloading: false, ready: false }
+let updateState = { available: false, downloading: false, ready: false, version: null, error: null }
 
 if (!hasSingleInstanceLock) {
   app.quit()
@@ -2401,6 +2402,9 @@ ipcMain.handle('app:check-for-updates', async () => {
 })
 
 ipcMain.handle('app:install-update', async () => {
+  // Rien à installer (mise à jour pas encore vérifiée, ou refusée) : on ne
+  // touche pas à la fermeture des fenêtres, qui doivent encore enregistrer.
+  if (!updateState.ready) return { ok: false, error: 'Aucune mise à jour prête à installer.' }
   try {
     // Le renderer a déjà enregistré le document avant de demander l'installation.
     for (const window of BrowserWindow.getAllWindows()) {
@@ -3993,21 +3997,33 @@ app.whenReady().then(async () => {
       return code === 'HTTP_ERROR_404' || statusCode === 404
     }
 
-    autoUpdater.on('update-available', () => {
+    autoUpdater.on('update-available', (info) => {
       updateState.available = true
       updateState.downloading = true
+      updateState.version = info?.version ?? null
+      updateState.error = null
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send('app:update-available')
       })
     })
 
-    autoUpdater.on('update-downloaded', () => {
+    const markUpdateReady = () => {
       updateState.downloading = false
       updateState.ready = true
+      updateState.error = null
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send('app:update-ready')
       })
-    })
+    }
+    if (process.platform === 'darwin') {
+      // macOS : electron-updater annonce « téléchargé » avant que Squirrel.Mac
+      // ait récupéré et vérifié la mise à jour (signature). Si cette vérification
+      // échoue, quitAndInstall attend indéfiniment et « Redémarrer » ne fait
+      // rien : la mise à jour n'est prête qu'au signal de Squirrel lui-même.
+      createRequire(import.meta.url)('electron').autoUpdater.on('update-downloaded', markUpdateReady)
+    } else {
+      autoUpdater.on('update-downloaded', markUpdateReady)
+    }
 
     autoUpdater.on('download-progress', (progressObj) => {
       BrowserWindow.getAllWindows().forEach((window) => {
@@ -4022,6 +4038,17 @@ app.whenReady().then(async () => {
       }
 
       console.error('Updater error:', error)
+      // Une mise à jour était en cours (téléchargement ou installation) : sans
+      // ce signal, la notification resterait bloquée à 100 % sans explication.
+      if (updateState.available && !updateState.ready) {
+        updateState.downloading = false
+        const tag = updateState.version ? `tag/v${updateState.version}` : 'latest'
+        const detail = { message: error instanceof Error ? error.message : String(error), releaseUrl: `https://github.com/romane-echino/holo/releases/${tag}` }
+        updateState.error = detail
+        BrowserWindow.getAllWindows().forEach((window) => {
+          window.webContents.send('app:update-error', detail)
+        })
+      }
     })
 
     autoUpdater.checkForUpdatesAndNotify().catch((error) => {

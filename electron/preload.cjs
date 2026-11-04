@@ -4,6 +4,7 @@ const updateListeners = {
   'update-available': [],
   'update-ready': [],
   'update-progress': [],
+  'update-error': [],
 }
 
 contextBridge.exposeInMainWorld('holo', {
@@ -164,6 +165,14 @@ contextBridge.exposeInMainWorld('holo', {
       updateListeners['update-progress'] = updateListeners['update-progress'].filter(c => c !== callback)
     }
   },
+  onUpdateError: (callback) => {
+    if (!updateListeners['update-error'].includes(callback)) {
+      updateListeners['update-error'].push(callback)
+    }
+    return () => {
+      updateListeners['update-error'] = updateListeners['update-error'].filter(c => c !== callback)
+    }
+  },
 })
 
 // Set up IPC event listeners
@@ -177,4 +186,8 @@ ipcRenderer.on('app:update-ready', () => {
 
 ipcRenderer.on('app:update-progress', (_event, data) => {
   updateListeners['update-progress'].forEach(cb => cb(data))
+})
+
+ipcRenderer.on('app:update-error', (_event, data) => {
+  updateListeners['update-error'].forEach(cb => cb(data))
 })
