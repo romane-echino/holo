@@ -27,10 +27,27 @@ export function normalizeSpacePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
+/**
+ * Même dossier d'espace, quelle que soit l'écriture du chemin : séparateurs,
+ * « / » final, casse sous Windows, accents composés ou décomposés.
+ */
+export function sameSpacePath(left: string, right: string): boolean {
+  const a = normalizeSpacePath(left).normalize('NFC')
+  const b = normalizeSpacePath(right).normalize('NFC')
+  return /^[a-z]:\//i.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/** Présences de l'espace `rootPath`, même si sa clé est écrite autrement. */
+export function peersForSpace<T>(peersBySpace: Record<string, T[]>, rootPath: string): T[] | undefined {
+  if (peersBySpace[rootPath]) return peersBySpace[rootPath]
+  const key = Object.keys(peersBySpace).find((candidate) => sameSpacePath(candidate, rootPath))
+  return key ? peersBySpace[key] : undefined
+}
+
 /** Chemin relatif (séparateurs « / ») de `filePath` dans `rootPath`, ou null s'il n'en fait pas partie. */
 export function relativeSpacePath(rootPath: string, filePath: string): string | null {
-  const root = normalizeSpacePath(rootPath)
-  const file = normalizeSpacePath(filePath)
+  const root = normalizeSpacePath(rootPath).normalize('NFC')
+  const file = normalizeSpacePath(filePath).normalize('NFC')
   const caseInsensitive = /^[a-z]:\//i.test(root)
   const [rootKey, fileKey] = caseInsensitive ? [root.toLowerCase(), file.toLowerCase()] : [root, file]
   return fileKey.startsWith(`${rootKey}/`) ? file.slice(root.length + 1) : null
@@ -54,9 +71,8 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
   const spacesKey = options.spaces.join('\n')
   const channels = useMemo(() => {
     const spaces = spacesKey ? spacesKey.split('\n') : []
-    const ordered = activeRoot && spaces.includes(activeRoot)
-      ? [activeRoot, ...spaces.filter((space) => space !== activeRoot)]
-      : spaces
+    const active = activeRoot ? spaces.find((space) => sameSpacePath(space, activeRoot)) : undefined
+    const ordered = active ? [active, ...spaces.filter((space) => space !== active)] : spaces
     return ordered.slice(0, MAX_SPACE_CHANNELS)
   }, [spacesKey, activeRoot])
 
@@ -132,7 +148,7 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
   useEffect(() => {
     for (const [rootPath, presence] of presencesRef.current) {
       const editing = editingFilePath ? relativeSpacePath(rootPath, editingFilePath) : null
-      presence.setLocation(rootPath === activeRoot, editing)
+      presence.setLocation(activeRoot !== null && sameSpacePath(rootPath, activeRoot), editing)
     }
   }, [activeRoot, editingFilePath, presenceRevision])
 

@@ -15,7 +15,7 @@ import { useSearchIndex } from './hooks/useSearchIndex'
 import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
-import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
+import { normalizeSpacePath, peersForSpace, useSpacePresences } from './hooks/useSpacePresences'
 import type { SharedSnapshot } from './lib/realtime/sharedModel'
 import { readCaretAnchor, type CaretAnchor } from './lib/realtime/caretAnchor'
 import { alignContainerIds, alignSnapshotIds, editorBlockToShared, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
@@ -1783,7 +1783,7 @@ export default function App2() {
                   onDetach={() => rootPath && handleSpaceRemove(rootPath)}
                   favoriteFilePaths={favoriteFilePaths}
                   onToggleFileFavorite={handleFileFavorite}
-                  peers={rootPath ? peersBySpace[rootPath] : undefined}
+                  peers={rootPath ? peersForSpace(peersBySpace, rootPath) : undefined}
                 />
               } />
 

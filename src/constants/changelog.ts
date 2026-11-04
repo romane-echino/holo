@@ -2,6 +2,15 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.3',
+    releasedAt: '2026-11-04',
+    items: [
+      'Temps réel : le paragraphe, la cellule de tableau ou l\'élément de liste où se trouve un collègue est encadré à sa couleur, avec ses initiales.',
+      'Temps réel : cliquer sur l\'avatar d\'un collègue en haut du document fait défiler jusqu\'à l\'endroit où il se trouve.',
+      'Espaces : les collègues connectés apparaissent dans la liste des espaces et dans l\'arborescence même quand le chemin de l\'espace s\'écrit différemment chez eux (Windows, « / » final, accents), et dès qu\'ils ont un document de l\'espace ouvert.',
+    ],
+  },
+  {
     version: '0.9.2',
     releasedAt: '2026-11-04',
     items: [

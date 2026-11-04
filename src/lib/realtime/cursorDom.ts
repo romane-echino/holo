@@ -2,7 +2,7 @@
  * Correspondance entre la sélection du navigateur et une position de curseur
  * partageable (bloc, champ éditable du bloc, position dans le texte).
  */
-import type { RealtimeCursor } from './types'
+import type { RealtimeCursor, RealtimePeer } from './types'
 
 const EDITOR_ROOT_SELECTOR = '[data-testid="block-editor"]'
 const EDITABLE_SELECTOR = '[contenteditable="true"]'
@@ -33,12 +33,40 @@ export function readLocalCursor(): RealtimeCursor | null {
   return { block: topLevelBlocks(root).indexOf(topBlock), field: Math.max(0, field), offset: prefix.toString().length }
 }
 
-/** Rectangle (coordonnées écran) où dessiner le curseur d'un autre participant. */
-export function locateCursorRect(cursor: RealtimeCursor): DOMRect | null {
+/** Champ éditable où se trouve le curseur d'un autre participant. */
+export function locateCursorField(cursor: RealtimeCursor): HTMLElement | null {
   const root = document.querySelector(EDITOR_ROOT_SELECTOR)
   if (!root) return null
   const block = topLevelBlocks(root)[cursor.block]
-  const editable = block?.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)[cursor.field]
+  return block?.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)[cursor.field] ?? null
+}
+
+/** Zone à encadrer autour de ce champ : la cellule de tableau, la ligne de l'élément de liste, ou le bloc de texte. */
+export function cursorFieldFrame(field: HTMLElement): HTMLElement {
+  const cell = field.closest<HTMLElement>('td, th')
+  if (cell) return cell
+  if (field.hasAttribute('data-list-text')) return field.parentElement ?? field
+  return field
+}
+
+/** Événement : mettre en évidence le cadre d'un participant (detail : { clientId }). */
+export const REVEAL_PEER_EVENT = 'holo:reveal-peer'
+
+/**
+ * Amène à l'écran le bloc où se trouve un participant (clic sur son avatar)
+ * et le met en évidence un instant. Faux s'il n'est pas dans le texte.
+ */
+export function revealPeer(peer: RealtimePeer): boolean {
+  const field = peer.cursor ? locateCursorField(peer.cursor) : null
+  if (!field) return false
+  cursorFieldFrame(field).scrollIntoView({ block: 'center', behavior: 'smooth' })
+  window.dispatchEvent(new CustomEvent(REVEAL_PEER_EVENT, { detail: { clientId: peer.clientId } }))
+  return true
+}
+
+/** Rectangle (coordonnées écran) où dessiner le curseur d'un autre participant. */
+export function locateCursorRect(cursor: RealtimeCursor): DOMRect | null {
+  const editable = locateCursorField(cursor)
   if (!editable) return null
   const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT)
   let remaining = cursor.offset

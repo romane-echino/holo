@@ -17,7 +17,7 @@ import type { ContextMenuAction } from '../components/ContextMenu'
 import type { LucideIcon } from 'lucide-react'
 import { AbstractPanel } from './AbstractPanel'
 import { PeerAvatars } from './PeerAvatars'
-import { uniquePeers } from '../lib/realtime/peers'
+import { isInSpace, uniquePeers } from '../lib/realtime/peers'
 import type { SpacePeer } from '../lib/realtime/spacePresence'
 import { relativeSpacePath } from '../hooks/useSpacePresences'
 
@@ -464,7 +464,7 @@ export function SpacePanel({
   peers,
 }: SpacePanelProps) {
   const { setFileMetaByPath, fileMetaByPath } = useWorkspace()
-  const presentPeers = useMemo(() => uniquePeers((peers ?? []).filter((peer) => peer.active)), [peers])
+  const presentPeers = useMemo(() => uniquePeers((peers ?? []).filter(isInSpace)), [peers])
   const treeEditors = useMemo(() => {
     const editors = new Map<string, SpacePeer[]>()
     for (const peer of presentPeers) {

@@ -10,6 +10,7 @@ import { notifyError } from '../lib/notify'
 import { getHistoryOverride } from '../lib/editorFlush'
 import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/types'
 import { RemoteCursors } from './RemoteCursors'
+import { revealPeer } from '../lib/realtime/cursorDom'
 import { PeerAvatars } from './PeerAvatars'
 import { describeRealtimeConnectionFailure } from '../popup/RealtimeSetup'
 import { EditorFileContext } from './MarkdownEditor/EditorFileContext'
@@ -381,7 +382,13 @@ function RealtimePresence({ status, peers, detail }: { status: RealtimeStatus | 
       : label
   return (
     <span className="flex items-center gap-1.5" title={title} data-testid="realtime-presence" data-status={status}>
-      <PeerAvatars peers={peers} max={4} size="md" />
+      <PeerAvatars
+        peers={peers}
+        max={4}
+        size="md"
+        onPeerClick={(peer) => { revealPeer(peer) }}
+        peerTitle={(peer) => (peer.cursor ? `Aller où se trouve ${peer.name}` : `${peer.name} n'est pas dans le texte du document`)}
+      />
       <span className={cn(
         'flex items-center gap-1.5 text-xs',
         isLive ? 'text-holo-success' : isProblem ? 'text-holo-warning' : 'text-holo-text-faint',

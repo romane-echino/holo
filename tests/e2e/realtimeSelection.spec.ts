@@ -70,9 +70,9 @@ async function selectWord(locator: Locator, word: string) {
   }, word)
 }
 
-async function openBoth() {
+async function openBoth(initial = INITIAL) {
   const people: Person[] = ['alice', 'bob']
-  const repository = await setupSharedRepository(people, { [DOCUMENT]: INITIAL })
+  const repository = await setupSharedRepository(people, { [DOCUMENT]: initial })
   const launched: Partial<Record<Person, Launched>> = {}
   for (const person of people) {
     const root = repository.clones[person]
@@ -175,6 +175,58 @@ test.describe('Sélection et historique en direct', () => {
       expect(xs.length).toBeGreaterThan(10)
       const backwards = xs.filter((x, index) => index > 0 && x < xs[index - 1] - 20)
       expect(backwards, `positions successives : ${xs.filter((x, index) => index === 0 || x !== xs[index - 1]).join(' ')}`).toEqual([])
+    } finally {
+      await session.close()
+    }
+  })
+
+  test('le bloc où se trouve un collègue est encadré, et cliquer sur son avatar y amène', async () => {
+    test.skip(!(await relayAvailable()), 'Runtime Codenotch local ou projet holo-realtime indisponible')
+    const filler = Array.from({ length: 40 }, (_, index) => `Ligne de remplissage ${index + 1}.\n`).join('\n')
+    const session = await openBoth(`${INITIAL}\n${filler}\nTout en bas.\n`)
+    try {
+      const { alice, bob } = session
+      const frame = alice.locator('[data-remote-block="bob"]')
+      const near = (a: { x: number; y: number; width: number; height: number } | null, b: { x: number; y: number; width: number; height: number } | null) =>
+        Boolean(a && b && Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2 && Math.abs(a.width - b.width) <= 2 && Math.abs(a.height - b.height) <= 2)
+
+      // Une cellule : le cadre est celui de la cellule.
+      const cell = (page: Page) => page.locator('table td[data-table-cell-key]').filter({ hasText: 'cellule' }).first()
+      await placeCaret(bob, cell(bob).locator('[contenteditable="true"]'), 'end')
+      await expect(frame).toBeVisible({ timeout: 10_000 })
+      await expect.poll(async () => near(await frame.boundingBox(), await cell(alice).boundingBox()), { timeout: 10_000 }).toBe(true)
+
+      // Un élément de liste : le cadre entoure la ligne de l'élément, pas toute la liste.
+      const item = (page: Page) => page.locator('[data-list-text]').filter({ hasText: 'Item deux' })
+      await placeCaret(bob, item(bob), 'end')
+      await expect.poll(async () => {
+        const [box, row] = [await frame.boundingBox(), await item(alice).evaluate((element) => {
+          const rect = element.parentElement!.getBoundingClientRect()
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        })]
+        return Boolean(box && Math.abs(box.y + 4 - row.y) <= 2 && Math.abs(box.height - 8 - row.height) <= 2)
+      }, { timeout: 10_000 }).toBe(true)
+
+      // Bob tout en bas, Alice en haut : cliquer sur son avatar amène son bloc à l'écran.
+      const bottom = (page: Page) => page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Tout en bas.' })
+      await placeCaret(bob, bottom(bob), 'end')
+      const bottomFrame = () => bottom(alice).evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return { x: rect.x - 8, y: rect.y - 4, width: rect.width + 16, height: rect.height + 8 }
+      })
+      await expect.poll(async () => near(await frame.boundingBox(), await bottomFrame()), { timeout: 10_000 }).toBe(true)
+      // En-tête du document (l'en-tête flottant n'apparaît qu'en descendant).
+      const header = alice.getByTestId('realtime-presence').last()
+      await header.scrollIntoViewIfNeeded()
+      const inView = async () => {
+        const box = await bottom(alice).boundingBox()
+        const height = await alice.evaluate(() => window.innerHeight)
+        return Boolean(box && box.y >= 0 && box.y + box.height <= height)
+      }
+      expect(await inView()).toBe(false)
+      await header.getByRole('button', { name: 'bob' }).click()
+      await expect.poll(inView, { timeout: 5_000 }).toBe(true)
+      await expect.poll(async () => near(await frame.boundingBox(), await bottomFrame()), { timeout: 5_000 }).toBe(true)
     } finally {
       await session.close()
     }

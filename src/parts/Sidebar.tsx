@@ -7,7 +7,7 @@ import { ContextMenu } from '../components/ContextMenu'
 import type { ContextMenuAction } from '../components/ContextMenu'
 import type { SpacePeer } from '../lib/realtime/spacePresence'
 import { PeerAvatars } from './PeerAvatars'
-import { uniquePeers } from '../lib/realtime/peers'
+import { isInSpace, uniquePeers } from '../lib/realtime/peers'
 
 export type HoloNavItem = {
     label: string;
@@ -75,7 +75,7 @@ function SpaceNavItem({ item, isFavorite, spaceStatus, peers = [], onContextMenu
     const navigate = useNavigate()
     const { pathname } = useLocation()
     const isActive = pathname === item.to
-    const present = uniquePeers(peers.filter((peer) => peer.active))
+    const present = uniquePeers(peers.filter(isInSpace))
 
     return (
         <button
