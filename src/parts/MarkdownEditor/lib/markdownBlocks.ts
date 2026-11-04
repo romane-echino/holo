@@ -119,7 +119,7 @@ export function buildTableMetadataComment(metadata: TableMetadata | undefined): 
   return `<!-- holo:table ${JSON.stringify(payload)} -->`
 }
 
-const IMAGE_DISPLAY_MODES: ImageDisplayMode[] = ['full', 'banner', 'thumbnail', 'quarter', 'half']
+const IMAGE_DISPLAY_MODES: ImageDisplayMode[] = ['auto', 'full', 'banner', 'thumbnail', 'quarter', 'half']
 
 export function parseImageMetadataComment(value: string): ImageMetadata | null {
   const match = value.trim().match(/^<!--\s*holo:image\s+([\s\S]+?)\s*-->$/)
@@ -135,7 +135,8 @@ export function parseImageMetadataComment(value: string): ImageMetadata | null {
 }
 
 function hasNonDefaultImageMetadata(metadata: ImageMetadata | undefined): boolean {
-  return Boolean(metadata?.displayMode && metadata.displayMode !== 'full')
+  // Taille réelle : le défaut, rien à écrire. « Pleine largeur » s'écrit.
+  return Boolean(metadata?.displayMode && metadata.displayMode !== 'auto')
 }
 
 export function buildImageMetadataComment(metadata: ImageMetadata | undefined): string | null {

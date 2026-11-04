@@ -37,7 +37,8 @@ export type BlockquoteNode   = { type: 'blockquote';   children: BlockNode[] }
 export type ListItemNode     = { type: 'listItem';     spread: boolean; checked: boolean | null; children: BlockNode[] }
 export type ListNode         = { type: 'list';         ordered: boolean; start: number | null; spread: boolean; children: ListItemNode[]; data?: Record<string, unknown> }
 export type ThematicBreakNode = { type: 'thematicBreak' }
-export type ImageDisplayMode = 'full' | 'banner' | 'thumbnail' | 'quarter' | 'half'
+/** auto (défaut) : taille réelle, au plus la largeur du document ; full : étirée sur toute la largeur */
+export type ImageDisplayMode = 'auto' | 'full' | 'banner' | 'thumbnail' | 'quarter' | 'half'
 export type ImageMetadata    = { displayMode?: ImageDisplayMode }
 export type ImageNode        = {
   type: 'image'

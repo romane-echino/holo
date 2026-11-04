@@ -7,7 +7,7 @@
  */
 
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
-import { Copy, Expand, FolderOpen, ImageOff, Link2, LayoutGrid, RectangleHorizontal, Square, X } from 'lucide-react'
+import { Copy, Expand, FolderOpen, ImageOff, Link2, LayoutGrid, Maximize, RectangleHorizontal, Square, X } from 'lucide-react'
 import type { ImageDisplayMode, ImageMetadata, ImageNode } from '../lib/types'
 import { cn } from '../../../utils/global'
 import { ContextMenu, type ContextMenuAction } from '../../../components/ContextMenu'
@@ -23,6 +23,7 @@ interface ImageBlockProps {
 }
 
 const DISPLAY_MODE_OPTIONS: { value: ImageDisplayMode; label: string; Icon: typeof Expand }[] = [
+  { value: 'auto', label: 'Taille réelle', Icon: Maximize },
   { value: 'full', label: 'Pleine largeur', Icon: Expand },
   { value: 'banner', label: 'Bannière', Icon: RectangleHorizontal },
   { value: 'thumbnail', label: 'Miniature', Icon: Square },
@@ -44,7 +45,7 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const modeMenuRef = useRef<HTMLDivElement>(null)
 
-  const displayMode: ImageDisplayMode = node.data?.holoImage?.displayMode ?? 'full'
+  const displayMode: ImageDisplayMode = node.data?.holoImage?.displayMode ?? 'auto'
   const documentPath = useEditorFilePath()
   // Incrémenté quand des fichiers arrivent : une image ajoutée par un collègue
   // n'existe chez nous qu'après la récupération git.
@@ -81,7 +82,7 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
     setIsModeMenuOpen(false)
     if (!onChange || mode === displayMode) return
     const holoImage: ImageMetadata = { ...(node.data?.holoImage ?? {}) }
-    if (mode === 'full') delete holoImage.displayMode
+    if (mode === 'auto') delete holoImage.displayMode
     else holoImage.displayMode = mode
     onChange({ ...node, data: { ...(node.data ?? {}), holoImage } })
   }
@@ -130,7 +131,12 @@ export function ImageBlock({ node, isSelected, onSelect, onChange }: ImageBlockP
       imgClassName += ' h-auto w-full'
       break
     case 'full':
+      imgClassName += ' h-auto w-full'
+      break
+    case 'auto':
     default:
+      // Taille réelle, au plus la largeur du document : une icône reste petite.
+      figureWidthClass = 'w-fit max-w-full'
       imgClassName += ' h-auto max-w-full'
       break
   }
