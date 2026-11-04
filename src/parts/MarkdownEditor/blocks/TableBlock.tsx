@@ -977,13 +977,14 @@ export const TableBlock = forwardRef<InlineEditorHandle, TableBlockProps>(
       const hinted = hint?.field && 'cell' in hint.field && hint.field.cell.rowId === hintRow && hint.field.cell.columnId === hintColumn
         ? (() => {
             const nodes = (tableRef.current.rows.find((row) => row.id === hintRow)?.cells[hintColumn] ?? []) as InlineNode[]
-            return visibleOffset(inlinesToMarkdown(nodes), nodes, hint.index)
+            const markdown = inlinesToMarkdown(nodes)
+            return { offset: visibleOffset(markdown, nodes, hint.index), end: hint.end === undefined ? undefined : visibleOffset(markdown, nodes, hint.end) }
           })()
         : null
       const splice = hinted === null && editable ? singleSpliceDiff(sameSpaces(pending.text), sameSpaces(editable.textContent ?? '')) : null
-      if (hinted !== null) offset = hinted
+      if (hinted !== null) offset = hinted.offset
       else if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
-      cellRefs.current.get(pending.cellKey)?.focus({ type: 'offset', offset })
+      cellRefs.current.get(pending.cellKey)?.focus({ type: 'offset', offset, end: hinted?.end })
     }, [cellRevisions])
     const menuRef = useRef<HTMLDivElement | null>(null)
     const resizingRef = useRef<{ colId: string; startX: number; startWidth: number; moved?: boolean } | null>(null)

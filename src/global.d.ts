@@ -260,7 +260,6 @@ declare global {
     unsubscribe: (documentId: string) => Promise<{ ok: true }>
     getState: (documentId: string) => Promise<HoloRealtimeState>
     getUpstreamContent: (filePath: string) => Promise<string | null>
-    mergeText: (base: string, ours: string, theirs: string) => Promise<string>
     pushUpdate: (documentId: string, payload: { update: string; clientId: string; workspace?: string; path?: string }) => Promise<{ id: string }>
     pushAwareness: (documentId: string, payload: { awareness: string; clientId: string }) => Promise<{ ok: true }>
     compact: (documentId: string, payload: { state: string; expectedVersion: number; mergedUpdateIds?: string[]; reset?: boolean; workspace?: string; path?: string }) => Promise<{ ok: true; version: number; epoch: string } | { ok: false; conflict: true }>

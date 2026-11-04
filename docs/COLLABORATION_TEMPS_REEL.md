@@ -1,11 +1,14 @@
 # Édition en temps réel (CRDT) avec Codenotch comme relais
 
-État : **version 1 implémentée**.
+État : **version 2 implémentée** (document partagé bloc par bloc, depuis la 0.9).
 
 - Relais : [holo-realtime/](../holo-realtime/README.md).
-- Client : `electron/realtime.js` (transport), `src/lib/realtime/session.ts` (Yjs) et
+- Client : `electron/realtime.js` (transport), `src/lib/realtime/sharedModel.ts` (modèle
+  partagé), `src/lib/realtime/blockSession.ts` (session Yjs) et
   `src/hooks/useRealtimeDocument.ts`.
-- Test : `tests/e2e/realtimeCollab.spec.ts`.
+- Tests : `sharedModel.spec.ts` et `blockSession.spec.ts` (sans relais réel),
+  `realtimeCollab`, `realtimeTeamDocument`, `realtimeAllCommands`, `realtimeSelection`,
+  `realtimeWindows` (plusieurs instances de Holo) ; `realtimeChaos` et `realtimeStress` à la demande.
 
 La section « Implémentation » plus bas décrit les choix faits. Le reste de ce document est
 l'étude initiale.
@@ -98,13 +101,31 @@ décroché parce qu'il avait 256 évènements de retard.
 4. Coordination de l'écrivain disque et git, tests à plusieurs instances, comme
    `tests/e2e/gitConcurrentEdit.spec.ts`.
 
-## Implémentation (v1)
+## Implémentation
 
-**Document partagé.** Un `Y.Text` contient le Markdown tel que l'éditeur l'émet. On a renoncé
-au `Y.Array` de blocs : une saisie ne touche qu'un bloc à la fois, donc un diff préfixe/suffixe
-la traduit en une seule opération Yjs, et la réconciliation par bloc (`reconcileBlocks`)
-préserve déjà le focus lors des mises à jour reçues. Deux saisies concurrentes dans le même
-paragraphe sont fusionnées au caractère près.
+**Document partagé (v2).** Le document est un arbre de blocs Yjs :
+
+| Racine | Contenu |
+| --- | --- |
+| `frontmatter` | `Y.Text`, l'en-tête YAML |
+| `footnotes` | `Y.Map<Y.Text>`, les notes de bas de page |
+| `order` | `Y.Array<id>`, l'ordre des blocs |
+| `blocks` | `Y.Map<Y.Map>`, le contenu de chaque bloc |
+
+Un bloc texte (paragraphe, titre, citation, code, formule…) porte son Markdown dans un
+`Y.Text`. Un tableau a ses colonnes et ses lignes (ordre + contenu par identifiant) et un
+`Y.Text` par cellule. Une liste a ses éléments, chacun avec son texte, son niveau et sa case à
+cocher. L'ordre est séparé du contenu : déplacer un bloc, trier un tableau ou réordonner une
+liste ne touche que l'ordre, si bien qu'une saisie en cours n'est jamais perdue.
+
+L'éditeur décrit le document par une photo (blocs avec leurs identifiants) ; une saisie locale
+est la différence entre deux photos, appliquée aux seuls blocs, cellules ou éléments qui ont
+changé. Dans un même texte, la fusion se fait au caractère près.
+
+La v1 partageait un seul `Y.Text` contenant tout le Markdown. Elle est retirée : une structure
+modifiée pendant qu'un collègue tapait (tableau trié, bloc déplacé) pouvait mélanger les
+saisies. Les identifiants de documents ont changé (`document-v2`), si bien qu'une 0.8 et une
+0.9 ne rejoignent pas la même session.
 
 **Identité.** `UUID v5(URL du dépôt + chemin du fichier)`, calculé par chaque poste. Seuls les
 espaces liés à un dépôt distant sont partagés.
@@ -113,8 +134,10 @@ espaces liés à un dépôt distant sont partagés.
 - Personne n'est établi sur le document : le poste redémarre la session à partir de son fichier
   (`PUT /state` avec `reset`, nouvelle époque). C'est git qui fait foi.
 - Des participants sont établis : le poste adopte leur état et y fusionne ses éventuelles
-  modifications locales, par une fusion 3 voies dont la base est la dernière version poussée
-  du fichier.
+  modifications locales, bloc par bloc. La base est l'état Yjs que le poste a gardé de la
+  session (chiffré, enregistré toutes les 300 ms), ce qui évite tout doublon après une
+  fermeture ou un plantage ; à défaut, la dernière version poussée du fichier. Un ajout que la
+  session contient déjà (tapé avant qu'elle ne redémarre) n'est pas ajouté une seconde fois.
 - Deux arrivées simultanées sont départagées par la version du document : le second reçoit
   `409` et rejoint la session du premier.
 
@@ -123,7 +146,10 @@ manque, puis renvoie ce qui manque au serveur (vecteur d'état). Si l'époque a 
 rejoint à neuf.
 
 **Disque et git.** Chaque participant continue d'écrire (fusion 3 voies) et de committer comme
-d'habitude. Les commits des participants contiennent les mêmes modifications, mais à des
+d'habitude. Le document partagé garde la liste de tous ceux qui ont rejoint la session (même
+hors ligne ou relancés) : un commit reçu de l'un d'eux est un instantané de l'état partagé, et la
+synchronisation garde alors le fichier en direct tel quel au lieu de réinjecter cette version
+plus ancienne. Les commits des participants contiennent les mêmes modifications, mais à des
 instants différents : rejouer ceux de l'un sur ceux de l'autre (rebase) peut buter sur des
 états intermédiaires. Dans ce cas la synchronisation fusionne les états finaux. Un conflit sur
 un document en direct se résout avec la version locale, l'état partagé, qui contient déjà les
@@ -139,12 +165,13 @@ l'écriture les préserve sur disque jusqu'à ce qu'elles arrivent par la sessio
 toute la session. L'en-tête du document affiche les avatars et l'état (« En direct »,
 « Reconnexion… »).
 
-**Mises à jour reçues dans l'éditeur.** Les blocs des deux versions sont alignés par plus
-longue sous-séquence commune (`alignSequences`). Un bloc inchangé garde son identité, même si
-des blocs sont insérés au-dessus. Un tableau ou une liste modifié garde aussi son identité et
-ne remonte que la cellule ou l'élément changé ; si c'est celui où l'on tape, le curseur est
-replacé au même endroit du texte. Les lignes vides locales, absentes du Markdown, sont
-conservées à leur place.
+**Mises à jour reçues dans l'éditeur.** Elles sont appliquées par identifiant : seuls les
+blocs changés sont redessinés, et un tableau ou une liste ne met à jour que la cellule ou
+l'élément changé. Avant d'appliquer une modification reçue, la session attache le curseur au
+caractère qui le précède (position relative Yjs) ; après, il est remis à la nouvelle place de
+ce caractère, en tenant compte de la syntaxe Markdown invisible à l'écran. Si un collègue tape
+exactement au même endroit, chacun garde sa propre saisie d'un seul tenant. Une sélection est
+ancrée de la même façon, par son premier et son dernier caractère : elle reste sur le même texte.
 
 **Présence dans les espaces.** Chaque espace partagé a son propre canal sur le relais :
 identifiant `HMAC(clé du dépôt, "space")`, présence chiffrée comme celle des documents, aucun
@@ -169,7 +196,9 @@ poste : adresse du relais, jeton chiffré avec `safeStorage`.
 - La compaction n'a lieu qu'à la jonction, au-delà de 200 modifications en attente.
 - Pas de contrôle d'accès par espace sur le relais. Les routes sont publiques. Le contenu est
   chiffré et les identifiants sont dérivés d'une clé que seuls les clones du dépôt connaissent.
-- Une ligne vide n'existe pas en Markdown : elle reste locale tant qu'on n'y a rien écrit, et
-  disparaît à la réouverture du document.
+- Une ligne vide n'existe pas en Markdown : elle est partagée pendant la session mais n'est
+  pas enregistrée dans le fichier, et disparaît à la réouverture du document.
+- Deux personnes qui tapent au même instant exactement au même endroit d'un texte voient leurs
+  saisies l'une à côté de l'autre, dans un ordre que rien ne permet de choisir.
 - Les liens d'images écrits avant la 0.8 sont relatifs à la racine de l'espace. Holo les
   affiche, mais Gitea ne les trouve pas pour un document rangé dans un sous-dossier.

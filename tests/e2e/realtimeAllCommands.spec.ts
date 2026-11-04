@@ -343,7 +343,16 @@ test.describe('Toutes les commandes, en direct (relais Codenotch)', () => {
       await paragraph(bob, 'Début.').first().click()
       await dispatchImage(paragraph(bob, 'Début.').first(), 'drop', 'photo-bob.png', 'image/png', PNG_BASE64)
       for (const page of [alice, bob]) {
-        await expect(page.locator('img[src^="data:image"]')).toHaveCount(3, { timeout: 60_000 })
+        try {
+          await expect(page.locator('img[src^="data:image"]')).toHaveCount(3, { timeout: 60_000 })
+        } catch (error) {
+          // Diagnostic : fichiers sur disque et images affichées de chaque côté.
+          for (const person of people) {
+            const images = await launched[person]!.page.locator('img').evaluateAll((nodes) => nodes.map((node) => `${(node as HTMLImageElement).getAttribute('src')?.slice(0, 40)} (${node.closest('[data-block-id]')?.getAttribute('data-block-type')})`))
+            console.log(`── ${person} : images affichées ──\n${images.join('\n')}\n── ${person} : fichier ──\n${await fs.readFile(path.join(repository.clones[person], DOCUMENT), 'utf8')}`)
+          }
+          throw error
+        }
       }
 
       // 4. Convergence : documents identiques, tout est là, la saisie de Bob est intacte.

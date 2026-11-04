@@ -32,7 +32,7 @@ import { domToInlines } from '../lib/domToInlines'
 import { inlinesToHtml } from '../lib/inlinesToHtml'
 import { inlinesToMarkdown } from '../lib/inlinesToMarkdown'
 import { getCaretHint, registerPendingEditFlusher } from '../../../lib/editorFlush'
-import { visibleOffset } from '../../../lib/realtime/caretAnchor'
+import { placeSelection, visibleOffset } from '../../../lib/realtime/caretAnchor'
 import { alignSequences } from '../../../lib/alignSequences'
 import { sameSpaces, singleSpliceDiff } from '../../../lib/realtime/encoding'
 import { ensureListIds } from '../lib/sharedSnapshot'
@@ -87,25 +87,11 @@ function isLostEmptyTask(item: ListBlockItem): boolean {
 }
 
 /** Place le curseur à `offset` caractères du début du texte de `element`. */
-function placeCaretAtTextOffset(element: HTMLElement, offset: number) {
+function placeCaretAtTextOffset(element: HTMLElement, offset: number, end?: number) {
+  if (placeSelection(element, offset, end)) return
   const selection = window.getSelection()
   if (!selection) return
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-  let remaining = offset
-  let node = walker.nextNode()
   const range = document.createRange()
-  while (node) {
-    const length = node.textContent?.length ?? 0
-    if (remaining <= length) {
-      range.setStart(node, remaining)
-      range.collapse(true)
-      selection.removeAllRanges()
-      selection.addRange(range)
-      return
-    }
-    remaining -= length
-    node = walker.nextNode()
-  }
   range.selectNodeContents(element)
   range.collapse(false)
   selection.removeAllRanges()
@@ -272,17 +258,20 @@ export const ListBlock = forwardRef<InlineEditorHandle, ListBlockProps>(
       const element = itemRefs.current.get(pending.id)
       if (!element) return
       let offset = pending.offset
-      // Curseur suivi par la session dans le texte partagé de l'élément, sinon estimation.
+      let end: number | undefined
+      // Curseur (ou sélection) suivi par la session dans le texte partagé de l'élément, sinon estimation.
       const hint = getCaretHint()
       const item = itemsRef.current.find((entry) => entry.id === pending.id)
       if (hint?.field && 'item' in hint.field && hint.field.item === pending.id && item) {
-        offset = visibleOffset(inlinesToMarkdown(item.inlines), item.inlines, hint.index)
+        const markdown = inlinesToMarkdown(item.inlines)
+        offset = visibleOffset(markdown, item.inlines, hint.index)
+        if (hint.end !== undefined) end = visibleOffset(markdown, item.inlines, hint.end)
       } else {
         const splice = singleSpliceDiff(sameSpaces(pending.text), sameSpaces(element.textContent ?? ''))
         if (splice && splice.index < offset) offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
       }
       element.focus({ preventScroll: true })
-      placeCaretAtTextOffset(element, offset)
+      placeCaretAtTextOffset(element, offset, end)
     }, [itemRevisions])
 
     // ── Focus helper ──────────────────────────────────────────────────────────

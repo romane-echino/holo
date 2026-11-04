@@ -97,7 +97,6 @@ async function focusEnd(page: Page, locator: Locator) {
 
 /** Journal de session (jonctions, redémarrages) de chaque instance, joint au rapport. */
 function captureSessionLogs(page: Page, person: Person, log: string[]) {
-  void page.evaluate(() => { (globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__ = true }).catch(() => undefined)
   page.on('console', (message) => {
     if (message.text().includes('[holo-realtime]')) log.push(`${person} : ${message.text()}`)
   })
@@ -132,6 +131,18 @@ async function deleteToken(page: Page, token: string): Promise<boolean> {
   if (!selected) return false
   await page.keyboard.press('Backspace')
   return true
+}
+
+/** Le jeton est-il encore affiché (après une suppression qui aurait dû le retirer) ? */
+async function stillShown(page: Page, token: string): Promise<string | null> {
+  return page.evaluate((target) => {
+    for (const editable of Array.from(document.querySelectorAll<HTMLElement>('[contenteditable="true"]'))) {
+      if (!(editable.textContent ?? '').includes(target)) continue
+      const kind = editable.closest('[data-list-item-id]') ? 'liste' : editable.closest('td') ? 'cellule' : 'paragraphe'
+      return `${kind} : ${JSON.stringify(editable.textContent)}`
+    }
+    return null
+  }, token)
 }
 
 async function act(page: Page, person: Person, ledger: Ledger, next: () => number, counter: { value: number }) {
@@ -198,6 +209,10 @@ async function act(page: Page, person: Person, ledger: Ledger, next: () => numbe
     if (await deleteToken(page, victim)) {
       ledger.deleted.add(victim)
       count('suppression')
+      // Diagnostic : suppression restée sans effet à l'écran.
+      await page.waitForTimeout(300)
+      const shown = await stillShown(page, victim).catch(() => null)
+      if (shown) console.log(`[diagnostic] ${person} : ${victim} toujours affiché après suppression (${shown})`)
     }
   }
 }
@@ -339,35 +354,6 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
           break
         }
       }
-      // Suppressions locales qui ont emporté un jeton perdu (et qui ne sont pas celles de son auteur).
-      const lostTokens = problems.map((problem) => problem.split(' ')[0])
-      // Parcours détaillé des deux premiers jetons perdus (émis par l'éditeur, envoyés, retirés…).
-      for (const value of lostTokens.slice(0, 2)) {
-        const stem = value.slice(0, -1)
-        const trail = log.filter((line) => line.includes(stem) && /éditeur émet|envoi|version reçue retire|saisie enregistrée|bloc redessiné/.test(line))
-        log.push(`── parcours de ${value} ──`, ...trail.slice(0, 25).map((line) => `  ${line.slice(0, 300)}`))
-      }
-      // Dans ce test, une suppression normale retire exactement un jeton de son auteur ;
-      // toute autre suppression est suspecte.
-      const relevant = log.filter((line) => {
-        if (line.startsWith('  ')) return true
-        if (/éditeur émet|\] envoi |saisie enregistrée|bloc redessiné/.test(line)) return false
-        if (line.includes('version reçue retire')) {
-          // Normal : la suppression d'un jeton par son auteur. Suspect : tout le reste.
-          const removed = /"removed":"((?:[^"\\]|\\.)*)"/.exec(line)?.[1] ?? ''
-          return lostTokens.some((value) => removed.includes(value.slice(0, 3)) && (removed.includes(value) || value.startsWith(removed.trim())))
-            || /(al|bo|ch)\d+(?!\d*q)/.test(removed)
-        }
-        if (!line.includes('suppression locale')) return true
-        const author = line.split(' : ')[0] as Person
-        const removed = /"removed":"((?:[^"\\]|\\.)*)"/.exec(line)?.[1] ?? ''
-        const inserted = /"inserted":"((?:[^"\\]|\\.)*)"/.exec(line)?.[1] ?? ''
-        const ownWholeToken = new RegExp(`^${PREFIX[author]}\\d+q$`).test(removed) && inserted === ''
-        const typingOverSpace = /^\s*$/.test(removed) && inserted.trim().startsWith(PREFIX[author])
-        return !ownWholeToken && !typingOverSpace
-      })
-      log.length = 0
-      log.push(...relevant)
       const summary = PEOPLE.map((person) => `${person} : ${ledgers[person].typed.size} jetons, ${JSON.stringify(ledgers[person].actions)}`).join('\n')
       console.log(`Chaos ${DURATION_MS / 1000} s, graine ${SEED}\n${summary}\n${log.join('\n')}`)
       expect(problems, `${problems.join('\n')}\n\n${summary}\n${log.join('\n')}\n\n${final}`).toEqual([])

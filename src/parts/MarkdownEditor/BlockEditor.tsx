@@ -229,14 +229,15 @@ export interface BlockEditorProps {
  * Place du curseur à l'écran dans un bloc texte redessiné, d'après le curseur
  * suivi par la session dans le texte partagé ; null si inconnue (on estime alors).
  */
-function hintedOffset(block: BlockState): number | null {
+function hintedOffset(block: BlockState): { offset: number; end?: number } | null {
   const hint = getCaretHint()
   if (!hint || hint.blockId !== block.id || hint.field !== null) return null
   const node = block.node as { children?: InlineNode[] }
   if (block.node.type !== 'paragraph' && block.node.type !== 'heading') return null
   const shared = editorBlockToShared(block)
   if (shared.kind !== 'text') return null
-  return visibleOffset(shared.md, node.children ?? [], hint.index)
+  const nodes = node.children ?? []
+  return { offset: visibleOffset(shared.md, nodes, hint.index), end: hint.end === undefined ? undefined : visibleOffset(shared.md, nodes, hint.end) }
 }
 
 export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(function BlockEditor({ markdown, onChange, className, fontScale, onOpenLinkedFile }: BlockEditorProps, ref) {
@@ -387,14 +388,14 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
     let offset = restore.offset
     const hinted = hintedOffset(block)
     if (hinted !== null) {
-      offset = hinted
+      offset = hinted.offset
     } else {
       const splice = element ? singleSpliceDiff(sameSpaces(restore.text), sameSpaces(element.textContent ?? '')) : null
       if (splice && splice.index < offset) {
         offset = Math.max(splice.index, offset + splice.insert.length - splice.remove)
       }
     }
-    blockRefs.current.get(block.id)?.focus({ type: 'offset', offset })
+    blockRefs.current.get(block.id)?.focus({ type: 'offset', offset, end: hinted?.end })
   }, [blocks])
 
 
@@ -421,7 +422,6 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         } else if (BLOCK_TYPES_UPDATED_IN_PLACE.has(block.node.type) && before.node.type === block.node.type) {
           next.push({ id: block.id, node: block.node })
         } else {
-          if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) console.info('[holo-realtime] bloc redessiné', JSON.stringify({ avant: blocksToMarkdown([before]), après: blocksToMarkdown([block]) }))
           remounted.push(block.id)
           next.push(block)
         }

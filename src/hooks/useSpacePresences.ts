@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { SpacePresence, type SpacePeer } from '../lib/realtime/spacePresence'
-import { colorForUser } from '../lib/realtime/session'
+import { colorForUser } from '../lib/realtime/types'
 import { registerCloseTask } from '../lib/editorFlush'
 
 /**

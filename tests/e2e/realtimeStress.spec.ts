@@ -12,7 +12,9 @@
  */
 import { test, expect } from '@playwright/test'
 import crypto from 'node:crypto'
-import { RealtimeSession } from '../../src/lib/realtime/session'
+import { BlockSession } from '../../src/lib/realtime/blockSession'
+import type { SharedSnapshot, SharedTextBlock } from '../../src/lib/realtime/sharedModel'
+import { alignSnapshotIds, markdownToSnapshot, snapshotToMarkdown } from '../../src/parts/MarkdownEditor/lib/sharedSnapshot'
 
 const BASE_URL = (process.env.HOLO_STRESS_URL ?? '').replace(/\/+$/, '')
 const CLIENTS = Number(process.env.HOLO_STRESS_CLIENTS ?? 10)
@@ -146,8 +148,14 @@ class HttpRelay implements HoloRealtimeApi {
   setConfig = async () => ({ ok: true as const })
   testConnection = async () => ({ ok: true })
   resolveDocument = async () => ({ available: false as const, reason: 'disabled' as const })
+  resolveSpace = async () => ({ available: false as const, reason: 'disabled' as const })
   getUpstreamContent = async () => null
-  mergeText = async (_base: string, ours: string) => ours
+  private readonly localStates = new Map<string, { epoch: string | null; state: string; savedAt: number }>()
+  saveLocalState = async (documentId: string, payload: { epoch: string | null; state: string }) => {
+    this.localStates.set(documentId, { ...payload, savedAt: Date.now() })
+    return { ok: true as const }
+  }
+  loadLocalState = async (documentId: string) => this.localStates.get(documentId) ?? null
 
   subscribe = async (documentId: string) => {
     if (!this.streams.has(documentId)) {
@@ -182,46 +190,63 @@ class HttpRelay implements HoloRealtimeApi {
 }
 
 // ─── Participant simulé ───────────────────────────────────────────────────────
+const TOKEN = /p\d+t\d+q/g
+
 class Participant {
-  text: string
+  snapshot: SharedSnapshot
   status: string | null = null
   peers = 0
   readonly relay = new HttpRelay()
-  readonly session: RealtimeSession
-  /** Instant où chaque jeton est apparu dans ce texte */
+  readonly session: BlockSession
+  /** Instant où chaque jeton est apparu dans ce document */
   readonly seenAt = new Map<string, number>()
+  readonly name: string
 
-  constructor(readonly name: string, documentId: string, key: string, initial: string) {
-    this.text = initial
-    this.session = new RealtimeSession(this.relay, { documentId, key }, { name, email: `${name}@example.com`, color: '#888' }, {
-      getEditorMarkdown: () => this.text,
-      applyRemoteMarkdown: (markdown) => {
-        this.text = markdown
+  constructor(name: string, documentId: string, key: string, initial: string) {
+    this.name = name
+    this.snapshot = markdownToSnapshot(initial)
+    this.session = new BlockSession(this.relay, { documentId, key }, { name, email: `${name}@example.com`, color: '#888' }, {
+      getEditorSnapshot: () => this.snapshot,
+      applyRemoteSnapshot: (snapshot) => {
+        this.snapshot = snapshot
         this.markSeen()
       },
       flushLocalEdits: async () => {},
-      getUpstreamMarkdown: async () => null,
-      mergeText: async (_base, ours) => ours,
+      getUpstreamSnapshot: async () => null,
+      alignIds: alignSnapshotIds,
       onPeers: (peers) => { this.peers = peers.length },
       onStatus: (status) => { this.status = status },
     })
   }
 
+  get text() {
+    return snapshotToMarkdown(this.snapshot)
+  }
+
   private markSeen() {
     const now = Date.now()
-    for (const match of this.text.matchAll(/\[[a-z0-9]+-\d+\]/g)) {
+    for (const match of this.text.matchAll(TOKEN)) {
       if (!this.seenAt.has(match[0])) this.seenAt.set(match[0], now)
     }
   }
 
+  /** Tape un mot dans un paragraphe (hors des mots existants), ou en fait un nouveau paragraphe. */
   insert(token: string, random: () => number) {
-    // Insertion hors des jetons existants (un jeton coupé ne se reconnaîtrait plus).
-    const boundaries = [0, this.text.length]
-    for (const match of this.text.matchAll(/\[[a-z0-9]+-\d+\]|\n/g)) boundaries.push(match.index! + match[0].length)
-    const at = boundaries[Math.floor(random() * boundaries.length)]
-    this.text = this.text.slice(0, at) + token + this.text.slice(at)
+    const draft = structuredClone(this.snapshot)
+    const paragraphs = draft.blocks.filter((block): block is SharedTextBlock => block.kind === 'text')
+    if (paragraphs.length === 0 || random() < 0.15) {
+      const at = Math.floor(random() * (draft.blocks.length + 1))
+      draft.blocks.splice(at, 0, { id: `b-${crypto.randomUUID()}`, kind: 'text', md: token })
+    } else {
+      const block = paragraphs[Math.floor(random() * paragraphs.length)]
+      const boundaries = [block.md.length]
+      for (const match of block.md.matchAll(TOKEN)) boundaries.push(match.index! + match[0].length)
+      const at = boundaries[Math.floor(random() * boundaries.length)]
+      block.md = `${block.md.slice(0, at)} ${token}${block.md.slice(at)}`
+    }
+    this.snapshot = draft
     this.seenAt.set(token, Date.now())
-    this.session.onLocalMarkdown(this.text)
+    this.session.onLocalSnapshot(draft)
   }
 }
 
@@ -263,7 +288,7 @@ test.describe('Charge du relais temps réel', () => {
           participant.relay.cut(5000)
         }
         seq += 1
-        const token = `[${participant.name}-${seq}]`
+        const token = `${participant.name}t${seq}q`
         tokens.push({ token, at: Date.now(), author: participant })
         participant.insert(token, random)
       }

@@ -4,7 +4,8 @@
  */
 import { test, expect } from '@playwright/test'
 import { alignSequences } from '../../src/lib/alignSequences'
-import { multiSpliceDiff, rebaseText } from '../../src/lib/realtime/encoding'
+import { multiSpliceDiff, rebaseText, singleSpliceDiff } from '../../src/lib/realtime/encoding'
+import { createRandom } from './support/fakeRelay'
 
 test.describe('alignSequences', () => {
   test('séquences identiques : tout est apparié à l identique', () => {
@@ -183,5 +184,27 @@ test.describe('multiSpliceDiff : limites de mots', () => {
     const after = 'al1q al9q al2q'
     const [splice] = multiSpliceDiff(before, after)
     expect([' al9q', 'al9q ']).toContain(splice.insert)
+  })
+})
+
+test.describe('singleSpliceDiff', () => {
+  test('appliquer la modification redonne exactement le texte cible (aléatoire)', () => {
+    const random = createRandom(7)
+    const alphabet = ['a', 'b', ' ', '\n', 'é', '😀', '|', '#']
+    const randomText = () => Array.from({ length: random.int(30) }, () => random.pick(alphabet)).join('')
+    for (let index = 0; index < 2000; index += 1) {
+      const before = randomText()
+      const after = randomText()
+      const splice = singleSpliceDiff(before, after)
+      if (before === after) {
+        expect(splice).toBeNull()
+        continue
+      }
+      const applied = before.slice(0, splice!.index) + splice!.insert + before.slice(splice!.index + splice!.remove)
+      expect(applied).toBe(after)
+      // Une paire de substitution (emoji) n'est jamais coupée.
+      const cut = before.charCodeAt(splice!.index - 1)
+      expect(cut >= 0xd800 && cut <= 0xdbff).toBe(false)
+    }
   })
 })

@@ -16,7 +16,6 @@ import { useWorkspaceFolders } from './hooks/useWorkspaceFolders'
 import { useLaunchPayloads } from './hooks/useLaunchPayloads'
 import { useRealtimeDocument } from './hooks/useRealtimeDocument'
 import { normalizeSpacePath, useSpacePresences } from './hooks/useSpacePresences'
-import { multiSpliceDiff } from './lib/realtime/encoding'
 import type { SharedSnapshot } from './lib/realtime/sharedModel'
 import { readCaretAnchor, type CaretAnchor } from './lib/realtime/caretAnchor'
 import { alignContainerIds, alignSnapshotIds, editorBlockToShared, markdownToSnapshot, snapshotToMarkdown, splitFrontmatter } from './parts/MarkdownEditor/lib/sharedSnapshot'
@@ -633,11 +632,14 @@ export default function App2() {
     sendLocal: (markdown: string, fromEditor: boolean) => void
     currentSnapshot: () => SharedSnapshot | null
     shouldApplyExternalChanges: () => boolean
+    /** Adresses de tous les participants de la session, même hors ligne */
+    participants: () => string[]
     hasSession: () => boolean
   }>({
     sendLocal: () => {},
     currentSnapshot: () => null,
     shouldApplyExternalChanges: () => true,
+    participants: () => [],
     hasSession: () => false,
   })
   const initDocumentSync = useCallback((path: string, diskContent: string) => {
@@ -1124,12 +1126,6 @@ export default function App2() {
       flushSync(() => getSharedBlocksBridge()?.applySnapshot(snapshot, caret))
       return
     }
-    // Diagnostic (activé par les tests) : texte de l'éditeur que la version reçue fait disparaître.
-    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
-      for (const splice of multiSpliceDiff(sync.editorState, markdown)) {
-        if (splice.remove > 0) console.info('[holo-realtime] version reçue retire', JSON.stringify({ removed: sync.editorState.slice(splice.index, splice.index + splice.remove), inserted: splice.insert }))
-      }
-    }
     void enqueueDocumentWrite(file.path, markdown)
     // Rendu synchrone : l'éditeur affiche la version reçue avant toute autre
     // saisie, qui partira donc de cette version (et non d'une version périmée
@@ -1219,9 +1215,10 @@ export default function App2() {
       sendLocal: (markdown, fromEditor) => realtime.onLocalSnapshot(buildLocalSnapshot(markdown, fromEditor)),
       currentSnapshot: realtime.currentSnapshot,
       shouldApplyExternalChanges: realtime.shouldApplyExternalChanges,
+      participants: realtime.participants,
       hasSession: () => hasSession,
     }
-  }, [buildLocalSnapshot, realtime.onLocalSnapshot, realtime.currentSnapshot, realtime.shouldApplyExternalChanges, realtime.status])
+  }, [buildLocalSnapshot, realtime.onLocalSnapshot, realtime.currentSnapshot, realtime.shouldApplyExternalChanges, realtime.participants, realtime.status])
 
   const handleMarkdownChange = useCallback(async (markdown: string) => {
     const file = openedFileRef.current
@@ -1232,9 +1229,6 @@ export default function App2() {
     if (realtimeRef.current.hasSession()) realtimeRef.current.sendLocal(markdown, true)
     // Rien de nouveau par rapport à ce que l'éditeur représente déjà (écho).
     if (sync && isSamePath(sync.path, file.path) && sync.editorState === markdown) return
-    if (sync && (globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) {
-      console.info('[holo-realtime] éditeur émet', JSON.stringify(multiSpliceDiff(sync.editorState, markdown).map((splice) => ({ del: sync.editorState.slice(splice.index, splice.index + splice.remove), ins: splice.insert }))))
-    }
 
     // DEBUG: détecte les markdown dégradés (ex: listes avec items vides)
     const emptyListItems = (markdown.match(/^\s*-\s*$|^\s*\d+\.\s*$/gm) || []).length
@@ -1427,7 +1421,7 @@ export default function App2() {
       const livePath = realtimeLiveRef.current ? openedFileRef.current?.path : undefined
       const result = await holo.gitPullIfSafe({
         liveFiles: livePath ? [livePath] : [],
-        liveAuthors: livePath ? [gitEmailRef.current || '', ...realtimeAuthorsRef.current].filter(Boolean) : [],
+        liveAuthors: livePath ? [gitEmailRef.current || '', ...realtimeAuthorsRef.current, ...realtimeRef.current.participants()].filter(Boolean) : [],
         author: { name: appAuthorRef.current || '', email: gitEmailRef.current || '' },
       })
       if (!result) return

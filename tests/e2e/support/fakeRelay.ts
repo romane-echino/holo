@@ -5,14 +5,6 @@
  * coupures et reconnexions. L'état local gardé par chaque poste (pour
  * rejoindre après un plantage) survit à la connexion : il est rangé par poste.
  */
-import { execFile } from 'node:child_process'
-import { promises as fs } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { promisify } from 'node:util'
-
-const execFileAsync = promisify(execFile)
-
 // ─── Aléatoire reproductible ──────────────────────────────────────────────────
 export function createRandom(seed: number) {
   let state = seed >>> 0
@@ -31,26 +23,6 @@ export function createRandom(seed: number) {
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-/** Fusion 3 voies réelle (git merge-file --union), comme le processus principal à la jonction. */
-export async function mergeText(base: string, ours: string, theirs: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'holo-merge-test-'))
-  try {
-    await Promise.all([
-      fs.writeFile(path.join(dir, 'ours'), ours),
-      fs.writeFile(path.join(dir, 'base'), base),
-      fs.writeFile(path.join(dir, 'theirs'), theirs),
-    ])
-    try {
-      const { stdout } = await execFileAsync('git', ['merge-file', '-p', '--union', 'ours', 'base', 'theirs'], { cwd: dir })
-      return stdout
-    } catch (error) {
-      return (error as { stdout?: string }).stdout ?? ours
-    }
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true })
-  }
-}
 
 // ─── Faux relais ──────────────────────────────────────────────────────────────
 export type StoredDoc = { state: string | null; version: number; epoch: string; updates: { id: string; update: string }[] }
@@ -144,7 +116,6 @@ export class FakeConnection implements HoloRealtimeApi {
   testConnection = async () => ({ ok: true })
   resolveDocument = async () => ({ available: false as const, reason: 'disabled' as const })
   getUpstreamContent = async () => null
-  mergeText = mergeText
 
   subscribe = async (documentId: string) => {
     this.subscriptions.add(documentId)

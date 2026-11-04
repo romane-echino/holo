@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/session'
+import { colorForUser, type RealtimePeer, type RealtimeStatus } from '../lib/realtime/types'
 import { BlockSession } from '../lib/realtime/blockSession'
 import type { SharedSnapshot } from '../lib/realtime/sharedModel'
 import type { CaretAnchor } from '../lib/realtime/caretAnchor'
@@ -135,6 +135,7 @@ export function useRealtimeDocument(options: Options) {
   const currentSnapshot = useCallback(() => sessionRef.current?.currentSnapshot() ?? null, [])
 
   const shouldApplyExternalChanges = useCallback(() => sessionRef.current?.shouldApplyExternalChanges() ?? true, [])
+  const participants = useCallback(() => sessionRef.current?.participants() ?? [], [])
 
-  return { ...state, onLocalSnapshot, currentSnapshot, shouldApplyExternalChanges }
+  return { ...state, onLocalSnapshot, currentSnapshot, shouldApplyExternalChanges, participants }
 }

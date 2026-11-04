@@ -14,8 +14,12 @@ import type { InlineNode } from '../../parts/MarkdownEditor/lib/types'
 
 export type CaretField = { cell: { rowId: string; columnId: string } } | { item: string } | null
 
-/** Curseur dans le texte partagé : bloc, champ éventuel (cellule, élément) et position dans son markdown. */
-export type CaretAnchor = { blockId: string; field: CaretField; index: number }
+/**
+ * Curseur dans le texte partagé : bloc, champ éventuel (cellule, élément) et
+ * position dans son markdown ; `end` : fin de la sélection, s'il y en a une
+ * (un mot sélectionné reste sélectionné quand un collègue tape à côté).
+ */
+export type CaretAnchor = { blockId: string; field: CaretField; index: number; end?: number }
 
 export function plainText(nodes: InlineNode[]): string {
   return nodes.map((node) => {
@@ -91,6 +95,21 @@ export function markdownIndexOf(visible: string, markdown: string, offset: numbe
   return positions[Math.max(0, Math.min(visible.length, offset))]
 }
 
+/** Position dans le markdown juste avant le caractère visible n° `offset` (début d'une sélection). */
+function selectionStartIndex(visible: string, markdown: string, offset: number): number {
+  if (offset >= visible.length) return markdownIndexOf(visible, markdown, offset)
+  const units = markdownUnits(markdown)
+  let next = 0
+  for (let index = 0; index <= offset; index += 1) {
+    let match = next
+    while (match < units.length && !sameChar(units[match].value, visible[index])) match += 1
+    if (match >= units.length) return markdownIndexOf(visible, markdown, offset)
+    if (index === offset) return units[match].start
+    next = match + 1
+  }
+  return markdownIndexOf(visible, markdown, offset)
+}
+
 /** Nombre de caractères visibles avant la position `index` du markdown. */
 export function visibleOffsetOf(visible: string, markdown: string, index: number): number {
   const positions = visibleToMarkdown(visible, markdown)
@@ -100,24 +119,34 @@ export function visibleOffsetOf(visible: string, markdown: string, index: number
 }
 
 /**
- * Curseur actuel dans le texte partagé, ou null (pas de curseur, sélection,
- * éditeur de code…). `blockMarkdown` donne le markdown partagé d'un bloc texte
+ * Curseur (ou sélection dans un même champ) actuel dans le texte partagé, ou
+ * null (pas de curseur, sélection sur plusieurs champs, éditeur de code…). `blockMarkdown` donne le markdown partagé d'un bloc texte
  * (« ## Titre », « > citation »…), tel que chaque poste l'écrit.
  */
 export function readCaretAnchor(blockMarkdown: (blockId: string) => string | null): CaretAnchor | null {
   const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null
+  if (!selection || selection.rangeCount === 0) return null
   const range = selection.getRangeAt(0)
   const start = range.startContainer
   const editable = (start.nodeType === Node.ELEMENT_NODE ? (start as Element) : start.parentElement)?.closest<HTMLElement>('[contenteditable="true"]')
   if (!editable || editable.closest('.cm-editor')) return null
   const blockId = editable.closest<HTMLElement>('[data-block-id]')?.dataset.blockId
   if (!blockId) return null
-  const prefixRange = document.createRange()
-  prefixRange.selectNodeContents(editable)
-  prefixRange.setEnd(range.startContainer, range.startOffset)
-  const offset = prefixRange.toString().length
+  if (!range.collapsed && !editable.contains(range.endContainer)) return null
+  const offsetOf = (container: Node, at: number) => {
+    const prefixRange = document.createRange()
+    prefixRange.selectNodeContents(editable)
+    prefixRange.setEnd(container, at)
+    return prefixRange.toString().length
+  }
+  const offset = offsetOf(range.startContainer, range.startOffset)
+  const endOffset = range.collapsed ? null : offsetOf(range.endContainer, range.endOffset)
   const visible = editable.textContent ?? ''
+  const indices = (markdown: string) => {
+    // Début d'une sélection : avant son premier caractère (après la syntaxe qui le précède).
+    const index = endOffset === null ? markdownIndexOf(visible, markdown, offset) : selectionStartIndex(visible, markdown, offset)
+    return endOffset === null ? { index } : { index, end: Math.max(index, markdownIndexOf(visible, markdown, endOffset)) }
+  }
   const cell = editable.closest<HTMLElement>('td[data-row-id][data-column-id]')
   const item = editable.closest<HTMLElement>('[data-list-item-id]')
   if (cell || item) {
@@ -125,14 +154,42 @@ export function readCaretAnchor(blockMarkdown: (blockId: string) => string | nul
     const holder = document.createElement('div')
     holder.appendChild(editable.cloneNode(true))
     const markdown = inlinesToMarkdown(domToInlines(holder.firstChild as HTMLElement))
-    const index = markdownIndexOf(visible, markdown, offset)
     return cell
-      ? { blockId, field: { cell: { rowId: cell.dataset.rowId!, columnId: cell.dataset.columnId! } }, index }
-      : { blockId, field: { item: item!.dataset.listItemId! }, index }
+      ? { blockId, field: { cell: { rowId: cell.dataset.rowId!, columnId: cell.dataset.columnId! } }, ...indices(markdown) }
+      : { blockId, field: { item: item!.dataset.listItemId! }, ...indices(markdown) }
   }
   const markdown = blockMarkdown(blockId)
   if (markdown === null) return null
-  return { blockId, field: null, index: markdownIndexOf(visible, markdown, offset) }
+  return { blockId, field: null, ...indices(markdown) }
+}
+
+/**
+ * Place le curseur après `start` caractères visibles de `element`, ou y
+ * sélectionne le texte de `start` à `end`. Faux si `start` dépasse le texte.
+ */
+export function placeSelection(element: HTMLElement, start: number, end = start): boolean {
+  const selection = window.getSelection()
+  if (!selection) return false
+  const locate = (offset: number): [Node, number] | null => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let remaining = offset
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0
+      if (remaining <= length) return [node, remaining]
+      remaining -= length
+    }
+    return null
+  }
+  const from = locate(start)
+  if (!from) return false
+  const range = document.createRange()
+  range.setStart(from[0], from[1])
+  const to = end > start ? locate(end) : null
+  if (to) range.setEnd(to[0], to[1])
+  else range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
 }
 
 /** Position à l'écran pour la position `index` d'un markdown dont le contenu affiché est `nodes`. */

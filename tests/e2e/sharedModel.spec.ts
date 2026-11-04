@@ -6,7 +6,7 @@
  */
 import { test, expect } from '@playwright/test'
 import * as Y from 'yjs'
-import { applySnapshot, readSnapshot, writeSnapshot, type SharedSnapshot, type SharedTableBlock, type SharedListBlock, type SharedTextBlock } from '../../src/lib/realtime/sharedModel'
+import { applySnapshot, foldCommonAdditions, readSnapshot, writeSnapshot, type SharedSnapshot, type SharedTableBlock, type SharedListBlock, type SharedTextBlock } from '../../src/lib/realtime/sharedModel'
 import { alignSnapshotIds, markdownToSnapshot, snapshotToMarkdown } from '../../src/parts/MarkdownEditor/lib/sharedSnapshot'
 
 const DOCUMENT = [
@@ -210,5 +210,27 @@ test.describe('Modèle partagé : modifications simultanées', () => {
     const intro = textBlock(readSnapshot(b), 'Introduction').md
     expect(intro).toContain('Introduction (B)')
     expect(intro.endsWith(' Fin (A).')).toBe(true)
+  })
+
+  test('à l arrivée, ce que la session a déjà (bloc, ligne, élément) n est pas doublé', () => {
+    const base = markdownToSnapshot(DOCUMENT)
+    const table = tableOf(base)
+    // Ajouts faits avant le redémarrage de la session : la session les a gardés
+    // (avec ses identifiants), le fichier local aussi (avec les siens).
+    const addAll = (draft: SharedSnapshot, prefix: string) => {
+      draft.blocks.splice(1, 0, { id: `${prefix}-bloc`, kind: 'text', md: 'Paragraphe commun.' })
+      tableOf(draft).rows.push({ id: `${prefix}-ligne`, cells: { [table.columns[0].id]: 'Formation', [table.columns[1].id]: '80' } })
+      listOf(draft).items.push({ id: `${prefix}-element`, text: 'Point C', depth: 0, checked: null })
+    }
+    const session = edited(base, (draft) => { addAll(draft, 'session'); textBlock(draft, 'Conclusion').md += ' (session)' })
+    const ours = edited(base, (draft) => { addAll(draft, 'local'); textBlock(draft, 'Introduction').md += ' (local)' })
+    const doc = new Y.Doc()
+    writeSnapshot(doc, session)
+    const merge = foldCommonAdditions(base, ours, session)
+    applySnapshot(doc, merge.base, merge.ours)
+    const markdown = snapshotToMarkdown(readSnapshot(doc))
+    for (const fragment of ['Paragraphe commun.', '| Formation | 80 |', '- Point C']) expect(markdown.split(fragment).length - 1, fragment).toBe(1)
+    expect(markdown).toContain('(session)')
+    expect(markdown).toContain('(local)')
   })
 })

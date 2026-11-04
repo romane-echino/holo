@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import type { RealtimePeer } from '../lib/realtime/session'
+import type { RealtimePeer } from '../lib/realtime/types'
 import { locateCursorRect } from '../lib/realtime/cursorDom'
 
 type PlacedCursor = { peer: RealtimePeer; left: number; top: number; height: number }

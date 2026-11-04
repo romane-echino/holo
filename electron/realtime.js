@@ -72,7 +72,6 @@ export function registerRealtimeIpc({
   findOwningRoot,
   getPrimaryRemoteWebUrl,
   getUpstreamFileContent,
-  mergeText,
   getRootCommits,
   getDataDir,
   writeFileAtomic,
@@ -331,13 +330,6 @@ export function registerRealtimeIpc({
   ipcMain.handle('realtime:get-state', async (_event, documentId) => request('GET', `/docs/${documentId}/state`))
 
   ipcMain.handle('realtime:get-upstream-content', async (_event, filePath) => getUpstreamFileContent(filePath))
-
-  ipcMain.handle('realtime:merge-text', async (_event, base, ours, theirs) => {
-    // Jonction d'une session : en cas de conflit on garde les deux côtés (une
-    // ligne en double vaut mieux qu'une saisie perdue).
-    const result = await mergeText(String(base ?? ''), String(ours ?? ''), String(theirs ?? ''), { conflictResolution: 'union' })
-    return result.text
-  })
 
   ipcMain.handle('realtime:push-update', async (_event, documentId, payload) =>
     request('POST', `/docs/${documentId}/updates`, payload))

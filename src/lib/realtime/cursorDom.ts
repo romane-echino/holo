@@ -2,7 +2,7 @@
  * Correspondance entre la sélection du navigateur et une position de curseur
  * partageable (bloc, champ éditable du bloc, position dans le texte).
  */
-import type { RealtimeCursor } from './session'
+import type { RealtimeCursor } from './types'
 
 const EDITOR_ROOT_SELECTOR = '[data-testid="block-editor"]'
 const EDITABLE_SELECTOR = '[contenteditable="true"]'

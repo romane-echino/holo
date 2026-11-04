@@ -9,7 +9,7 @@
 import * as Y from 'yjs'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import { PayloadCipher } from './encoding'
-import type { RealtimeUser } from './session'
+import type { RealtimeUser } from './types'
 
 export type SpacePeer = RealtimeUser & {
   clientId: number

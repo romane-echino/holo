@@ -38,7 +38,6 @@ contextBridge.exposeInMainWorld('holo', {
     unsubscribe: (documentId) => ipcRenderer.invoke('realtime:unsubscribe', documentId),
     getState: (documentId) => ipcRenderer.invoke('realtime:get-state', documentId),
     getUpstreamContent: (filePath) => ipcRenderer.invoke('realtime:get-upstream-content', filePath),
-    mergeText: (base, ours, theirs) => ipcRenderer.invoke('realtime:merge-text', base, ours, theirs),
     pushUpdate: (documentId, payload) => ipcRenderer.invoke('realtime:push-update', documentId, payload),
     pushAwareness: (documentId, payload) => ipcRenderer.invoke('realtime:push-awareness', documentId, payload),
     compact: (documentId, payload) => ipcRenderer.invoke('realtime:compact', documentId, payload),

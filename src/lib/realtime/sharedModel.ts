@@ -325,6 +325,95 @@ export function applySnapshot(doc: Y.Doc, base: SharedSnapshot, next: SharedSnap
   }, origin)
 }
 
+// ─── Fusion à l'arrivée ──────────────────────────────────────────────────────
+
+/** Contenu d'un bloc, sans ses identifiants. */
+function blockContent(block: SharedBlock): string {
+  if (block.kind === 'text') return `text:${block.md}`
+  if (block.kind === 'table') {
+    return `table:${JSON.stringify([block.props, block.columns.map((column) => [column.title, column.props]), block.rows.map((row) => block.columns.map((column) => row.cells[column.id] ?? ''))])}`
+  }
+  return `list:${JSON.stringify([block.props, block.items.map((item) => [item.text, item.depth, item.checked])])}`
+}
+
+/**
+ * Éléments ajoutés à l'identique des deux côtés (absents de `base`, présents
+ * dans `ours` et dans `session`) : `ours` reprend celui de la session et la
+ * base l'inclut, si bien qu'il n'est pas ajouté une seconde fois.
+ */
+function foldSequence<T extends { id: string }>(
+  base: T[], ours: T[], session: T[], key: (entry: T) => string, adopt: (own: T, theirs: T) => T,
+): { base: T[]; ours: T[] } {
+  const baseIds = new Set(base.map((entry) => entry.id))
+  const sessionIds = new Set(session.map((entry) => entry.id))
+  const added = new Map<string, T[]>()
+  for (const entry of session) {
+    if (baseIds.has(entry.id)) continue
+    const bucket = added.get(key(entry)) ?? []
+    bucket.push(entry)
+    added.set(key(entry), bucket)
+  }
+  if (added.size === 0) return { base, ours }
+  const folded = new Set<string>()
+  const nextOurs = ours.map((entry) => {
+    if (baseIds.has(entry.id) || sessionIds.has(entry.id)) return entry
+    const match = added.get(key(entry))?.shift()
+    if (!match) return entry
+    folded.add(match.id)
+    return adopt(entry, match)
+  })
+  if (folded.size === 0) return { base, ours }
+  const nextBase = [...base]
+  session.forEach((entry, index) => {
+    if (!folded.has(entry.id)) return
+    let position = 0
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      const at = nextBase.findIndex((candidate) => candidate.id === session[previous].id)
+      if (at !== -1) {
+        position = at + 1
+        break
+      }
+    }
+    nextBase.splice(position, 0, entry)
+  })
+  return { base: nextBase, ours: nextOurs }
+}
+
+/**
+ * Prépare la fusion de modifications locales (`base → ours`) dans un document
+ * partagé `session` qui contient peut-être déjà certaines d'entre elles : un
+ * participant qui revient après le redémarrage de la session a souvent tapé
+ * avant celui-ci des blocs, lignes ou éléments que la session a gardés. Ces
+ * ajouts communs sont rattachés à ceux de la session au lieu d'être doublés.
+ */
+export function foldCommonAdditions(base: SharedSnapshot, ours: SharedSnapshot, session: SharedSnapshot): { base: SharedSnapshot; ours: SharedSnapshot } {
+  const blocks = foldSequence(base.blocks, ours.blocks, session.blocks, blockContent, (_own, theirs) => theirs)
+  const sessionById = new Map(session.blocks.map((block) => [block.id, block]))
+  const baseById = new Map(blocks.base.map((block) => [block.id, block]))
+  const baseBlocks = [...blocks.base]
+  const oursBlocks = blocks.ours.map((block): SharedBlock => {
+    const before = baseById.get(block.id)
+    const theirs = sessionById.get(block.id)
+    if (!before || !theirs || before === theirs) return block
+    if (block.kind === 'table' && before.kind === 'table' && theirs.kind === 'table') {
+      const rowKey = (row: SharedTableRow) => JSON.stringify(before.columns.map((column) => row.cells[column.id] ?? ''))
+      const rows = foldSequence(before.rows, block.rows, theirs.rows, rowKey, (own, match) => ({ ...own, id: match.id }))
+      if (rows.base === before.rows) return block
+      baseBlocks[baseBlocks.indexOf(before)] = { ...before, rows: rows.base }
+      return { ...block, rows: rows.ours }
+    }
+    if (block.kind === 'list' && before.kind === 'list' && theirs.kind === 'list') {
+      const itemKey = (item: SharedListItem) => JSON.stringify([item.text, item.depth, item.checked])
+      const items = foldSequence(before.items, block.items, theirs.items, itemKey, (_own, match) => match)
+      if (items.base === before.items) return block
+      baseBlocks[baseBlocks.indexOf(before)] = { ...before, items: items.base }
+      return { ...block, items: items.ours }
+    }
+    return block
+  })
+  return { base: { ...base, blocks: baseBlocks }, ours: { ...ours, blocks: oursBlocks } }
+}
+
 /** Les types partagés suivis par l'historique d'annulation. */
 export function sharedRoots(doc: Y.Doc): Y.AbstractType<unknown>[] {
   return [

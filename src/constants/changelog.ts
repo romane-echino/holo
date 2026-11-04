@@ -2,6 +2,18 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.0',
+    releasedAt: '2026-11-04',
+    items: [
+      'Temps réel : nouveau moteur, le document est partagé bloc par bloc (paragraphes, titres, tableaux cellule par cellule, listes élément par élément). Déplacer un bloc, trier un tableau ou réordonner une liste pendant qu\'un collègue y tape ne perd plus rien.',
+      'Temps réel : le curseur reste à sa place quand un collègue tape juste avant ou au même endroit, y compris dans du texte mis en forme (gras, liens), et un mot sélectionné reste sélectionné quand un collègue tape dans le même paragraphe, la même cellule ou le même élément de liste.',
+      'Temps réel : après une coupure réseau, un plantage ou le redémarrage de la session par un collègue, on la rejoint sans doubler ce qu\'elle contient déjà.',
+      'Temps réel : une synchronisation git pendant la session n\'efface plus ce qu\'un collègue vient de taper, même juste après un redémarrage de Holo ou quand un participant est momentanément hors ligne.',
+      'Temps réel : tous les participants doivent passer à la 0.9.0 pour éditer ensemble en direct (les versions précédentes ne rejoignent pas les mêmes sessions).',
+      'OneDrive : rouvrir un fichier déjà ouvert affiche sa dernière version au lieu de réinitialiser l\'éditeur.',
+    ],
+  },
+  {
     version: '0.8.0',
     releasedAt: '2026-11-03',
     items: [

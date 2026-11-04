@@ -18,8 +18,8 @@
 import * as Y from 'yjs'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import { PayloadCipher } from './encoding'
-import { applySnapshot, readSnapshot, sameSnapshot, sharedRoots, writeSnapshot, type SharedSnapshot } from './sharedModel'
-import type { RealtimeCursor, RealtimePeer, RealtimeStatus, RealtimeUser } from './session'
+import { applySnapshot, foldCommonAdditions, readSnapshot, sameSnapshot, sharedRoots, writeSnapshot, type SharedSnapshot } from './sharedModel'
+import type { RealtimeCursor, RealtimePeer, RealtimeStatus, RealtimeUser } from './types'
 import type { CaretAnchor } from './caretAnchor'
 
 export type BlockSessionCallbacks = {
@@ -50,6 +50,8 @@ type AwarenessState = { user: RealtimeUser; established: boolean; epoch: string 
 
 const LOCAL_ORIGIN = 'holo-local'
 const REMOTE_ORIGIN = 'holo-remote'
+/** Inscription dans la liste des participants (hors historique d'annulation). */
+const PARTICIPANT_ORIGIN = 'holo-participant'
 const PUSH_INTERVAL_MS = 120
 const AWARENESS_THROTTLE_MS = 250
 const PEER_DISCOVERY_MS = 1500
@@ -76,6 +78,8 @@ async function buildDoc(cipher: PayloadCipher, serverState: HoloRealtimeState | 
 const isEmptyDoc = (doc: Y.Doc) => doc.getArray('order').length === 0
 
 /** Poste (client Yjs) qui a tapé le caractère `index` d'un texte partagé. */
+type CapturedCaret = { anchor: CaretAnchor; position: Y.RelativePosition; end?: Y.RelativePosition }
+
 function authorAt(text: Y.Text, index: number): number | null {
   type Item = { right: Item | null; deleted: boolean; countable: boolean; length: number; id: { client: number } }
   let item = (text as unknown as { _start: Item | null })._start
@@ -187,6 +191,23 @@ export class BlockSession {
   }
 
   /**
+   * Adresses de tous ceux qui ont rejoint la session (cette époque), y compris
+   * ceux qui sont momentanément hors ligne : leurs commits sont des
+   * instantanés de l'état partagé, que git ne doit pas réinjecter.
+   */
+  participants(): string[] {
+    if (!this.doc) return []
+    return [...this.doc.getMap<number>('participants').keys()]
+  }
+
+  private registerParticipant() {
+    const email = this.user.email.trim().toLowerCase()
+    if (!this.doc || !email) return
+    const participants = this.doc.getMap<number>('participants')
+    if (!participants.has(email)) this.doc.transact(() => participants.set(email, Date.now()), PARTICIPANT_ORIGIN)
+  }
+
+  /**
    * Une modification venue du disque (pull git, OneDrive) peut-elle être
    * poussée dans la session ? Seul le meneur la réinjecte (sinon elle serait
    * insérée en double), les autres la reçoivent par la session.
@@ -295,6 +316,7 @@ export class BlockSession {
         this.lastSnapshot = localSnapshot
         this.remoteQueue = []
         this.joined = true
+        this.registerParticipant()
         this.onLocalSnapshot(this.callbacks.getEditorSnapshot())
       } else {
         // Participants présents : leur état fait foi. Tout ce qui demande une
@@ -321,11 +343,13 @@ export class BlockSession {
           base = this.callbacks.alignIds(upstream, sessionSnapshot)
         }
         if (base) {
-          const ours = this.callbacks.alignIds(localSnapshot, base)
-          if (!sameSnapshot(ours, base)) applySnapshot(serverDoc, base, ours, LOCAL_ORIGIN)
+          // Ce que la session a déjà (tapé avant son redémarrage) n'est pas doublé.
+          const merge = foldCommonAdditions(base, this.callbacks.alignIds(localSnapshot, base), sessionSnapshot)
+          if (!sameSnapshot(merge.ours, merge.base)) applySnapshot(serverDoc, merge.base, merge.ours, LOCAL_ORIGIN)
         }
         this.attachDoc(serverDoc, server.epoch)
         this.joined = true
+        this.registerParticipant()
         // Nos modifications que le relais n'a pas : état gardé et fichier local.
         const missing = Y.encodeStateAsUpdate(serverDoc, serverVector)
         if (missing.length > 2) {
@@ -404,11 +428,21 @@ export class BlockSession {
     return text instanceof Y.Text ? text : null
   }
 
-  private captureCaret(): { anchor: CaretAnchor; position: Y.RelativePosition } | null {
+  private captureCaret(): CapturedCaret | null {
     const anchor = this.callbacks.getLocalCaret?.() ?? null
     const text = anchor ? this.caretText(anchor) : null
     if (!anchor || !text) return null
-    const index = Math.max(0, Math.min(text.length, anchor.index))
+    const clamp = (value: number) => Math.max(0, Math.min(text.length, value))
+    const index = clamp(anchor.index)
+    if (anchor.end !== undefined && anchor.end > index) {
+      // Sélection : ses bords restent sur le premier et le dernier caractère
+      // sélectionnés (ce qu'un collègue tape juste à côté reste en dehors).
+      return {
+        anchor,
+        position: Y.createRelativePositionFromTypeIndex(text, index, 0),
+        end: Y.createRelativePositionFromTypeIndex(text, clamp(anchor.end), -1),
+      }
+    }
     // Caractère de gauche tapé par nous : le curseur y reste attaché (notre
     // saisie reste d'un seul tenant). Tapé par un collègue (fin d'un mot qu'il
     // est en train d'écrire) : le curseur passe après ce qu'il y ajoute.
@@ -416,12 +450,18 @@ export class BlockSession {
     return { anchor, position: Y.createRelativePositionFromTypeIndex(text, index, ownLeft ? -1 : 0) }
   }
 
-  private resolveCaret(captured: { anchor: CaretAnchor; position: Y.RelativePosition } | null): CaretAnchor | null {
+  private resolveCaret(captured: CapturedCaret | null): CaretAnchor | null {
     if (!captured || !this.doc) return null
-    const absolute = Y.createAbsolutePositionFromRelativePosition(captured.position, this.doc)
     const text = this.caretText(captured.anchor)
-    if (!absolute || !text || absolute.type !== text) return null
-    return { ...captured.anchor, index: absolute.index }
+    const resolve = (position: Y.RelativePosition) => {
+      const absolute = Y.createAbsolutePositionFromRelativePosition(position, this.doc!)
+      return absolute && absolute.type === text ? absolute.index : null
+    }
+    const index = text ? resolve(captured.position) : null
+    if (index === null) return null
+    const { end: _previousEnd, ...anchor } = captured.anchor
+    const end = captured.end ? resolve(captured.end) : null
+    return end !== null && end > index ? { ...anchor, index, end } : { ...anchor, index }
   }
 
   private attachDoc(doc: Y.Doc, epoch: string | null) {

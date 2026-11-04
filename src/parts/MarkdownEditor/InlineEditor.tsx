@@ -22,6 +22,7 @@ import { useWorkspace } from '../../contexts/WorkspaceContext'
 import { registerPendingEditFlusher } from '../../lib/editorFlush'
 import { onSpaceFilesChanged, resolveImageSrc } from '../../lib/documentImages'
 import { useEditorFilePath } from './EditorFileContext'
+import { placeSelection } from '../../lib/realtime/caretAnchor'
 
 /** Charge les images locales d'un éditeur inline (cellules de tableau, paragraphes). */
 function hydrateInlineImages(root: HTMLElement, documentPath: string | null) {
@@ -239,8 +240,8 @@ function isMarkdownTable(text: string): boolean {
 export type InitialCursor =
   | { type: 'click'; x: number; y: number }
   | { type: 'arrow'; x: number; edge: 'top' | 'bottom' }
-  /** Position dans le texte (restauration du curseur après une mise à jour reçue) */
-  | { type: 'offset'; offset: number }
+  /** Position dans le texte (restauration du curseur après une mise à jour reçue) ; `end` : fin de la sélection */
+  | { type: 'offset'; offset: number; end?: number }
   | null
 
 /** Handle exposé via ref pour la navigation inter-blocs */
@@ -385,22 +386,7 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       if (r) { sel.removeAllRanges(); sel.addRange(r); return }
     }
 
-    if (cursor?.type === 'offset') {
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-      let remaining = cursor.offset
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const length = node.textContent?.length ?? 0
-        if (remaining <= length) {
-          const r = document.createRange()
-          r.setStart(node, remaining)
-          r.collapse(true)
-          sel.removeAllRanges()
-          sel.addRange(r)
-          return
-        }
-        remaining -= length
-      }
-    }
+    if (cursor?.type === 'offset' && placeSelection(el, cursor.offset, cursor.end)) return
 
     // Fallback : curseur à la fin
     const range = document.createRange()
@@ -420,7 +406,6 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
       saveTimerRef.current = null
     }
     savedRef.current = true
-    if ((globalThis as { __HOLO_RT_DEBUG__?: boolean }).__HOLO_RT_DEBUG__) console.info('[holo-realtime] saisie enregistrée', JSON.stringify(el.textContent ?? ''))
     onSave(domToInlines(el))
   }, [onSave])
 

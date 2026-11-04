@@ -13,8 +13,10 @@
  * supprimés absents, structures intactes (un tableau, des listes).
  */
 import { test, expect } from '@playwright/test'
+import * as Y from 'yjs'
 import { BlockSession } from '../../src/lib/realtime/blockSession'
-import type { SharedListBlock, SharedSnapshot, SharedTableBlock, SharedTextBlock } from '../../src/lib/realtime/sharedModel'
+import { PayloadCipher } from '../../src/lib/realtime/encoding'
+import { applySnapshot, readSnapshot, type SharedListBlock, type SharedSnapshot, type SharedTableBlock, type SharedTextBlock } from '../../src/lib/realtime/sharedModel'
 import { alignSnapshotIds, markdownToSnapshot, snapshotToMarkdown } from '../../src/parts/MarkdownEditor/lib/sharedSnapshot'
 import { FakeRelay, createRandom, sleep, waitFor, type FakeConnection } from './support/fakeRelay'
 
@@ -45,28 +47,31 @@ type Ledger = { typed: Set<string>; deleted: Set<string>; uncertain: Set<string>
 
 class SimulatedBlockEditor {
   snapshot: SharedSnapshot
+  upstream: string | null
   status: string | null = null
+  peers = 0
   fileModifiedAt = 0
   readonly connection: FakeConnection
   readonly session: BlockSession
   readonly name: string
 
-  constructor(relay: FakeRelay, name: string, markdown: string, upstream: string | null = INITIAL) {
+  constructor(relay: FakeRelay, name: string, markdown: string, upstream: string | null = INITIAL, key = KEY) {
     this.name = name
     this.snapshot = markdownToSnapshot(markdown)
+    this.upstream = upstream
     this.connection = relay.connect(name)
     this.session = new BlockSession(
       this.connection,
-      { documentId: DOCUMENT_ID, key: KEY },
+      { documentId: DOCUMENT_ID, key },
       { name, email: `${name}@example.com`, color: '#888' },
       {
         getEditorSnapshot: () => this.snapshot,
         applyRemoteSnapshot: (snapshot) => { this.snapshot = snapshot },
         flushLocalEdits: async () => {},
-        getUpstreamSnapshot: async () => (upstream === null ? null : markdownToSnapshot(upstream)),
+        getUpstreamSnapshot: async () => (this.upstream === null ? null : markdownToSnapshot(this.upstream)),
         alignIds: alignSnapshotIds,
         getLocalModifiedAt: async () => this.fileModifiedAt || null,
-        onPeers: () => {},
+        onPeers: (peers) => { this.peers = peers.length },
         onStatus: (status) => { this.status = status },
       },
     )
@@ -74,6 +79,17 @@ class SimulatedBlockEditor {
 
   start() {
     return this.session.start()
+  }
+
+  get markdown() {
+    return snapshotToMarkdown(this.snapshot)
+  }
+
+  /** Remplace tout le document par ce markdown, comme une saisie dans l'éditeur. */
+  type(markdown: string) {
+    this.snapshot = alignSnapshotIds(markdownToSnapshot(markdown), this.snapshot)
+    this.fileModifiedAt = Date.now()
+    this.session.onLocalSnapshot(this.snapshot)
   }
 
   edit(change: (draft: SharedSnapshot) => void) {
@@ -174,6 +190,14 @@ function randomAction(editor: SimulatedBlockEditor, ledger: Ledger, random: Retu
     if (removed) ledger.deleted.add(victim)
   }
 }
+
+async function waitLive(editors: SimulatedBlockEditor[]) {
+  await waitFor(() => editors.every((editor) => editor.status === 'live'), 15_000, 'sessions en direct')
+}
+
+const occurrences = (text: string, token: string) => text.split(token).length - 1
+/** Forme du markdown telle que l'éditeur l'écrit (échappements, listes…). */
+const canonical = (markdown: string) => snapshotToMarkdown(markdownToSnapshot(markdown))
 
 async function waitConverged(editors: SimulatedBlockEditor[], timeoutMs = 30_000) {
   let stableSince = 0
@@ -327,5 +351,142 @@ test.describe('BlockSession contre un relais simulé', () => {
     expect(final).toContain('Conclusion révisée.')
     expect(final.split('Budget').length - 1).toBe(1)
     for (const editor of [alice, bob]) await editor.session.stop()
+  })
+
+  test('deux personnes ouvrent le document au même instant : pas de texte en double', async () => {
+    const relay = new FakeRelay(53)
+    const editors = ['alice', 'bob'].map((name) => new SimulatedBlockEditor(relay, name, INITIAL))
+    await Promise.all(editors.map((editor) => editor.start()))
+    await waitLive(editors)
+    editors[0].type(editors[0].markdown.replace('Introduction.', 'Introduction. [A]'))
+    editors[1].type(editors[1].markdown.replace('Conclusion.', 'Conclusion. [B]'))
+    const final = await waitConverged(editors)
+    expect(final).toBe(canonical(INITIAL.replace('Introduction.', 'Introduction. [A]').replace('Conclusion.', 'Conclusion. [B]')))
+    for (const editor of editors) await editor.session.stop()
+  })
+
+  test('session redémarrée pendant qu un participant est hors ligne : il la rejoint sans doublon', async () => {
+    const relay = new FakeRelay(71)
+    const initial = 'Base commune.\n'
+    const alice = new SimulatedBlockEditor(relay, 'alice', initial, initial)
+    await alice.start()
+    await waitLive([alice])
+    alice.type('Base commune.\n\nAjout d Alice.\n')
+    await sleep(300)
+
+    // Alice décroche et continue de taper hors ligne.
+    alice.connection.disconnect()
+    alice.type('Base commune.\n\nAjout d Alice.\n\nHors ligne.\n')
+
+    // Bob arrive seul : il redémarre la session depuis son fichier (git).
+    const bobFile = 'Base commune.\n\nAjout d Alice.\n'
+    const bob = new SimulatedBlockEditor(relay, 'bob', bobFile, initial)
+    await bob.start()
+    await waitLive([bob])
+    bob.type(`${bobFile}\nAjout de Bob.\n`)
+    await sleep(200)
+
+    // Retour d'Alice : nouvelle époque, elle rejoint la session de Bob.
+    alice.connection.reconnect()
+    const final = await waitConverged([alice, bob])
+    for (const line of ['Base commune.', 'Ajout d Alice.', 'Ajout de Bob.', 'Hors ligne.']) expect(occurrences(final, line), line).toBe(1)
+    for (const editor of [alice, bob]) await editor.session.stop()
+  })
+
+  test('journal volumineux : compaction à l arrivée, état correct pour les suivants', async () => {
+    const relay = new FakeRelay(83, 5)
+    const alice = new SimulatedBlockEditor(relay, 'alice', 'Journal :\n', 'Journal :\n')
+    await alice.start()
+    await waitLive([alice])
+    // Longue session : 260 modifications distinctes journalisées par le relais.
+    const writer = relay.connect('writer')
+    const cipher = new PayloadCipher(KEY)
+    const server = await writer.getState(DOCUMENT_ID)
+    const ghost = new Y.Doc()
+    for (const payload of [server.state, ...server.updates.map((entry) => entry.update)]) {
+      if (payload) Y.applyUpdate(ghost, (await cipher.open(payload))!)
+    }
+    let expected = 'Journal :'
+    for (let index = 0; index < 260; index += 1) {
+      const before = Y.encodeStateVector(ghost)
+      const base = readSnapshot(ghost)
+      const next = structuredClone(base)
+      ;(next.blocks[0] as SharedTextBlock).md += ` ${index};`
+      expected += ` ${index};`
+      applySnapshot(ghost, base, next, 'writer')
+      await writer.pushUpdate(DOCUMENT_ID, { update: await cipher.seal(Y.encodeStateAsUpdate(ghost, before)), clientId: 'writer' })
+    }
+    await waitFor(() => alice.markdown === `${expected}\n`, 10_000, 'Alice reçoit la longue session')
+    expect(relay.pendingUpdateCount(DOCUMENT_ID)).toBeGreaterThan(200)
+
+    const bob = new SimulatedBlockEditor(relay, 'bob', 'Journal :\n', 'Journal :\n')
+    await bob.start()
+    await waitLive([bob])
+    await waitFor(() => relay.pendingUpdateCount(DOCUMENT_ID) < 50, 10_000, 'compaction')
+
+    const chloe = new SimulatedBlockEditor(relay, 'chloe', 'Journal :\n', 'Journal :\n')
+    await chloe.start()
+    await waitLive([chloe])
+    const final = await waitConverged([alice, bob, chloe])
+    expect(final).toBe(`${expected}\n`)
+    for (const editor of [alice, bob, chloe]) await editor.session.stop()
+  })
+
+  test('chiffrement : le relais ne voit jamais le texte, une mauvaise clé ne lit ni ne corrompt rien', async () => {
+    const relay = new FakeRelay(101)
+    const initial = 'Secret de fabrication.\n'
+    const alice = new SimulatedBlockEditor(relay, 'alice', initial, initial)
+    const bob = new SimulatedBlockEditor(relay, 'bob', initial, initial)
+    await alice.start()
+    await waitLive([alice])
+    await bob.start()
+    await waitLive([alice, bob])
+    alice.type(`Confidentiel : ${initial}`)
+
+    // Quelqu'un qui connaît l'identifiant mais pas la clé du dépôt.
+    const intruder = new SimulatedBlockEditor(relay, 'intrus', 'Texte injecté.\n', null, Buffer.alloc(32, 3).toString('base64'))
+    await intruder.start()
+    await sleep(2500)
+    intruder.type('Pirate Texte injecté.\n')
+
+    const final = await waitConverged([alice, bob])
+    expect(final).toBe(`Confidentiel : ${initial}`)
+    expect(intruder.markdown).not.toContain('Secret')
+    const stored = JSON.stringify([...relay.docs.values()])
+    expect(stored).not.toContain('Secret')
+    expect(stored).not.toContain('Confidentiel')
+    for (const editor of [alice, bob, intruder]) await editor.session.stop()
+  })
+
+  test('départ d un participant : les autres ne le voient plus', async () => {
+    const relay = new FakeRelay(97)
+    const alice = new SimulatedBlockEditor(relay, 'alice', 'x\n', 'x\n')
+    const bob = new SimulatedBlockEditor(relay, 'bob', 'x\n', 'x\n')
+    await alice.start()
+    await waitLive([alice])
+    await bob.start()
+    await waitLive([alice, bob])
+    await waitFor(() => alice.peers === 1 && bob.peers === 1, 5_000, 'présence mutuelle')
+    await bob.session.stop()
+    await waitFor(() => alice.peers === 0, 5_000, 'départ visible')
+    await alice.session.stop()
+  })
+
+  test('participants : tous ceux qui ont rejoint la session, même hors ligne ou relancés', async () => {
+    const relay = new FakeRelay(131)
+    const [alice, bob, chloe] = ['alice', 'bob', 'chloe'].map((name) => new SimulatedBlockEditor(relay, name, INITIAL))
+    for (const editor of [alice, bob, chloe]) {
+      await editor.start()
+      await waitLive([editor])
+    }
+    await waitFor(() => chloe.session.participants().length === 3, 5_000, 'tous inscrits')
+    // Bob décroche ; Chloé plante et relance : elle sait toujours que Bob participe.
+    bob.connection.disconnect()
+    chloe.connection.crash()
+    const relaunched = new SimulatedBlockEditor(relay, 'chloe', INITIAL)
+    await relaunched.start()
+    await waitLive([relaunched])
+    expect(relaunched.session.participants().sort()).toEqual(['alice@example.com', 'bob@example.com', 'chloe@example.com'])
+    for (const editor of [alice, bob, relaunched]) await editor.session.stop()
   })
 })

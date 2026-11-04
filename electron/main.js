@@ -1944,7 +1944,6 @@ registerRealtimeIpc({
   writeFileAtomic,
   getRootCommits,
   getUpstreamFileContent,
-  mergeText: mergeTextThreeWay,
   getConfigValue: (key) => getHoloConfigValue(key),
   setConfigValue: (key, value) => setHoloConfigValue(key, value),
   encryptSecret,
