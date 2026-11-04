@@ -30,6 +30,7 @@
     "release:minor": "bash ./scripts/release.sh minor",
     "release:major": "bash ./scripts/release.sh major",
     "release:version": "bash ./scripts/release.sh",
+    "release:mac-local": "bash ./scripts/release-mac-local.sh",
     "pwa:dev": "vite --config pwa/vite.config.ts",
     "pwa:build": "vite build --config pwa/vite.config.ts",
     "test": "playwright test",

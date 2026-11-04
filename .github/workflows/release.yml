@@ -19,7 +19,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Create release
-        uses: softprops/action-gh-release@v2.0.0
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
 
@@ -35,19 +35,29 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             command: npm run dist:linux
+            installers: release/Holo-*.deb
+            metadata: release/latest-linux.yml
           - os: windows-latest
             platform: windows
             command: npm run dist:win
+            installers: |
+              release/Holo-*.exe
+              release/Holo-*.exe.blockmap
+            metadata: release/latest.yml
           - os: macos-latest
             platform: macos
             command: npm run dist:mac
+            installers: |
+              release/Holo-*.dmg
+              release/Holo-*.zip
+            metadata: release/latest-mac.yml
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -61,31 +71,18 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish release assets (Linux)
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'linux'
-        uses: softprops/action-gh-release@v2.0.0
+      # Les installeurs d'abord, le fichier de mise à jour (latest*.yml) ensuite :
+      # si un envoi échoue, aucun poste ne se voit proposer une version introuvable.
+      - name: Publish installers
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
         with:
-          files: |
-            release/Holo-*.deb
-            release/latest-linux.yml
+          files: ${{ matrix.installers }}
           fail_on_unmatched_files: true
 
-      - name: Publish release assets (macOS)
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'macos'
-        uses: softprops/action-gh-release@v2.0.0
+      - name: Publish update metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
         with:
-          files: |
-            release/Holo-*.dmg
-            release/Holo-*.zip
-            release/latest-mac.yml
-          fail_on_unmatched_files: true
-
-      - name: Publish release assets (Windows)
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows'
-        uses: softprops/action-gh-release@v2.0.0
-        with:
-          files: |
-            release/Holo-*.exe
-            release/Holo-*.exe.blockmap
-            release/latest.yml
+          files: ${{ matrix.metadata }}
           fail_on_unmatched_files: true
