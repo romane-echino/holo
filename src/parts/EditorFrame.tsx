@@ -11,7 +11,7 @@ import { getHistoryOverride } from '../lib/editorFlush'
 import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/types'
 import { RemoteCursors } from './RemoteCursors'
 import { revealPeer } from '../lib/realtime/cursorDom'
-import { extensionFromMimeType, imageNaming } from '../lib/imageNaming'
+import { extensionFromMimeType, prepareImage } from '../lib/imageNaming'
 import { absenceReason } from '../lib/realtime/absentEditors'
 import type { SpacePeer } from '../lib/realtime/spacePresence'
 import { PeerAvatars } from './PeerAvatars'
@@ -1117,14 +1117,7 @@ export function EditorFrame({
     if (cell) placeCaretAtPoint(cell, e.clientX, e.clientY)
     for (const file of files) {
       try {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsDataURL(file)
-        })
-        const base64 = dataUrl.split(',')[1]
-        const { name, alt } = imageNaming(file.name, file.type, filepath)
+        const { base64, name, alt } = await prepareImage(file, filepath)
         const result = await window.holo!.saveImage(name, base64, opts, filepath)
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
@@ -1165,14 +1158,7 @@ export function EditorFrame({
 
     for (const file of files) {
       try {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsDataURL(file)
-        })
-        const base64 = dataUrl.split(',')[1]
-        const { name, alt } = imageNaming(file.name, file.type, filepath)
+        const { base64, name, alt } = await prepareImage(file, filepath)
         const result = await window.holo!.saveImage(name, base64, opts, filepath)
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {

@@ -1,4 +1,5 @@
 /** Nommage des images collées ou déposées dans un document. */
+import { optimizeImage } from './imageOptimize'
 
 export function extensionFromMimeType(mimeType: string | undefined) {
   switch ((mimeType ?? '').toLowerCase()) {
@@ -34,3 +35,21 @@ export function imageNaming(fileName: string, mimeType: string, documentPath: st
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   return { name: `${slug}-${date}${extension}`, alt: '' }
 }
+
+/**
+ * Image prête à enregistrer : allégée (voir optimizeImage), en base64, avec
+ * son nom et son texte alternatif ; l'extension suit le format final.
+ */
+export async function prepareImage(file: File, documentPath: string | undefined): Promise<{ base64: string; name: string; alt: string }> {
+  const image = await optimizeImage(file)
+  const naming = imageNaming(file.name, image.type, documentPath)
+  const name = image === file ? naming.name : `${naming.name.replace(/\.[^.]+$/, '')}${extensionFromMimeType(image.type)}`
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(image)
+  })
+  return { base64: dataUrl.split(',')[1], name, alt: naming.alt }
+}
+
