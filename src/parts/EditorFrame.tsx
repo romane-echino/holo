@@ -11,6 +11,7 @@ import { getHistoryOverride } from '../lib/editorFlush'
 import type { RealtimePeer, RealtimeStatus } from '../lib/realtime/types'
 import { RemoteCursors } from './RemoteCursors'
 import { revealPeer } from '../lib/realtime/cursorDom'
+import { extensionFromMimeType, imageNaming } from '../lib/imageNaming'
 import { absenceReason } from '../lib/realtime/absentEditors'
 import type { SpacePeer } from '../lib/realtime/spacePresence'
 import { PeerAvatars } from './PeerAvatars'
@@ -105,24 +106,6 @@ function writeScrollTop(target: ScrollTarget | null, value: number) {
   target.scrollTop = value
 }
 
-function extensionFromMimeType(mimeType: string | undefined) {
-  switch ((mimeType ?? '').toLowerCase()) {
-    case 'image/gif':
-      return '.gif'
-    case 'image/webp':
-      return '.webp'
-    case 'image/jpeg':
-      return '.jpg'
-    case 'image/svg+xml':
-      return '.svg'
-    case 'image/bmp':
-      return '.bmp'
-    case 'image/avif':
-      return '.avif'
-    default:
-      return '.png'
-  }
-}
 
 /** Le HTML copié contient-il du texte visible (et pas seulement des images) ? */
 function htmlHasVisibleText(html: string): boolean {
@@ -1138,8 +1121,8 @@ export function EditorFrame({
           reader.readAsDataURL(file)
         })
         const base64 = dataUrl.split(',')[1]
-        const result = await window.holo!.saveImage(file.name, base64, opts, filepath)
-        const alt = file.name.replace(/\.[^.]+$/, '')
+        const { name, alt } = imageNaming(file.name, file.type, filepath)
+        const result = await window.holo!.saveImage(name, base64, opts, filepath)
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
         console.error('[EditorFrame] drop image error', err)
@@ -1186,9 +1169,8 @@ export function EditorFrame({
           reader.readAsDataURL(file)
         })
         const base64 = dataUrl.split(',')[1]
-        const name = file.name || `image-${Date.now()}${extensionFromMimeType(file.type)}`
+        const { name, alt } = imageNaming(file.name, file.type, filepath)
         const result = await window.holo!.saveImage(name, base64, opts, filepath)
-        const alt = name.replace(/\.[^.]+$/, '')
         insertSavedImage(result.relativePath, alt, cell)
       } catch (err) {
         console.error('[EditorFrame] paste image error', err)

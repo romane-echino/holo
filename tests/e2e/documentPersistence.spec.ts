@@ -247,7 +247,8 @@ test.describe('Persistance du document ouvert', () => {
       await expect(images).toHaveCount(3, { timeout: 10_000 })
       await expect(field).toHaveText('Para fin. Cellule')
 
-      await expect.poll(async () => ((await fs.readFile(ws.filePath, 'utf8')).match(/!\[[^\]]*\]\(images\/[^)]+\.png\)/g) ?? []).length, { timeout: 10_000 }).toBe(3)
+      // Nommées d'après le document et la date, sans légende « image ».
+      await expect.poll(async () => ((await fs.readFile(ws.filePath, 'utf8')).match(/!\[\]\(images\/doc-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.png\)/g) ?? []).length, { timeout: 10_000 }).toBe(3)
       const saved = await fs.readFile(ws.filePath, 'utf8')
       expect(saved).toContain('Para fin. Cellule')
       expect(saved).not.toContain('<img')
