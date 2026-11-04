@@ -2,6 +2,16 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.5',
+    releasedAt: '2026-11-04',
+    items: [
+      'Nouveautés : après une mise à jour, Holo affiche une fois ce qui a changé depuis votre dernière version.',
+      'Images : une image garde sa taille réelle (au plus la largeur du document) au lieu d\'être étirée : une icône ou un logo collé reste petit. « Pleine largeur » reste proposé dans le menu de l\'image.',
+      'Images : une capture collée est nommée d\'après le document et la date (fiche-employe-2026-11-04-….png) au lieu de « image-… », et n\'a plus la légende « image ».',
+      'Éditeur : le titre n\'est plus affiché deux fois quand le document commence par un titre « # … ».',
+    ],
+  },
+  {
     version: '0.9.4',
     releasedAt: '2026-11-04',
     items: [

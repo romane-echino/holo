@@ -32,6 +32,7 @@ import { EditorFrame } from './parts/EditorFrame'
 import { SpaceCredentialsModal } from './parts/SpaceCredentialsModal'
 import type { SpaceCredentials } from './parts/Settings'
 import { AppUpdateNotification } from './parts/AppUpdateNotification'
+import { WhatsNew } from './parts/WhatsNew'
 import { ToastHost } from './parts/ToastHost'
 import { errorMessage, notify, notifyError } from './lib/notify'
 import { useAppUpdates } from './hooks/useAppUpdates'
@@ -1986,6 +1987,9 @@ export default function App2() {
       </div>
         </>
       )}
+
+      {/* Nouveautés après une mise à jour (une fois) */}
+      <WhatsNew />
 
       {/* Notification mise à jour */}
       {updateAvailable && (
