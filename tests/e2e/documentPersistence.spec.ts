@@ -207,6 +207,55 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('coller une image depuis le presse-papiers système : capture, navigateur, Teams ; le texte d Excel reste du texte', async () => {
+    // Vrai collage (comme Cmd/Ctrl+V) : les données d'un collage réel ne sont
+    // lisibles que pendant l'événement, ce qu'un collage simulé ne vérifie pas.
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=='
+    const ws = await createWorkspace(['# Doc', '', 'Para fin.', ''].join('\n'))
+    let launched: Launched | null = null
+    try {
+      launched = await launchHolo(ws.rootPath, ws.filePath)
+      const { app, page } = launched
+      const field = page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Para fin.' })
+      const images = page.locator('[data-testid="block-editor"] img')
+      await expect(field).toBeVisible({ timeout: 20_000 })
+      const paste = async (content: { png?: string; html?: string; text?: string }) => {
+        await field.click()
+        await page.keyboard.press('End')
+        await page.evaluate(async (c) => {
+          const items: Record<string, Blob> = {}
+          if (c.png) items['image/png'] = new Blob([Uint8Array.from(atob(c.png), (char) => char.charCodeAt(0))], { type: 'image/png' })
+          if (c.html) items['text/html'] = new Blob([c.html], { type: 'text/html' })
+          if (c.text) items['text/plain'] = new Blob([c.text], { type: 'text/plain' })
+          await navigator.clipboard.write([new ClipboardItem(items)])
+        }, content)
+        await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste())
+      }
+
+      // Excel / Word : du texte accompagné d'un aperçu en image → le texte.
+      await paste({ png, html: '<table><tr><td>Cellule</td></tr></table>', text: ' Cellule' })
+      await expect(field).toHaveText('Para fin. Cellule', { timeout: 10_000 })
+      // Capture d'écran : une image seule.
+      await paste({ png })
+      await expect(images).toHaveCount(1, { timeout: 10_000 })
+      // « Copier l'image » d'un navigateur : image + HTML.
+      await paste({ png, html: '<meta charset="utf-8"><img src="https://example.com/capture.png" alt="capture">' })
+      await expect(images).toHaveCount(2, { timeout: 10_000 })
+      // Teams : image + HTML, et le code HTML en texte brut, qui n'est pas collé.
+      const teams = '<div><img src="https://teams.example.com/img.png" alt="image"></div>'
+      await paste({ png, html: teams, text: teams })
+      await expect(images).toHaveCount(3, { timeout: 10_000 })
+      await expect(field).toHaveText('Para fin. Cellule')
+
+      await expect.poll(async () => ((await fs.readFile(ws.filePath, 'utf8')).match(/!\[[^\]]*\]\(images\/[^)]+\.png\)/g) ?? []).length, { timeout: 10_000 }).toBe(3)
+      const saved = await fs.readFile(ws.filePath, 'utf8')
+      expect(saved).toContain('Para fin. Cellule')
+      expect(saved).not.toContain('<img')
+    } finally {
+      await cleanup(launched, ws.rootPath)
+    }
+  })
+
   test('un dépôt git dans un dossier OneDrive affiche un avertissement', async () => {
     const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'holo-onedrive-')))
     const rootPath = path.join(base, 'OneDrive - Echino', 'Documents', 'docs')

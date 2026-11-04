@@ -146,6 +146,40 @@ test.describe('Sélection et historique en direct', () => {
     }
   })
 
+  test('le curseur d un collègue qui tape en fin de paragraphe avance sans revenir au début', async () => {
+    test.skip(!(await relayAvailable()), 'Runtime Codenotch local ou projet holo-realtime indisponible')
+    const session = await openBoth()
+    try {
+      const { alice, bob } = session
+      const field = (page: Page) => page.locator('[data-block-type="paragraph"][contenteditable]').filter({ hasText: 'Para fin.' })
+      await placeCaret(bob, field(bob), 'end')
+      await expect(alice.locator('[data-remote-cursor="bob"]')).toBeVisible({ timeout: 10_000 })
+      await alice.waitForTimeout(500)
+      // Position horizontale du curseur de Bob chez Alice, à chaque image.
+      await alice.evaluate(() => {
+        const samples: number[] = []
+        ;(window as unknown as { __cursorX: number[] }).__cursorX = samples
+        const tick = () => {
+          const cursor = document.querySelector('[data-remote-cursor="bob"]')
+          if (cursor) samples.push(Math.round(cursor.getBoundingClientRect().left))
+          if (samples.length < 600) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+      // Des espaces en fin de champ : leur position arrive avant le texte (ou
+      // n'est pas affichée), ce qui renvoyait le curseur au début du paragraphe.
+      await bob.keyboard.type(' un deux trois quatre', { delay: 120 })
+      await expect(field(alice)).toContainText('quatre', { timeout: 15_000 })
+      await alice.waitForTimeout(500)
+      const xs = await alice.evaluate(() => (window as unknown as { __cursorX: number[] }).__cursorX)
+      expect(xs.length).toBeGreaterThan(10)
+      const backwards = xs.filter((x, index) => index > 0 && x < xs[index - 1] - 20)
+      expect(backwards, `positions successives : ${xs.filter((x, index) => index === 0 || x !== xs[index - 1]).join(' ')}`).toEqual([])
+    } finally {
+      await session.close()
+    }
+  })
+
   test('un mot annulé puis rétabli revient, même quand un collègue tape', async () => {
     test.skip(!(await relayAvailable()), 'Runtime Codenotch local ou projet holo-realtime indisponible')
     const session = await openBoth()

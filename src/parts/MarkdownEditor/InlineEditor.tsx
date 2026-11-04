@@ -1366,6 +1366,9 @@ export const InlineEditor = forwardRef<InlineEditorHandle, InlineEditorProps>(fu
             sel.addRange(range)
             syncEmpty(divRef.current!)
             savedRef.current = false
+            // Comme une frappe : enregistré (et envoyé en direct) sans attendre
+            // la frappe suivante ou la sortie du champ.
+            scheduleSave()
           }
         }}
         onInput={(e) => {

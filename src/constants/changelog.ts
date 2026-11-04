@@ -2,6 +2,15 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.2',
+    releasedAt: '2026-11-04',
+    items: [
+      'Images : coller une capture d\'écran ou une image copiée depuis un navigateur fonctionne de nouveau (rien n\'était collé depuis la 0.7.0). Le code HTML qui accompagne une image copiée (Teams) n\'est plus collé en texte ; du texte copié depuis Word ou Excel reste du texte.',
+      'Temps réel : le curseur d\'un collègue qui tape en fin de paragraphe avance avec sa saisie, au lieu de faire des allers-retours au début du paragraphe.',
+      'Un texte collé dans un paragraphe est enregistré et transmis en direct aussitôt, sans attendre la frappe suivante ; il n\'est plus perdu si on colle une image juste après.',
+    ],
+  },
+  {
     version: '0.9.1',
     releasedAt: '2026-11-04',
     items: [

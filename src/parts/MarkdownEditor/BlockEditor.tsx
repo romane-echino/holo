@@ -905,6 +905,10 @@ export const BlockEditor = forwardRef<BlockEditorHandle, BlockEditorProps>(funct
         children: [{ type: 'image' as const, url, alt, title: null }],
       }
       const newBlock: BlockState = { id: crypto.randomUUID(), node: imageNode }
+      // La saisie encore en attente (enregistrée 400 ms après la dernière
+      // frappe) remonte d'abord : sinon l'insertion repartirait de l'état
+      // d'avant et la ferait disparaître du fichier, tout en la laissant affichée.
+      flushPendingEdits()
       applyBlocksMutation((prev) => {
         const focusedId = lastFocusedBlockIdRef.current
         let next: BlockState[]

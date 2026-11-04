@@ -42,19 +42,29 @@ export function locateCursorRect(cursor: RealtimeCursor): DOMRect | null {
   if (!editable) return null
   const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT)
   let remaining = cursor.offset
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const length = node.textContent?.length ?? 0
-    if (remaining <= length) {
-      const range = document.createRange()
-      range.setStart(node, remaining)
-      range.collapse(true)
-      const rect = range.getClientRects()[0] ?? range.getBoundingClientRect()
-      if (rect && (rect.height > 0 || rect.width > 0)) return rect
-      break
-    }
-    remaining -= length
+  let last: Text | null = null
+  const rectAt = (node: Text, offset: number) => {
+    const range = document.createRange()
+    range.setStart(node, offset)
+    range.collapse(true)
+    const rect = range.getClientRects()[0] ?? range.getBoundingClientRect()
+    return rect && (rect.height > 0 || rect.width > 0) ? rect : null
   }
-  // Champ vide (ou position au-delà du texte) : début du champ.
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    const length = node.textContent?.length ?? 0
+    if (remaining <= length) return rectAt(node, remaining) ?? fieldStart(editable)
+    remaining -= length
+    if (length > 0) last = node
+  }
+  // Position au-delà du texte affiché : le collègue tape en fin de champ et sa
+  // position arrive avant sa saisie (ou finit par une espace non affichée).
+  // On reste en fin de texte plutôt que de sauter au début du champ.
+  if (last) return rectAt(last, last.textContent?.length ?? 0) ?? fieldStart(editable)
+  return fieldStart(editable)
+}
+
+/** Champ vide : début du champ. */
+function fieldStart(editable: HTMLElement): DOMRect {
   const box = editable.getBoundingClientRect()
   const lineHeight = parseFloat(getComputedStyle(editable).lineHeight) || 24
   const paddingTop = parseFloat(getComputedStyle(editable).paddingTop) || 0

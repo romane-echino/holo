@@ -119,6 +119,39 @@ function extensionFromMimeType(mimeType: string | undefined) {
   }
 }
 
+/** Le HTML copié contient-il du texte visible (et pas seulement des images) ? */
+function htmlHasVisibleText(html: string): boolean {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    doc.querySelectorAll('style, script, title, meta').forEach((element) => element.remove())
+    return (doc.body?.textContent ?? '').replace(/\s+/g, '') !== ''
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Images à coller comme images. Une capture d'écran, « Copier l'image » d'un
+ * navigateur ou une image copiée dans Teams : oui, même si l'application y
+ * joint du HTML ou du code HTML en texte brut (ignoré). Word, Excel ou une
+ * sélection de page web joignent souvent un aperçu en image à du vrai texte :
+ * c'est alors le texte qu'on colle.
+ *
+ * À appeler pendant l'événement : le navigateur vide les données d'un vrai
+ * collage dès qu'il se termine (après un await, getAsFile() renvoie null).
+ */
+function clipboardImageFiles(clipboardData: DataTransfer): File[] {
+  const files = Array.from(clipboardData.items)
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  if (files.length === 0) return []
+  const html = clipboardData.getData('text/html')
+  if (html) return htmlHasVisibleText(html) ? [] : files
+  const text = clipboardData.getData('text/plain').trim()
+  return text && !/^<[a-z!]/i.test(text) ? [] : files
+}
+
 function extractGifUrlFromClipboardData(clipboardData: DataTransfer | null): string | null {
   if (!clipboardData) return null
 
@@ -1091,16 +1124,7 @@ export function EditorFrame({
     }
   }, [buildImageStorageOptions, insertSavedImage, filepath])
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
-    const remoteGifUrl = extractGifUrlFromClipboardData(e.clipboardData)
-    const imageItems = Array.from(e.clipboardData.items).filter((item) => item.type.startsWith('image/'))
-    if (!remoteGifUrl && !imageItems.length) return
-    const opts = buildImageStorageOptions()
-    if (!opts) return
-    e.preventDefault()
-    e.stopPropagation()
-    const cell = findTableCellEditor(document.activeElement) ?? findTableCellEditor(e.target as Element)
-
+  const pasteImages = useCallback(async (remoteGifUrl: string | null, files: File[], opts: NonNullable<ReturnType<typeof buildImageStorageOptions>>, cell: HTMLElement | null) => {
     // Image copiée depuis Holo : on réutilise le fichier existant (pas de doublon).
     if (!remoteGifUrl) {
       const copiedSource = await window.holo?.getCopiedHoloImage?.(filepath).catch(() => null)
@@ -1129,9 +1153,7 @@ export function EditorFrame({
       }
     }
 
-    for (const item of imageItems) {
-      const file = item.getAsFile()
-      if (!file) continue
+    for (const file of files) {
       try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
@@ -1149,7 +1171,24 @@ export function EditorFrame({
         notifyError('Impossible de coller l\'image', err)
       }
     }
-  }, [buildImageStorageOptions, insertSavedImage, filepath])
+  }, [insertSavedImage, filepath])
+
+  // Phase de capture : décidé avant que le champ de texte (paragraphe, liste,
+  // cellule) ne colle le texte qui accompagne l'image.
+  const handlePasteCapture = useCallback((e: React.ClipboardEvent) => {
+    const files = clipboardImageFiles(e.clipboardData)
+    const html = e.clipboardData.getData('text/html')
+    const remoteGifUrl = files.length > 0 || !html || !htmlHasVisibleText(html) || /^https?:\/\/\S+$/i.test(e.clipboardData.getData('text/plain').trim())
+      ? extractGifUrlFromClipboardData(e.clipboardData)
+      : null
+    if (!remoteGifUrl && !files.length) return
+    const opts = buildImageStorageOptions()
+    if (!opts) return
+    e.preventDefault()
+    e.stopPropagation()
+    const cell = findTableCellEditor(document.activeElement) ?? findTableCellEditor(e.target as Element)
+    void pasteImages(remoteGifUrl, files, opts, cell)
+  }, [buildImageStorageOptions, pasteImages])
 
   return (
     <section
@@ -1160,7 +1199,7 @@ export function EditorFrame({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onPaste={handlePaste}
+      onPasteCapture={handlePasteCapture}
     >
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-holo-lg border-2 border-dashed border-holo-primary/60 bg-holo-primary-surface/30 backdrop-blur-sm">
