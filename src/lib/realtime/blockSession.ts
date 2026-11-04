@@ -180,7 +180,7 @@ export class BlockSession {
     const state = this.awareness.getLocalState() as AwarenessState | null
     if (!state) return
     const previous = state.cursor ?? null
-    if (previous === cursor || (previous && cursor && previous.block === cursor.block && previous.field === cursor.field && previous.offset === cursor.offset)) return
+    if (previous === cursor || (previous && cursor && previous.block === cursor.block && previous.blockId === cursor.blockId && previous.field === cursor.field && previous.offset === cursor.offset)) return
     this.awareness.setLocalStateField('cursor', cursor)
   }
 

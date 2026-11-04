@@ -35,7 +35,7 @@ export function RemoteCursors({ peers, containerRef }: { peers: RealtimePeer[]; 
   useEffect(() => {
     const moved: number[] = []
     for (const peer of peers) {
-      const key = peer.cursor ? `${peer.cursor.block}:${peer.cursor.field}:${peer.cursor.offset}` : ''
+      const key = peer.cursor ? `${peer.cursor.blockId ?? peer.cursor.block}:${peer.cursor.field}:${peer.cursor.offset}` : ''
       if (key && lastCursorsRef.current.get(peer.clientId) !== key) moved.push(peer.clientId)
       lastCursorsRef.current.set(peer.clientId, key)
     }

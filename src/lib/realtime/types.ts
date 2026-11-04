@@ -1,7 +1,14 @@
 /** Participants d'une session d'édition en temps réel. */
 export type RealtimeUser = { name: string; email: string; color: string }
 /** Position du curseur : bloc (rang dans le document), champ éditable du bloc (ex. cellule), position dans son texte */
-export type RealtimeCursor = { block: number; field: number; offset: number }
+export type RealtimeCursor = {
+  /** Rang du bloc (versions ≤ 0.9.3, et repli si l'identifiant est inconnu) */
+  block: number
+  /** Identifiant partagé du bloc : reste juste quand des blocs sont ajoutés ou retirés au-dessus */
+  blockId?: string
+  field: number
+  offset: number
+}
 export type RealtimePeer = RealtimeUser & { clientId: number; cursor: RealtimeCursor | null }
 export type RealtimeStatus = 'connecting' | 'joining' | 'live' | 'reconnecting' | 'unauthorized' | 'error' | 'stopped'
 

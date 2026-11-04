@@ -30,14 +30,17 @@ export function readLocalCursor(): RealtimeCursor | null {
   const prefix = document.createRange()
   prefix.selectNodeContents(editable)
   prefix.setEnd(range.endContainer, range.endOffset)
-  return { block: topLevelBlocks(root).indexOf(topBlock), field: Math.max(0, field), offset: prefix.toString().length }
+  return { block: topLevelBlocks(root).indexOf(topBlock), blockId: topBlock.dataset.blockId, field: Math.max(0, field), offset: prefix.toString().length }
 }
 
 /** Champ éditable où se trouve le curseur d'un autre participant. */
 export function locateCursorField(cursor: RealtimeCursor): HTMLElement | null {
   const root = document.querySelector(EDITOR_ROOT_SELECTOR)
   if (!root) return null
-  const block = topLevelBlocks(root)[cursor.block]
+  const blocks = topLevelBlocks(root)
+  // Par identifiant : un bloc pas encore reçu n'affiche rien plutôt qu'un autre
+  // bloc. Le rang ne sert qu'aux versions qui n'envoient pas d'identifiant.
+  const block = cursor.blockId ? blocks.find((candidate) => candidate.dataset.blockId === cursor.blockId) : blocks[cursor.block]
   return block?.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)[cursor.field] ?? null
 }
 
