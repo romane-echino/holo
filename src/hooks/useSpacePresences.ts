@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { SpacePresence, type SpacePeer } from '../lib/realtime/spacePresence'
 import { colorForUser } from '../lib/realtime/types'
 import { registerCloseTask } from '../lib/editorFlush'
+import { registerDiagnosticSection, reportDiagnostic } from '../lib/diagnostics'
 
 /**
  * Au plus autant de canaux de présence d'espace ouverts en même temps : chacun
@@ -62,6 +63,8 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
   const { activeRoot, editingFilePath, user, configRevision } = options
   const [peersBySpace, setPeersBySpace] = useState<Record<string, SpacePeer[]>>({})
   const presencesRef = useRef(new Map<string, SpacePresence>())
+  /** État de chaque canal, pour le diagnostic */
+  const channelStatesRef = useRef(new Map<string, string>())
   const [presenceRevision, setPresenceRevision] = useState(0)
   const onRemotePushRef = useRef(options.onRemotePush)
   useEffect(() => {
@@ -103,9 +106,20 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
       })
     }
     const [name, email] = identityKey.split('\n')
+    const channelStates = channelStatesRef.current
+    for (const rootPath of Array.from(channelStates.keys())) if (!wanted.has(rootPath)) channelStates.delete(rootPath)
     for (const rootPath of channels) {
       if (presences.has(rootPath)) continue
-      void api.resolveSpace(rootPath).catch(() => null).then(async (resolved) => {
+      channelStates.set(rootPath, 'résolution…')
+      void api.resolveSpace(rootPath).catch((error) => {
+        channelStates.set(rootPath, `échec de la résolution : ${error instanceof Error ? error.message : String(error)}`)
+        reportDiagnostic('warn', 'presence', `Espace ${rootPath} : résolution impossible`, error)
+        return null
+      }).then(async (resolved) => {
+        if (resolved && !resolved.available) {
+          channelStates.set(rootPath, `pas de présence (${resolved.reason})`)
+          reportDiagnostic('info', 'presence', `Espace ${rootPath} : pas de présence (${resolved.reason})`)
+        }
         if (disposed || !resolved?.available || presences.has(rootPath)) return
         const presence = new SpacePresence(
           api,
@@ -122,7 +136,11 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
         )
         presences.set(rootPath, presence)
         setPresenceRevision((revision) => revision + 1)
-        await presence.start().catch(() => undefined)
+        channelStates.set(rootPath, `canal ${resolved.documentId.slice(0, 8)} ouvert`)
+        await presence.start().catch((error) => {
+          channelStates.set(rootPath, `canal ${resolved.documentId.slice(0, 8)} : échec du démarrage (${error instanceof Error ? error.message : String(error)})`)
+          reportDiagnostic('warn', 'presence', `Espace ${rootPath} : démarrage de la présence impossible`, error)
+        })
       })
     }
     return () => {
@@ -163,6 +181,31 @@ export function useSpacePresences(options: Options): Record<string, SpacePeer[]>
       }
     })
   }, [])
+
+  // Rapport : canaux ouverts, ce que nous publions, ce que nous voyons.
+  const reportRef = useRef({ peersBySpace, activeRoot, editingFilePath, channels })
+  useEffect(() => {
+    reportRef.current = { peersBySpace, activeRoot, editingFilePath, channels }
+  })
+  useEffect(() => registerDiagnosticSection('Présence dans les espaces', () => {
+    const current = reportRef.current
+    const lines = [
+      `Espace affiché : ${current.activeRoot ?? '(aucun)'}`,
+      `Document ouvert : ${current.editingFilePath ?? '(aucun)'}`,
+      `Espaces partagés suivis (${MAX_SPACE_CHANNELS} au plus) : ${current.channels.length}`,
+    ]
+    for (const rootPath of current.channels) {
+      const peers = current.peersBySpace[rootPath] ?? []
+      const publishedActive = current.activeRoot !== null && sameSpacePath(rootPath, current.activeRoot)
+      const publishedEditing = current.editingFilePath ? relativeSpacePath(rootPath, current.editingFilePath) : null
+      lines.push(
+        `- ${rootPath} : ${channelStatesRef.current.get(rootPath) ?? 'inconnu'}`,
+        `  publié : ${publishedActive ? 'dans l\'espace' : 'hors de l\'espace'}${publishedEditing ? `, sur ${publishedEditing}` : ''}`,
+        `  vus : ${peers.length > 0 ? peers.map((peer) => `${peer.name} <${peer.email ?? ''}> (${peer.active ? 'dans l\'espace' : 'ailleurs'}${peer.editing ? `, sur ${peer.editing}` : ''})`).join(', ') : 'personne'}`,
+      )
+    }
+    return lines
+  }), [])
 
   return peersBySpace
 }

@@ -136,6 +136,9 @@ interface HoloApi {
   onUpdateReady: (callback: () => void) => () => void
   onUpdateProgress: (callback: (data: { percent: number }) => void) => () => void
   onUpdateError?: (callback: (data: { message: string; releaseUrl: string }) => void) => () => void
+  logDiagnostic?: (level: 'error' | 'warn' | 'info', source: string, message: string) => Promise<{ ok: boolean }>
+  getDiagnosticReport?: (rendererSections: string) => Promise<string>
+  openLogsFolder?: () => Promise<{ ok: boolean }>
   getHoloConfig: () => Promise<Record<string, unknown>>
   setHoloConfig: (cfg: Record<string, unknown>) => Promise<{ ok: true }>
   getHoloConfigValue: (key: string) => Promise<unknown>

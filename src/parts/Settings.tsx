@@ -17,7 +17,9 @@ import {
 import { cn } from '../utils/global'
 import { buildAzureSasUrl, parseAzureSasUrl } from '../utils/azureSas'
 import { CHANGELOG_ENTRIES } from '../constants/changelog'
-import { notifyError } from '../lib/notify'
+import { notify, notifyError } from '../lib/notify'
+import { buildDiagnosticReport } from '../lib/diagnostics'
+import { normalizeVersionLabel } from '../lib/appUtils'
 import { describeRealtimeConnectionFailure } from '../popup/RealtimeSetup'
 
 type SettingsTab = 'profile' | 'storage' | 'collab' | 'ai' | 'appearance' | 'about'
@@ -364,6 +366,14 @@ export function HoloSettingsDialog({
   onClose,
 }: HoloSettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
+  const [appVersion, setAppVersion] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    void window.holo?.getAppVersion().then((version) => {
+      if (!cancelled && version) setAppVersion(normalizeVersionLabel(version))
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   const [draft, setDraft] = useState<HoloSettingsValue>({ ...defaultValue, ...value })
   const realtime = useRealtimeDraft()
   const [confirmReset, setConfirmReset] = useState(false)
@@ -778,12 +788,42 @@ export function HoloSettingsDialog({
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-sm font-medium text-holo-text">Holo</p>
-                      <p className="mt-1 text-xs text-holo-text-faint">v0.1.0-alpha</p>
+                      <p className="mt-1 text-xs text-holo-text-faint">{appVersion ? `v${appVersion}` : '…'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-holo-xl border border-holo-border-soft bg-holo-glass p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-holo-text">Diagnostic</p>
+                      <p className="mt-1 text-xs text-holo-text-faint">
+                        Version, système, état du temps réel et de la présence, dernières erreurs. À coller dans un message pour signaler un problème (aucun contenu de document, aucun jeton).
+                      </p>
                     </div>
 
-                    <span className="rounded-full bg-holo-primary-surface px-3 py-1 text-xs text-holo-primary-soft">
-                      Alpha
-                    </span>
+                    <div className="flex shrink-0 flex-col gap-2">
+                      <button
+                        type="button"
+                        data-testid="copy-diagnostic"
+                        onClick={() => {
+                          void buildDiagnosticReport()
+                            .then((report) => window.holo?.writeClipboardText(report))
+                            .then(() => notify({ kind: 'success', title: 'Diagnostic copié', message: 'Collez-le dans votre message.', durationMs: 4000 }))
+                            .catch((error) => notifyError('Impossible de copier le diagnostic', error))
+                        }}
+                        className="rounded-holo-md border border-holo-border-soft bg-white/[0.03] px-3 py-2 text-xs font-medium text-holo-text transition hover:bg-holo-glass-hover"
+                      >
+                        Copier le diagnostic
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void window.holo?.openLogsFolder?.() }}
+                        className="rounded-holo-md px-3 py-1.5 text-xs text-holo-text-faint transition hover:bg-holo-glass-hover hover:text-holo-text"
+                      >
+                        Ouvrir les journaux
+                      </button>
+                    </div>
                   </div>
                 </div>
 

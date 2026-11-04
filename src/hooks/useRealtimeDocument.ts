@@ -6,6 +6,7 @@ import type { CaretAnchor } from '../lib/realtime/caretAnchor'
 import { alignSnapshotIds, markdownToSnapshot } from '../parts/MarkdownEditor/lib/sharedSnapshot'
 import { registerCloseTask, setHistoryOverride } from '../lib/editorFlush'
 import { readLocalCursor } from '../lib/realtime/cursorDom'
+import { registerDiagnosticSection, reportDiagnostic } from '../lib/diagnostics'
 
 export type RealtimeDocumentState = {
   /** null : pas de session (temps réel désactivé ou document non partageable) */
@@ -49,8 +50,12 @@ export function useRealtimeDocument(options: Options) {
     let session: BlockSession | null = null
 
     void (async () => {
-      const resolved = await api.resolveDocument(filePath).catch(() => null)
+      const resolved = await api.resolveDocument(filePath).catch((error) => {
+        reportDiagnostic('warn', 'realtime', 'Résolution du document impossible :', error)
+        return null
+      })
       if (disposed || !resolved?.available) {
+        if (!disposed && resolved && !resolved.available) reportDiagnostic('info', 'realtime', `Document non partagé en direct (${resolved.reason}) : ${filePath}`)
         setState({ status: null, peers: [] })
         return
       }
@@ -126,6 +131,25 @@ export function useRealtimeDocument(options: Options) {
       if (frame !== null) cancelAnimationFrame(frame)
     }
   }, [state.status])
+
+  // Journal : changements d'état de la session ; rapport : état actuel.
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  })
+  useEffect(() => {
+    if (!state.status) return
+    reportDiagnostic(state.status === 'error' || state.status === 'unauthorized' ? 'warn' : 'info', 'realtime', `Document ${filePath ?? ''} : ${state.status}${state.detail ? ` — ${state.detail}` : ''}`)
+  }, [state.status, state.detail, filePath])
+  useEffect(() => registerDiagnosticSection('Temps réel — document ouvert', () => {
+    const current = stateRef.current
+    return [
+      `Document : ${filePath ?? '(aucun)'}`,
+      `État : ${current.status ?? 'pas de session (document non partagé, ou temps réel désactivé)'}${current.detail ? ` — ${current.detail}` : ''}`,
+      `Collègues vus : ${current.peers.length > 0 ? current.peers.map((peer) => `${peer.name} <${peer.email ?? ''}>${peer.cursor ? ` (bloc ${peer.cursor.block})` : ' (hors du texte)'}`).join(', ') : 'aucun'}`,
+      `Participants de la session : ${sessionRef.current?.participants().join(', ') || '—'}`,
+    ]
+  }), [filePath])
 
   const onLocalSnapshot = useCallback((snapshot: SharedSnapshot) => {
     sessionRef.current?.onLocalSnapshot(snapshot)

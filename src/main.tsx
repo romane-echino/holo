@@ -4,6 +4,9 @@ import { HashRouter } from 'react-router-dom'
 import './index.css'
 import App2 from './App2.tsx'
 import { AppStateProvider } from './contexts'
+import { installRendererDiagnostics } from './lib/diagnostics'
+
+installRendererDiagnostics()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

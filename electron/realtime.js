@@ -5,6 +5,7 @@
 import crypto from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { logDiagnostic } from './diagnostics.js'
 
 const CONFIG_URL_KEY = 'realtime-server-url'
 const CONFIG_TOKEN_KEY = 'realtime-token'
@@ -132,6 +133,7 @@ export function registerRealtimeIpc({
       const error = new Error(payload?.error ?? `Le relais a répondu ${response.status}.`)
       error.status = response.status
       error.code = payload?.code
+      logDiagnostic('warn', 'realtime', `${method} ${apiPath.replace(/[0-9a-f-]{36}/, (id) => id.slice(0, 8))} → ${response.status}`, error.message)
       throw error
     }
     return payload
@@ -170,12 +172,14 @@ export function registerRealtimeIpc({
       })
       if (response.status === 401 || response.status === 403) {
         fatal = true
+        logDiagnostic('error', 'realtime', `Canal ${documentId.slice(0, 8)} refusé par le relais (${response.status})`)
         broadcast(documentId, 'status', { state: 'unauthorized', status: response.status })
         return
       }
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
       await readEventStream(response.body, (type, data) => {
         if (type === 'ready') {
+          if (entry.attempt > 0) logDiagnostic('info', 'realtime', `Canal ${documentId.slice(0, 8)} reconnecté après ${entry.attempt} tentative(s)`)
           entry.attempt = 0
           broadcast(documentId, 'status', { state: 'connected' })
           broadcast(documentId, 'ready', data)
@@ -186,6 +190,7 @@ export function registerRealtimeIpc({
       })
     } catch (error) {
       if (abort.signal.aborted) return
+      logDiagnostic('warn', 'realtime', `Canal ${documentId.slice(0, 8)} interrompu (tentative ${entry.attempt + 1}) :`, error instanceof Error ? error.message : String(error))
       broadcast(documentId, 'status', { state: 'reconnecting', error: error instanceof Error ? error.message : String(error) })
     } finally {
       if (entry.abort === abort) entry.abort = null

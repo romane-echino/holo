@@ -14,6 +14,7 @@ import os from 'node:os'
 import { existsSync, watch as watchFs, watchFile, unwatchFile } from 'node:fs'
 import { cleanupStaleTempFiles, createKeyedLock, readFileIfExists, readFileWithRetry, writeFileAtomic } from './fsSafe.js'
 import { registerRealtimeIpc } from './realtime.js'
+import { getLogsDir, initDiagnostics, logDiagnostic, recentDiagnostics, systemSummary } from './diagnostics.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -28,6 +29,7 @@ if (process.env.HOLO_APP_DATA_DIR) {
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (hasSingleInstanceLock) initDiagnostics(app)
 const execFileAsync = promisify(execFile)
 let currentRootPath = null
 const knownRootPaths = new Set() // tous les espaces jamais ouverts (pour la lecture cross-espace)
@@ -2419,6 +2421,38 @@ ipcMain.handle('app:install-update', async () => {
 })
 
 ipcMain.handle('app:get-update-state', async () => updateState)
+
+// ─── Diagnostic ──────────────────────────────────────────────────────────────
+const DIAGNOSTIC_LEVELS = new Set(['error', 'warn', 'info'])
+ipcMain.handle('diagnostics:log', async (_event, level, source, message) => {
+  if (!DIAGNOSTIC_LEVELS.has(level)) return { ok: false }
+  logDiagnostic(level, `renderer:${String(source).slice(0, 40)}`, String(message).slice(0, 4000))
+  return { ok: true }
+})
+// Rapport à copier : système, état fourni par l'interface (temps réel,
+// présence), dernières lignes du journal. Ni contenu de document ni jeton.
+ipcMain.handle('diagnostics:report', async (_event, rendererSections) => {
+  const sections = [
+    '# Diagnostic Holo',
+    `Généré le ${new Date().toISOString()}`,
+    '',
+    ...systemSummary(app),
+    `Mise à jour : ${JSON.stringify({ available: updateState.available, downloading: updateState.downloading, ready: updateState.ready, version: updateState.version, error: updateState.error?.message ?? null })}`,
+    '',
+    String(rendererSections ?? '').slice(0, 20000),
+    '',
+    '## Journal (dernières entrées)',
+    ...recentDiagnostics(150),
+  ]
+  return sections.join('\n')
+})
+ipcMain.handle('diagnostics:open-folder', async () => {
+  const dir = getLogsDir()
+  if (!dir) return { ok: false }
+  await fs.mkdir(dir, { recursive: true })
+  await shell.openPath(dir)
+  return { ok: true }
+})
 ipcMain.handle('app:get-version', async () => {
   // En développement, Electron est lancé sur electron/main.js : app.getVersion()
   // renvoie alors la version d'Electron et non celle de Holo.

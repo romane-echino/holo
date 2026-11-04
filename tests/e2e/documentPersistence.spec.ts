@@ -317,6 +317,39 @@ test.describe('Persistance du document ouvert', () => {
     }
   })
 
+  test('copier le diagnostic : version, temps réel, présence et journal, sans jeton', async () => {
+    const ws = await createWorkspace('Contenu.\n')
+    let launched: Launched | null = null
+    try {
+      launched = await launchHolo(ws.rootPath, ws.filePath)
+      const page = launched.page
+      await expect(paragraph(page, 'Contenu.')).toBeVisible({ timeout: 20_000 })
+      await page.evaluate(() => (window as unknown as { holo: { realtime: { setConfig: (c: unknown) => Promise<unknown> } } }).holo.realtime.setConfig({ url: 'https://relais.example.com/holo-realtime', enabled: true, token: 'CN_secret-diagnostic' }))
+      // Une erreur de l'interface arrive dans le journal.
+      await page.evaluate(() => console.error('erreur-de-test-diagnostic'))
+
+      await page.getByRole('button', { name: 'Paramètres' }).click()
+      await page.getByRole('button', { name: /Application/ }).first().click()
+      await page.getByTestId('copy-diagnostic').click()
+      await expect(page.getByText('Diagnostic copié')).toBeVisible({ timeout: 5_000 })
+      const report = await page.evaluate(() => navigator.clipboard.readText())
+      expect(report).toContain('# Diagnostic Holo')
+      expect(report).toMatch(/Holo \d+\.\d+\.\d+/)
+      expect(report).toContain('## Configuration du temps réel')
+      expect(report).toContain('relais.example.com')
+      expect(report).toContain('## Temps réel — document ouvert')
+      expect(report).toContain('## Présence dans les espaces')
+      expect(report).toContain('erreur-de-test-diagnostic')
+      expect(report).not.toContain('CN_secret-diagnostic')
+      expect(report).not.toContain('Contenu.')
+      // Le même journal est écrit sur disque.
+      await expect.poll(async () => fs.readFile(path.join(launched!.configHome, 'holo', 'logs', 'holo.log'), 'utf8').catch(() => ''), { timeout: 5_000 })
+        .toContain('erreur-de-test-diagnostic')
+    } finally {
+      await cleanup(launched, ws.rootPath)
+    }
+  })
+
   test('les réglages temps réel s enregistrent avec le bouton global des paramètres', async () => {
     const ws = await createWorkspace('Contenu.\n')
     let launched: Launched | null = null
