@@ -159,11 +159,18 @@ conflit annule l'opération, comme avant.
 **Modifications venues du disque** (pull git d'un collègue hors session, OneDrive). Chaque
 participant les reçoit. Seul le meneur, le plus petit identifiant de présence, les réinjecte
 dans la session, sinon elles seraient insérées en double. Chez les autres, la fusion à
-l'écriture les préserve sur disque jusqu'à ce qu'elles arrivent par la session.
+l'écriture les préserve sur disque jusqu'à ce qu'elles arrivent par la session. La
+réinjection ne porte que la différence entre la version du disque que Holo connaissait et la
+nouvelle (fusion en trois points) : ce qu'un collègue vient de taper, pas encore enregistré,
+reste. Un changement vu pendant une écriture ou une synchronisation git est revérifié quand
+elle se termine, et un fichier écrit qui contient autre chose que ce que l'éditeur a envoyé
+(changement externe fusionné à l'écriture) est réinjecté de la même façon.
 
 **Présence.** Le protocole *awareness* de Yjs porte sur un document dédié, stable pendant
 toute la session. L'en-tête du document affiche les avatars et l'état (« En direct »,
-« Reconnexion… »).
+« Reconnexion… »). Le curseur partagé donne l'identifiant du bloc (le rang seulement pour les
+versions ≤ 0.9.3), le champ et la position : le bloc, la cellule ou l'élément de liste où se
+trouve un collègue est encadré à sa couleur, et cliquer sur son avatar y fait défiler.
 
 **Mises à jour reçues dans l'éditeur.** Elles sont appliquées par identifiant : seuls les
 blocs changés sont redessinés, et un tableau ou une liste ne met à jour que la cellule ou
@@ -177,7 +184,12 @@ ancrée de la même façon, par son premier et son dernier caractère : elle res
 identifiant `HMAC(clé du dépôt, "space")`, présence chiffrée comme celle des documents, aucun
 contenu. Chaque poste y publie son identité, s'il a l'espace affiché et le document qu'il a
 ouvert. La liste des espaces montre qui est dans chaque espace et l'arborescence montre qui a
-quel fichier ouvert. Les canaux sont limités à quatre espaces, l'espace affiché en premier.
+quel fichier ouvert. Les chemins sont comparés après normalisation (séparateurs, « / » final,
+casse sous Windows, accents) et un collègue qui a un document de l'espace ouvert y est
+présent. Depuis la 0.9.4, chaque poste y publie aussi sa version et le format des documents en
+direct : un collègue qui a le document ouvert sans être dans la session depuis 10 secondes
+est signalé dans l'en-tête (« hors direct »), avec la raison. Les canaux sont limités à
+quatre espaces, l'espace affiché en premier.
 Après chaque envoi git, le poste le signale sur ce canal. Les autres récupèrent aussitôt s'il
 s'agit de fichiers ajoutés, supprimés ou renommés, et au plus toutes les 15 secondes pour une
 simple modification. L'arborescence se recharge quand le dossier change sur le disque (pull,
@@ -190,6 +202,19 @@ l'a récupérée.
 
 **Configuration.** Elle se fait dans **Paramètres → Collaboration** et est propre à chaque
 poste : adresse du relais, jeton chiffré avec `safeStorage`.
+
+**Diagnostic.** Le journal `<données de l'app>/logs/holo.log` reçoit les erreurs du processus
+principal et de l'interface, les coupures et refus du relais, et les changements d'état du
+document en direct et des canaux d'espace. **Paramètres → Application → Copier le
+diagnostic** donne la version, le système, le serveur, l'état de la session et de chaque
+canal d'espace (ce que le poste publie, qui il voit) et les dernières lignes du journal ; ni
+contenu de document ni jeton.
+
+**Tests.** En plus des scénarios ciblés : `HOLO_CHAOS_SECONDS=90` (trois personnes, coupures,
+plantage, synchronisations git ; `HOLO_CHAOS_LATENCY_MS=150` ajoute 150 à 300 ms de latence
+dans chaque sens), `HOLO_STRESS_URL` (charge du relais) et `HOLO_PERF=1` (document de 2 000
+blocs : dans l'application installée, frappe p95 19 ms, enregistrement après une pause
+168 ms).
 
 ### Limites connues
 

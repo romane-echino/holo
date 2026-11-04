@@ -2,6 +2,18 @@ import type { ChangelogEntry } from '../types/shared'
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: '0.9.4',
+    releasedAt: '2026-11-04',
+    items: [
+      'Temps réel : une modification arrivée par git ou OneDrive pendant une session n\'efface plus ce qu\'un collègue vient de taper, et elle apparaît toujours, même si elle arrive pendant un enregistrement ou une synchronisation git.',
+      'Temps réel : le curseur et le cadre d\'un collègue restent sur son bloc quand des paragraphes sont ajoutés ou supprimés au-dessus.',
+      'Temps réel : si un collègue a le document ouvert sans être en direct avec vous (version incompatible, temps réel désactivé), l\'en-tête l\'indique, avec la raison.',
+      'Éditeur : changer le type d\'une citation juste après avoir tapé n\'est plus annulé.',
+      'Diagnostic : Paramètres → Application → « Copier le diagnostic » (version, état du temps réel et de la présence, dernières erreurs) pour signaler un problème. Les erreurs sont aussi gardées dans un journal.',
+      'Espaces : les dossiers temporaires disparus sont retirés de la liste des espaces au démarrage.',
+    ],
+  },
+  {
     version: '0.9.3',
     releasedAt: '2026-11-04',
     items: [
