@@ -95,7 +95,7 @@ export async function launchHolo(
   filePath: string,
   author: string,
   email: string,
-  options: { configHome?: string } = {},
+  options: { configHome?: string; relayUrl?: string } = {},
 ): Promise<Launched> {
   // configHome : relance de la même personne (après un plantage) avec sa configuration.
   const configHome = options.configHome ?? await fs.mkdtemp(path.join(os.tmpdir(), 'holo-rt-spaces-config-'))
@@ -107,7 +107,7 @@ export async function launchHolo(
       'app-author': author,
       'git-email': email,
       'realtime-enabled': true,
-      'realtime-server-url': RELAY_URL,
+      'realtime-server-url': options.relayUrl ?? RELAY_URL,
     }), 'utf8')
   }
   const app = await electron.launch({
@@ -197,3 +197,57 @@ export async function setRelayReachable(launched: Launched, reachable: boolean) 
     await session.defaultSession.closeAllConnections()
   }, reachable)
 }
+
+/**
+ * Relais intermédiaire qui ajoute de la latence (latencyMs + jusqu'à jitterMs)
+ * dans les deux sens, comme un vrai réseau : chaque requête part en retard,
+ * chaque morceau de réponse (dont le flux d'événements) arrive en retard,
+ * dans l'ordre. Renvoie l'adresse à donner aux instances à la place du relais.
+ */
+export async function startLatencyRelay(target: string, latencyMs: number, jitterMs: number, random: () => number = Math.random) {
+  const targetUrl = new URL(target)
+  const delay = () => latencyMs + Math.floor(random() * (jitterMs + 1))
+  const server = http.createServer((req, res) => {
+    const body: Buffer[] = []
+    req.on('data', (chunk: Buffer) => body.push(chunk))
+    req.on('end', () => {
+      setTimeout(() => {
+        const upstream = http.request({
+          host: targetUrl.hostname,
+          port: targetUrl.port,
+          method: req.method,
+          path: req.url,
+          headers: { ...req.headers, host: targetUrl.host },
+        }, (response) => {
+          res.writeHead(response.statusCode ?? 502, response.headers)
+          // Chaque morceau part après son délai, jamais avant le précédent.
+          let lastDue = 0
+          const later = (action: () => void) => {
+            const due = Math.max(Date.now() + delay(), lastDue)
+            lastDue = due
+            setTimeout(action, due - Date.now())
+          }
+          response.on('data', (chunk: Buffer) => later(() => { if (!res.destroyed) res.write(chunk) }))
+          response.on('end', () => later(() => res.end()))
+          response.on('error', () => res.destroy())
+        })
+        upstream.on('error', () => {
+          if (!res.headersSent) res.writeHead(502)
+          res.end()
+        })
+        res.on('close', () => upstream.destroy())
+        upstream.end(Buffer.concat(body))
+      }, delay())
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as { port: number }).port
+  return {
+    url: `http://127.0.0.1:${port}${targetUrl.pathname.replace(/\/$/, '')}`,
+    close: () => new Promise<void>((resolve) => {
+      server.closeAllConnections()
+      server.close(() => resolve())
+    }),
+  }
+}
+

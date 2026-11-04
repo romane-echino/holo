@@ -15,20 +15,23 @@
  * seconde qui précède le plantage peuvent manquer.
  *
  * Lancé à la demande : `HOLO_CHAOS_SECONDS=90 npx playwright test realtimeChaos`
- * (graine fixe, modifiable avec HOLO_CHAOS_SEED). Nécessite un runtime
+ * (graine fixe, modifiable avec HOLO_CHAOS_SEED). HOLO_CHAOS_LATENCY_MS=150
+ * fait passer tout le trafic par un relais qui ajoute 150 à 300 ms de latence
+ * dans chaque sens, comme un vrai réseau. Nécessite un runtime
  * Codenotch local avec le projet holo-realtime déployé
  * (`cd holo-realtime && cn project start --no-open`).
  */
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { launchHolo, relayAvailable, setRelayReachable, setupSharedRepository, type Launched } from './support/realtimeHarness'
+import { RELAY_URL, launchHolo, relayAvailable, setRelayReachable, setupSharedRepository, startLatencyRelay, type Launched } from './support/realtimeHarness'
 
 // Test long, lancé à la demande : HOLO_CHAOS_SECONDS=90 npx playwright test realtimeChaos
 const CHAOS_ENABLED = Boolean(process.env.HOLO_CHAOS_SECONDS)
 const DURATION_MS = Number(process.env.HOLO_CHAOS_SECONDS ?? 90) * 1000
 const SEED = Number(process.env.HOLO_CHAOS_SEED ?? 20261103)
 const CHAR_BY_CHAR = process.env.HOLO_CHAOS_TYPING === 'char'
+const LATENCY_MS = Number(process.env.HOLO_CHAOS_LATENCY_MS ?? 0)
 const DOCUMENT = 'Chaos.md'
 const INITIAL = [
   '# Chaos',
@@ -228,10 +231,13 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
     const launched: Partial<Record<Person, Launched>> = {}
     const ledgers: Record<Person, Ledger> = Object.fromEntries(PEOPLE.map((person) => [person, { typed: new Map(), origin: new Map(), deleted: new Set(), uncertain: new Set(), actions: {} }])) as Record<Person, Ledger>
     const log: string[] = []
+    const latency = LATENCY_MS > 0 ? await startLatencyRelay(RELAY_URL, LATENCY_MS, LATENCY_MS) : null
+    if (latency) log.push(`latence ajoutée : ${LATENCY_MS} à ${LATENCY_MS * 2} ms dans chaque sens`)
+    const relayUrl = latency?.url
     try {
       for (const person of PEOPLE) {
         const root = repository.clones[person]
-        launched[person] = await launchHolo(root, path.join(root, DOCUMENT), NAMES[person], `${person}@example.com`)
+        launched[person] = await launchHolo(root, path.join(root, DOCUMENT), NAMES[person], `${person}@example.com`, { relayUrl })
         captureSessionLogs(launched[person]!.page, person, log)
         await expect(launched[person]!.page.getByTestId('realtime-presence').first()).toHaveAttribute('data-status', 'live', { timeout: 30_000 })
       }
@@ -282,7 +288,7 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
         log.push(`chloé plantée (${ledgers.chloe.uncertain.size} jeton(s) incertain(s))`)
         await new Promise((resolve) => setTimeout(resolve, 3_000))
         const root = repository.clones.chloe
-        launched.chloe = await launchHolo(root, path.join(root, DOCUMENT), NAMES.chloe, 'chloe@example.com', { configHome: chloe.configHome })
+        launched.chloe = await launchHolo(root, path.join(root, DOCUMENT), NAMES.chloe, 'chloe@example.com', { configHome: chloe.configHome, relayUrl })
         captureSessionLogs(launched.chloe.page, 'chloe', log)
         await expect(launched.chloe.page.getByTestId('realtime-presence').first()).toHaveAttribute('data-status', 'live', { timeout: 30_000 })
         log.push('chloé relancée')
@@ -366,6 +372,7 @@ test.describe('Chaos à trois en direct (relais Codenotch)', () => {
       }
     } finally {
       for (const person of PEOPLE) await launched[person]?.app.close().catch(() => {})
+      await latency?.close()
       await repository.cleanup()
       for (const person of PEOPLE) {
         if (launched[person]) await fs.rm(launched[person]!.configHome, { recursive: true, force: true }).catch(() => {})
